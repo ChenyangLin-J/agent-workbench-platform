@@ -24,7 +24,7 @@ Pin a release tag from any GitHub or GitLab consumer:
 ```json
 {
   "dependencies": {
-    "@agent-workbench/platform": "github:ChenyangLin-J/agent-workbench-platform#v0.1.0"
+    "@agent-workbench/platform": "git+https://github.com/ChenyangLin-J/agent-workbench-platform.git#v0.1.1"
   }
 }
 ```
