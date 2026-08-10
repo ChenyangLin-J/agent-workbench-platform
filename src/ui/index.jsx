@@ -237,6 +237,7 @@ export function SessionBrowser({
 
 export function SessionWorkspace({
   session,
+  documentPreview = null,
   actions = {},
   features = {},
   labels = {},
@@ -337,6 +338,14 @@ export function SessionWorkspace({
 
   return (
     <div className="cwu-session-shell" data-status={view.status}>
+      {documentPreview ? (
+        <DocumentPreview
+          file={documentPreview}
+          onClose={actions.onCloseDocument}
+          onOpenExternal={actions.onOpenDocumentExternal}
+          onOpenLink={actions.onOpenLink}
+        />
+      ) : null}
       <header className="cwu-session-header">
         <button className="cwu-quiet-button" onClick={actions.onBack} type="button">
           ← {labels.back || '返回'}
@@ -376,7 +385,7 @@ export function SessionWorkspace({
           <div className="cwu-message-column">
             {view.messages.length ? view.messages.map((message) => (
               <React.Fragment key={message.id}>
-                <Message message={message} />
+                <Message message={message} onOpenLink={actions.onOpenLink} />
                 {features.technicalDetails
                   && message.turnId
                   && lastMessageByTurn.get(message.turnId) === message.id
@@ -626,14 +635,68 @@ function RealtimePanel({ enabled, event, initialState, labels, onFallback, onSen
   );
 }
 
-function Message({ message }) {
+function markdownLinkComponents(onOpenLink) {
+  if (!onOpenLink) return undefined;
+  return {
+    a: ({ href = '', children, ...props }) => (
+      <a
+        {...props}
+        href={href}
+        onClick={(event) => {
+          event.preventDefault();
+          onOpenLink(href);
+        }}
+      >{children}</a>
+    ),
+  };
+}
+
+function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink }) {
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') onClose?.();
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      aria-label={`文件预览：${file.name}`}
+      aria-modal="true"
+      className="cwu-document-backdrop"
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.(); }}
+      role="dialog"
+    >
+      <section className="cwu-document-preview">
+        <header>
+          <div><span>本地文件 · 只读</span><h2>{file.name}</h2></div>
+          <div>
+            {onOpenExternal ? <button className="cwu-button" onClick={() => onOpenExternal(file)} type="button">外部打开</button> : null}
+            <button aria-label="关闭文件预览" className="cwu-document-close" onClick={onClose} type="button">×</button>
+          </div>
+        </header>
+        <div className="cwu-document-body">
+          {file.format === 'markdown' ? (
+            <div className="cwu-document-content cwu-message-body">
+              <ReactMarkdown components={markdownLinkComponents(onOpenLink)} remarkPlugins={[remarkGfm]}>{file.content || ''}</ReactMarkdown>
+            </div>
+          ) : <pre className="cwu-document-code">{file.content || ''}</pre>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function Message({ message, onOpenLink }) {
   const isUser = message.role === 'user';
   const isCommentary = message.phase === 'commentary';
+  const markdownComponents = markdownLinkComponents(onOpenLink);
   return (
     <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'}`} phase={message.phase} role={message.role}>
       {!isUser ? <div className="cwu-message-label">{message.label}</div> : null}
       <div className="cwu-message-body">
-        {isUser ? message.content : <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || '…'}</ReactMarkdown>}
+        {isUser ? message.content : <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>{message.content || '…'}</ReactMarkdown>}
       </div>
       {isUser && message.attachments?.length ? (
         <div className="cwu-message-attachments" aria-label="本轮附件">
