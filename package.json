@@ -1,0 +1,58 @@
+{
+  "name": "@agent-workbench/platform",
+  "version": "0.1.0",
+  "description": "Shared Codex runtime, Session UI, Sub Agent, Realtime, and browser-provider primitives for independent agent workbench products.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChenyangLin-J/agent-workbench-platform.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ChenyangLin-J/agent-workbench-platform/issues"
+  },
+  "homepage": "https://github.com/ChenyangLin-J/agent-workbench-platform#readme",
+  "keywords": [
+    "codex",
+    "agent",
+    "app-server",
+    "session",
+    "subagent",
+    "mcp"
+  ],
+  "files": [
+    "src/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./session": "./src/session.js",
+    "./subagents": "./src/subagents.js",
+    "./runtime": "./src/runtime.js",
+    "./runtime/core": "./src/runtime/core/index.js",
+    "./browser-provider": "./src/browser/provider.js",
+    "./realtime-controller": "./src/browser/realtime-controller.js",
+    "./ui": "./src/ui/index.jsx",
+    "./styles.css": "./src/ui/styles.css"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "update:playwright-tools": "node scripts/update-playwright-tools.mjs"
+  },
+  "peerDependencies": {
+    "react": ">=19",
+    "react-dom": ">=19"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@openai/codex": "0.147.0",
+    "@playwright/mcp": "0.0.79",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

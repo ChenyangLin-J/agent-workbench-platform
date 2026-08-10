@@ -1,0 +1,792 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import '../browser/realtime-controller.js';
+import '../browser/session-status-element.js';
+import '../browser/session-ui-elements.js';
+import '../browser/subagent-elements.js';
+
+import {
+  groupSessionSummaries,
+  normalizeSessionBrowserViewModel,
+  normalizeSessionViewModel,
+  sessionStatusTone,
+} from './model.js';
+import { sessionComposerPresentation } from '../session.js';
+
+export function SessionBrowser({
+  browser,
+  detail = null,
+  actions = {},
+  labels = {},
+}) {
+  const view = useMemo(() => normalizeSessionBrowserViewModel(browser), [browser]);
+  const groups = useMemo(
+    () => groupSessionSummaries(view.sessions, view.groupMode),
+    [view.groupMode, view.sessions],
+  );
+  const [createTargetId, setCreateTargetId] = useState(view.createTargets[0]?.id || '');
+  const [creating, setCreating] = useState(false);
+  const [expandedGroupIds, setExpandedGroupIds] = useState(() => new Set());
+  const autoCollapsedList = useRef(false);
+  const allowNarrowExpandedList = useRef(false);
+  const toggleListAction = useRef(actions.onToggleList);
+  const [isNarrow, setIsNarrow] = useState(() => (
+    typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 640px)').matches
+  ));
+
+  useEffect(() => {
+    toggleListAction.current = actions.onToggleList;
+  }, [actions.onToggleList]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const media = window.matchMedia('(max-width: 640px)');
+    const syncResponsiveList = () => {
+      if (!media.matches) allowNarrowExpandedList.current = false;
+      setIsNarrow(media.matches);
+    };
+    syncResponsiveList();
+    media.addEventListener('change', syncResponsiveList);
+    window.addEventListener('resize', syncResponsiveList);
+    return () => {
+      media.removeEventListener('change', syncResponsiveList);
+      window.removeEventListener('resize', syncResponsiveList);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isNarrow && detail && !view.listCollapsed && !allowNarrowExpandedList.current) {
+      autoCollapsedList.current = true;
+      toggleListAction.current?.(true, { persist: false, reason: 'responsive' });
+    } else if (!isNarrow && autoCollapsedList.current && view.listCollapsed) {
+      autoCollapsedList.current = false;
+      toggleListAction.current?.(false, { persist: false, reason: 'responsive' });
+    }
+  }, [detail, isNarrow, view.listCollapsed]);
+
+  function toggleSessionList() {
+    const nextCollapsed = !view.listCollapsed;
+    if (isNarrow) {
+      allowNarrowExpandedList.current = !nextCollapsed;
+      if (!nextCollapsed) autoCollapsedList.current = false;
+    }
+    actions.onToggleList?.(nextCollapsed);
+  }
+
+  useEffect(() => {
+    if (view.createTargets.some((target) => target.id === createTargetId)) return;
+    setCreateTargetId(view.createTargets[0]?.id || '');
+  }, [createTargetId, view.createTargets]);
+
+  async function createSession(targetId = createTargetId) {
+    if (!targetId || creating || !actions.onCreate) return;
+    setCreating(true);
+    try {
+      await actions.onCreate(targetId);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  function toggleGroup(groupId) {
+    setExpandedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  }
+
+  const formatTime = labels.formatTime || defaultFormatTime;
+  return (
+    <div className={`cwu-browser ${view.listCollapsed ? 'is-list-collapsed' : ''}`}>
+      <aside className="cwu-browser-list" aria-hidden={view.listCollapsed} aria-label={labels.listAriaLabel || 'Session 列表'}>
+        <header className="cwu-browser-summary">
+          <span>{view.loading ? (labels.loading || '正在读取 Sessions…') : `${view.sessions.length} ${labels.countSuffix || '个 Session'}`}</span>
+          {view.createTargets.length && actions.onCreate ? (
+            <div className="cwu-browser-create">
+              <select
+                aria-label={labels.createTargetAriaLabel || '选择新 Session 的归属'}
+                disabled={creating}
+                onChange={(event) => setCreateTargetId(event.target.value)}
+                value={createTargetId}
+              >
+                {view.createTargets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
+              </select>
+              <button
+                aria-label={labels.createAriaLabel || '新建 Session'}
+                disabled={!createTargetId || creating}
+                onClick={() => createSession()}
+                title={labels.createLabel || '新建 Session'}
+                type="button"
+              >＋</button>
+            </div>
+          ) : null}
+        </header>
+
+        <div className="cwu-browser-toolbar">
+          <div role="group" aria-label={labels.groupAriaLabel || 'Session 展示方式'}>
+            <button
+              className={view.groupMode === 'context' ? 'is-active' : ''}
+              onClick={() => actions.onGroupModeChange?.('context')}
+              type="button"
+            >{labels.contextGroup || '按归属'}</button>
+            <button
+              className={view.groupMode === 'time' ? 'is-active' : ''}
+              onClick={() => actions.onGroupModeChange?.('time')}
+              type="button"
+            >{labels.timeGroup || '按时间'}</button>
+          </div>
+          {actions.onRefresh ? <button onClick={actions.onRefresh} type="button">{labels.refresh || '刷新'}</button> : null}
+        </div>
+
+        <div className="cwu-browser-groups">
+          {!view.loading && !groups.length ? (
+            <div className="cwu-browser-list-empty">{labels.listEmpty || '还没有 Session，可从上方新建。'}</div>
+          ) : groups.map((group) => {
+            const projectGroup = view.groupMode === 'context';
+            const expanded = projectGroup && expandedGroupIds.has(group.id);
+            const visibleSessions = projectGroup
+              ? group.sessions.slice(0, expanded ? 5 : 2)
+              : group.sessions;
+            const hiddenCount = group.sessions.length - visibleSessions.length;
+            return (
+            <section className={`cwu-browser-group ${expanded ? 'is-expanded' : 'is-collapsed'}`} key={group.id}>
+              <div className="cwu-browser-group-heading">
+                {projectGroup ? (
+                  <button
+                    aria-expanded={expanded}
+                    className="cwu-browser-group-toggle"
+                    onClick={() => toggleGroup(group.id)}
+                    title={expanded ? '折叠项目' : '展开项目'}
+                    type="button"
+                  >
+                    <span title={group.label}>{group.label}</span>
+                    <i aria-hidden="true">{expanded ? '⌃' : '⌄'}</i>
+                  </button>
+                ) : <span title={group.label}>{group.label}</span>}
+                <div>
+                  <small>{group.sessions.length}</small>
+                  {view.groupMode === 'context' && actions.onCreate
+                    && view.createTargets.some((target) => target.id === group.id) ? (
+                    <button
+                      aria-label={`${labels.createInContext || '在此归属下新建 Session'}：${group.label}`}
+                      disabled={creating}
+                      onClick={() => createSession(group.id)}
+                      title={labels.createLabel || '新建 Session'}
+                      type="button"
+                    >＋</button>
+                  ) : null}
+                </div>
+              </div>
+              {visibleSessions.map((session) => {
+                const unread = session.status === 'unread';
+                return (
+                <button
+                  className={`cwu-browser-row ${session.id === view.selectedSessionId ? 'is-active' : ''} ${unread ? 'is-unread' : ''}`}
+                  key={session.id}
+                  onClick={() => actions.onSelect?.(session)}
+                  type="button"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`cwu-browser-row-status cwu-status-${sessionStatusTone(session.status)}`}
+                  />
+                  <span className="cwu-browser-row-copy">
+                    <strong>{session.title}</strong>
+                    <small>{unread ? '新结果 · ' : ''}{view.groupMode === 'context' ? formatTime(session.updatedAt) : `${session.contextLabel} · ${formatTime(session.updatedAt)}`}</small>
+                  </span>
+                </button>
+                );
+              })}
+              {projectGroup && hiddenCount > 0 ? (
+                <button
+                  className="cwu-browser-group-more"
+                  onClick={() => toggleGroup(group.id)}
+                  type="button"
+                >{expanded ? '收起' : '展开'}</button>
+              ) : null}
+            </section>
+            );
+          })}
+        </div>
+      </aside>
+
+      <button
+        aria-expanded={!view.listCollapsed}
+        aria-label={view.listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
+        className="cwu-browser-list-toggle"
+        onClick={toggleSessionList}
+        title={view.listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
+        type="button"
+      >{view.listCollapsed ? '›' : '‹'}</button>
+
+      <section className="cwu-browser-detail" aria-label={labels.detailAriaLabel || 'Session 详情'}>
+        {detail ? <SessionWorkspace key={detail.session?.sessionId || 'session-detail'} {...detail} /> : (
+          <div className="cwu-browser-detail-empty">
+            <span>{labels.detailEyebrow || 'Session 详情'}</span>
+            <h2>{labels.detailEmptyTitle || '从左侧选择一个 Session'}</h2>
+            <p>{labels.detailEmptyBody || '这里会展示完整对话、执行过程和后续输入框。'}</p>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+export function SessionWorkspace({
+  session,
+  actions = {},
+  features = {},
+  labels = {},
+}) {
+  const view = useMemo(() => normalizeSessionViewModel(session), [session]);
+  const transcriptRef = useRef(null);
+  const followLatestRef = useRef(true);
+  const [draft, setDraft] = useState('');
+  const [attachments, setAttachments] = useState([]);
+  const [attachmentUploadState, setAttachmentUploadState] = useState({ status: 'idle', error: '' });
+  const [submitting, setSubmitting] = useState(false);
+  const [subagentsOpen, setSubagentsOpen] = useState(false);
+  const running = view.status === 'running';
+  const uploading = attachmentUploadState.status === 'uploading';
+  const canSubmit = Boolean((draft.trim() || attachments.length) && !submitting && !uploading && actions.onSubmit);
+  const composer = sessionComposerPresentation({ running, submitting, canSteer: features.steer !== false });
+  const technicalByTurn = new Map();
+  const lastMessageByTurn = new Map();
+  for (const item of view.technicalItems) {
+    const key = item.turnId || 'unassigned';
+    const values = technicalByTurn.get(key) || [];
+    values.push(item);
+    technicalByTurn.set(key, values);
+  }
+  for (const message of view.messages) {
+    if (message.turnId) lastMessageByTurn.set(message.turnId, message.id);
+  }
+
+  useEffect(() => {
+    followLatestRef.current = true;
+    setAttachments([]);
+    setAttachmentUploadState({ status: 'idle', error: '' });
+  }, [view.sessionId]);
+
+  useEffect(() => {
+    const target = transcriptRef.current;
+    if (target && followLatestRef.current) target.scrollTop = target.scrollHeight;
+  }, [view.sessionId, view.messages, view.status]);
+
+  function followLatest() {
+    followLatestRef.current = true;
+    requestAnimationFrame(() => {
+      const target = transcriptRef.current;
+      if (target) target.scrollTop = target.scrollHeight;
+    });
+  }
+
+  function updateFollowState(event) {
+    const target = event.currentTarget;
+    followLatestRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 120;
+  }
+
+  async function submit(mode = 'turn') {
+    const prompt = draft.trim();
+    if ((!prompt && !attachments.length) || submitting || uploading || !actions.onSubmit) return;
+    followLatest();
+    setSubmitting(true);
+    try {
+      await actions.onSubmit({
+        prompt,
+        mode,
+        attachments,
+      });
+      setDraft('');
+      setAttachments([]);
+      setAttachmentUploadState({ status: 'idle', error: '' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function uploadAttachments(event) {
+    const availableSlots = Math.max(0, 5 - attachments.length);
+    const files = [...(event.target.files || [])].slice(0, availableSlots);
+    event.target.value = '';
+    if (!files.length || !actions.onUploadAttachments) return;
+    setAttachmentUploadState({ status: 'uploading', error: '' });
+    const uploaded = [];
+    const errors = [];
+    for (const file of files) {
+      try {
+        uploaded.push(...((await actions.onUploadAttachments([file])) || []));
+      } catch (error) {
+        errors.push(error?.message || `${file.name} 上传失败`);
+      }
+    }
+    if (uploaded.length) setAttachments((current) => [...current, ...uploaded].slice(0, 5));
+    setAttachmentUploadState({
+      status: errors.length ? 'error' : 'idle',
+      error: errors[0] || '',
+    });
+  }
+
+  async function openSubagents() {
+    setSubagentsOpen(true);
+    await actions.onRefreshSubagents?.();
+  }
+
+  return (
+    <div className="cwu-session-shell" data-status={view.status}>
+      <header className="cwu-session-header">
+        <button className="cwu-quiet-button" onClick={actions.onBack} type="button">
+          ← {labels.back || '返回'}
+        </button>
+        <div className="cwu-session-heading">
+          <span>{view.contextLabel}</span>
+          <h1>{view.title}</h1>
+        </div>
+        <div className="cwu-session-actions">
+          <SessionStatus label={view.statusLabel} state={view.status} tone={sessionStatusTone(view.status)} />
+          {running && actions.onInterrupt ? (
+            <button className="cwu-button" onClick={actions.onInterrupt} type="button">停止</button>
+          ) : null}
+          {features.subagents && actions.onOpenSubagent ? (
+            <button className="cwu-button" onClick={openSubagents} type="button">
+              Agents{view.subagents.length ? ` ${view.subagents.length}` : ''}
+            </button>
+          ) : null}
+          {features.realtimeV3 && actions.onRealtimeMessage ? (
+            <RealtimePanel
+              enabled={!running && view.status !== 'connecting' && view.status !== 'error'}
+              event={session.realtimeEvent}
+              initialState={session.realtime}
+              labels={labels}
+              onFallback={actions.onRealtimeFallback}
+              onSend={actions.onRealtimeMessage}
+            />
+          ) : null}
+          {features.externalLink !== false && view.externalUrl ? (
+            <a className="cwu-button" href={view.externalUrl}>{labels.externalLink || 'Agent App'}</a>
+          ) : null}
+        </div>
+      </header>
+
+      <main className="cwu-session-main">
+        <agent-session-stream className="cwu-transcript" onScroll={updateFollowState} ref={transcriptRef}>
+          <div className="cwu-message-column">
+            {view.messages.length ? view.messages.map((message) => (
+              <React.Fragment key={message.id}>
+                <Message message={message} />
+                {features.technicalDetails
+                  && message.turnId
+                  && lastMessageByTurn.get(message.turnId) === message.id
+                  && technicalByTurn.get(message.turnId)?.length ? (
+                    <TechnicalDetails items={technicalByTurn.get(message.turnId)} />
+                  ) : null}
+              </React.Fragment>
+            )) : (
+              <div className="cwu-empty">
+                <h2>{labels.emptyTitle || '开始处理这项工作'}</h2>
+                <p>{labels.emptyBody || '输入需求后，这个 Session 会保留完整过程。'}</p>
+              </div>
+            )}
+
+            {view.status === 'running' ? (
+              <RuntimeProgress plan={view.plan} />
+            ) : null}
+
+            {view.pendingRequests.map((request) => (
+              <RequestCard
+                key={request.token}
+                request={request}
+                onRespond={actions.onRespondToRequest}
+              />
+            ))}
+
+            {features.technicalDetails && technicalByTurn.get('unassigned')?.length ? (
+              <TechnicalDetails items={technicalByTurn.get('unassigned')} />
+            ) : null}
+          </div>
+        </agent-session-stream>
+
+        <footer className="cwu-composer-wrap">
+          <agent-session-composer className="cwu-composer">
+          <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); submit(composer.primaryMode); }}>
+            {attachments.length || uploading || attachmentUploadState.error ? (
+              <div className="cwu-attachments" aria-live="polite">
+                {attachments.map((attachment) => (
+                  <span className="cwu-attachment" key={attachment.id}>
+                    <span title={attachment.name}>{attachment.name}</span>
+                    <button
+                      aria-label={`移除 ${attachment.name}`}
+                      disabled={submitting}
+                      onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                      type="button"
+                    >×</button>
+                  </span>
+                ))}
+                {uploading ? <span className="cwu-upload-status">上传中…</span> : null}
+                {attachmentUploadState.error ? <span className="cwu-upload-error">{attachmentUploadState.error}</span> : null}
+              </div>
+            ) : null}
+            <textarea
+              aria-label={labels.composerPlaceholder || '输入需求'}
+              disabled={submitting}
+              maxLength={12000}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  submit(composer.primaryMode);
+                }
+              }}
+              placeholder={labels.composerPlaceholder || '补充需求、反馈问题，或者继续修改…'}
+              rows={3}
+              value={draft}
+            />
+            <div className="cwu-composer-footer">
+              <div className="cwu-composer-meta">
+                {features.attachments !== false && actions.onUploadAttachments ? (
+                  <label
+                    aria-disabled={submitting || uploading || attachments.length >= 5}
+                    className="cwu-attach-button"
+                    title={attachments.length >= 5 ? '单次最多 5 个附件' : '添加图片或附件'}
+                  >
+                    <input
+                      aria-label="添加图片或附件"
+                      disabled={submitting || uploading || attachments.length >= 5}
+                      multiple
+                      onChange={uploadAttachments}
+                      type="file"
+                    />
+                    <span aria-hidden="true">＋</span>附件
+                  </label>
+                ) : null}
+                <span>{view.executionProfile}</span>
+              </div>
+              <div>
+                {composer.showSecondary ? (
+                  <button className="cwu-button" disabled={!canSubmit} onClick={() => submit(composer.secondaryMode)} type="button">
+                    {composer.secondaryLabel}
+                  </button>
+                ) : null}
+                <button className="cwu-send" disabled={!canSubmit} type="submit">
+                  {composer.primaryLabel}
+                </button>
+              </div>
+            </div>
+          </form>
+          </agent-session-composer>
+        </footer>
+      </main>
+      {subagentsOpen ? (
+        <div className="cwu-subagent-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setSubagentsOpen(false);
+        }} role="presentation">
+          <section aria-labelledby="cwu-subagent-title" className="cwu-subagent-dialog" role="dialog">
+            <header>
+              <div><span>Codex native</span><h2 id="cwu-subagent-title">子 Agent</h2></div>
+              <div>
+                {actions.onRefreshSubagents ? <button className="cwu-button" onClick={actions.onRefreshSubagents} type="button">刷新</button> : null}
+                <button aria-label="关闭" className="cwu-subagent-close" onClick={() => setSubagentsOpen(false)} type="button">×</button>
+              </div>
+            </header>
+            <p>来自当前 Session 的 Codex 子线程；项目归属仍由当前产品提供。</p>
+            <agent-subagent-list className="cwu-subagent-list">
+              {view.subagents.length ? view.subagents.map((agent) => (
+                <SubagentCard actions={actions} agent={agent} key={agent.id} />
+              )) : <div className="cwu-subagent-empty">当前 Session 还没有子 Agent。</div>}
+            </agent-subagent-list>
+          </section>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SubagentCard({ agent, actions }) {
+  const [stopping, setStopping] = useState(false);
+  const title = [agent.nickname, agent.role].filter(Boolean).join(' · ') || agent.name;
+  const meta = [agent.model, agent.reasoningEffort].filter(Boolean).join(' · ');
+  async function stop() {
+    if (!actions.onStopSubagent || stopping) return;
+    setStopping(true);
+    try { await actions.onStopSubagent(agent); } finally { setStopping(false); }
+  }
+  return (
+    <agent-subagent-card className="cwu-subagent-card" data-state={agent.statusType}>
+      <header><strong>{title}</strong><span>{agent.state ? `${agent.status} · ${agent.state}` : agent.status}</span></header>
+      {meta ? <small>{meta}</small> : null}
+      <p>{agent.prompt || agent.stateMessage || agent.name}</p>
+      <div>
+        <button className="cwu-button" onClick={() => actions.onOpenSubagent?.(agent)} type="button">打开线程</button>
+        {agent.canStop && actions.onStopSubagent ? (
+          <button className="cwu-button cwu-danger" disabled={stopping} onClick={stop} type="button">
+            {stopping ? '正在停止…' : '停止 Agent'}
+          </button>
+        ) : null}
+      </div>
+    </agent-subagent-card>
+  );
+}
+
+export function SessionStatus({ label = '空闲', state = 'idle', tone = 'idle' }) {
+  return <agent-session-status label={label} state={state} tone={tone} />;
+}
+
+function RealtimePanel({ enabled, event, initialState, labels, onFallback, onSend }) {
+  const launchRef = useRef(null);
+  const dialogRef = useRef(null);
+  const dismissRef = useRef(null);
+  const startRef = useRef(null);
+  const stopRef = useRef(null);
+  const fallbackRef = useRef(null);
+  const voiceRef = useRef(null);
+  const statusRef = useRef(null);
+  const transcriptRef = useRef(null);
+  const errorRef = useRef(null);
+  const outputRef = useRef(null);
+  const controllerRef = useRef(null);
+  const sendRef = useRef(onSend);
+  const fallbackActionRef = useRef(onFallback);
+
+  useEffect(() => {
+    sendRef.current = onSend;
+    fallbackActionRef.current = onFallback;
+  }, [onFallback, onSend]);
+
+  useEffect(() => {
+    const factory = globalThis.window?.AgentRealtime?.create;
+    if (!factory) return undefined;
+    let controller;
+    controller = factory({
+      launchButton: launchRef.current,
+      dialog: dialogRef.current,
+      dismissButton: dismissRef.current,
+      startButton: startRef.current,
+      stopButton: stopRef.current,
+      fallbackButton: fallbackRef.current,
+      voiceSelect: voiceRef.current,
+      statusElement: statusRef.current,
+      transcriptElement: transcriptRef.current,
+      errorElement: errorRef.current,
+      outputAudio: outputRef.current,
+      send: (message) => {
+        Promise.resolve(sendRef.current?.(message)).catch((error) => {
+          controller.handleMessage('realtime-error', { message: error?.message || '实时语音请求失败。' });
+        });
+        return true;
+      },
+      fallbackToDictation: () => fallbackActionRef.current?.(),
+    });
+    controllerRef.current = controller;
+    controller.install();
+    if (initialState) controller.handleMessage('realtime-state', initialState);
+    return () => {
+      controller.handleMessage('realtime-state', { status: 'idle', transcript: [] });
+      controllerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    controllerRef.current?.setEnabled(enabled);
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!event?.type) return;
+    controllerRef.current?.handleMessage(event.type, event.payload || {});
+  }, [event]);
+
+  return (
+    <>
+      <button className="cwu-button cwu-realtime-launch" ref={launchRef} title="Realtime V3" type="button">
+        {labels.realtimeButton || '语音'}
+      </button>
+      <dialog className="cwu-realtime-dialog" ref={dialogRef}>
+        <section className="cwu-realtime-shell">
+          <header>
+            <div><span>Experimental · Realtime V3</span><h2>{labels.realtimeTitle || '实时语音对话'}</h2></div>
+            <button aria-label="收起" className="cwu-realtime-close" ref={dismissRef} type="button">×</button>
+          </header>
+          <div className="cwu-realtime-controls">
+            <label><span>声音</span><select defaultValue="juniper" ref={voiceRef}><option value="juniper">juniper</option></select></label>
+            <strong data-state="idle" ref={statusRef}>尚未开始</strong>
+          </div>
+          <audio autoPlay hidden playsInline ref={outputRef} />
+          <div aria-live="polite" className="cwu-realtime-transcript" ref={transcriptRef} />
+          <p className="cwu-realtime-error hidden" ref={errorRef} />
+          <div className="cwu-realtime-actions">
+            <button ref={fallbackRef} type="button">改用文字输入</button>
+            <button disabled ref={stopRef} type="button">停止</button>
+            <button className="cwu-send" ref={startRef} type="button">开始实时对话</button>
+          </div>
+        </section>
+      </dialog>
+    </>
+  );
+}
+
+function Message({ message }) {
+  const isUser = message.role === 'user';
+  const isCommentary = message.phase === 'commentary';
+  return (
+    <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'}`} phase={message.phase} role={message.role}>
+      {!isUser ? <div className="cwu-message-label">{message.label}</div> : null}
+      <div className="cwu-message-body">
+        {isUser ? message.content : <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || '…'}</ReactMarkdown>}
+      </div>
+      {isUser && message.attachments?.length ? (
+        <div className="cwu-message-attachments" aria-label="本轮附件">
+          {message.attachments.map((attachment) => (
+            <span key={attachment.id} title={attachment.name}>
+              <i aria-hidden="true">{attachment.kind === 'image' ? '▧' : attachment.kind === 'audio' ? '♪' : '▤'}</i>
+              {attachment.name}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </agent-session-message>
+  );
+}
+
+function TechnicalDetails({ items }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="cwu-technical">
+      <button
+        aria-expanded={open}
+        className="cwu-technical-toggle"
+        onClick={() => setOpen((value) => !value)}
+        type="button"
+      >
+        <span>本轮执行详情</span>
+        <small>{items.length} 项 · {open ? '收起' : '展开'}</small>
+      </button>
+      {open ? (
+        <div className="cwu-technical-list">
+          {items.map((item) => (
+            <details key={item.id} open={item.status === 'inProgress'}>
+              <summary><span>{item.title}</span><em>{item.status}</em></summary>
+              {item.detail ? <pre>{item.detail}</pre> : null}
+            </details>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RuntimeProgress({ plan }) {
+  return (
+    <section className="cwu-progress" aria-live="polite">
+      <div className="cwu-progress-title"><i aria-hidden="true" />正在处理</div>
+      {plan.length ? (
+        <ol>{plan.map((step) => <li data-status={step.status} key={step.id}>{step.text}</li>)}</ol>
+      ) : <p>Agent 正在继续处理，新的进展会自动出现。</p>}
+    </section>
+  );
+}
+
+function RequestCard({ request, onRespond }) {
+  if (!onRespond) return null;
+  if (request.kind === 'item/tool/requestUserInput') {
+    return <UserInputCard onRespond={onRespond} request={request} />;
+  }
+  return (
+    <section className="cwu-request">
+      <div><strong>{request.title}</strong><p>{request.detail}</p></div>
+      <div>
+        <button className="cwu-button" onClick={() => onRespond({ token: request.token, decision: 'decline' })} type="button">拒绝</button>
+        <button className="cwu-button" onClick={() => onRespond({ token: request.token, decision: 'acceptForSession' })} type="button">本 Session 允许</button>
+        <button className="cwu-send" onClick={() => onRespond({ token: request.token, decision: 'accept' })} type="button">允许一次</button>
+      </div>
+    </section>
+  );
+}
+
+function UserInputCard({ request, onRespond }) {
+  const [answers, setAnswers] = useState({});
+  const [saving, setSaving] = useState(false);
+  const questions = request.questions || [];
+  const containsSecret = questions.some((question) => question.isSecret);
+  const complete = questions.length > 0 && questions.every((question) => String(answers[question.id] || '').trim());
+
+  function choose(questionId, value) {
+    if (saving) return;
+    setAnswers((current) => ({ ...current, [questionId]: value }));
+  }
+
+  async function submit() {
+    if (!complete || containsSecret || saving) return;
+    setSaving(true);
+    try {
+      await onRespond({
+        token: request.token,
+        answers: Object.fromEntries(questions.map((question) => [
+          question.id,
+          { answers: [String(answers[question.id]).trim()] },
+        ])),
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="cwu-user-input" aria-label="需要你的选择">
+      <div className="cwu-user-input-heading">
+        <strong>需要你的选择</strong>
+        <span>{containsSecret ? '敏感信息请在安全配置入口提供' : '提交后 Agent 会继续'}</span>
+      </div>
+      {questions.map((question) => (
+        <div className="cwu-user-input-question" key={question.id}>
+          <div>{question.header ? <strong>{question.header}</strong> : null}<span>{question.question}</span></div>
+          {question.isSecret ? null : question.options.length ? (
+            <div className="cwu-user-input-options">
+              {question.options.map((option) => (
+                <button
+                  aria-pressed={answers[question.id] === option.label}
+                  className={answers[question.id] === option.label ? 'is-selected' : ''}
+                  disabled={saving}
+                  key={option.label}
+                  onClick={() => choose(question.id, option.label)}
+                  type="button"
+                >
+                  <strong>{option.label}</strong>
+                  {option.description ? <span>{option.description}</span> : null}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <input
+              aria-label={question.header || question.question}
+              disabled={saving}
+              maxLength={2000}
+              onChange={(event) => choose(question.id, event.target.value)}
+              placeholder="输入回答"
+              type="text"
+              value={answers[question.id] || ''}
+            />
+          )}
+        </div>
+      ))}
+      <button className="cwu-send" disabled={!complete || containsSecret || saving} onClick={submit} type="button">
+        {saving ? '提交中…' : '提交并继续'}
+      </button>
+    </section>
+  );
+}
+
+function defaultFormatTime(value) {
+  if (!value) return '时间未知';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(value));
+}
+
+export {
+  groupSessionSummaries,
+  normalizeSessionBrowserViewModel,
+  normalizeSessionViewModel,
+  sessionStatusTone,
+} from './model.js';
