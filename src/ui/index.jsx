@@ -8,6 +8,7 @@ import '../browser/subagent-elements.js';
 
 import {
   groupSessionSummaries,
+  extractInlineVisualizations,
   normalizeSessionBrowserViewModel,
   normalizeSessionViewModel,
   sessionStatusTone,
@@ -385,7 +386,12 @@ export function SessionWorkspace({
           <div className="cwu-message-column">
             {view.messages.length ? view.messages.map((message) => (
               <React.Fragment key={message.id}>
-                <Message message={message} onOpenLink={actions.onOpenLink} />
+                <Message
+                  message={message}
+                  onOpenLink={actions.onOpenLink}
+                  sessionId={view.sessionId}
+                  visualizationUrl={actions.visualizationUrl}
+                />
                 {features.technicalDetails
                   && message.turnId
                   && lastMessageByTurn.get(message.turnId) === message.id
@@ -688,16 +694,37 @@ function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink }) {
   );
 }
 
-function Message({ message, onOpenLink }) {
+function Message({ message, onOpenLink, sessionId, visualizationUrl }) {
   const isUser = message.role === 'user';
   const isCommentary = message.phase === 'commentary';
   const markdownComponents = markdownLinkComponents(onOpenLink);
+  const inline = extractInlineVisualizations(message.content);
+  const visualizations = typeof visualizationUrl === 'function'
+    ? inline.files.map((file) => ({
+        file,
+        src: visualizationUrl({ file, messageId: message.id, sessionId }),
+      })).filter((item) => item.src)
+    : [];
+  const renderedContent = visualizations.length ? inline.markdown : message.content;
   return (
     <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'}`} phase={message.phase} role={message.role}>
       {!isUser ? <div className="cwu-message-label">{message.label}</div> : null}
       <div className="cwu-message-body">
-        {isUser ? message.content : <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>{message.content || '…'}</ReactMarkdown>}
+        {isUser ? renderedContent : <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>{renderedContent || (visualizations.length ? '' : '…')}</ReactMarkdown>}
       </div>
+      {message.media?.length ? <MediaGallery items={message.media} /> : null}
+      {visualizations.map((item) => (
+        <div className="cwu-inline-visualization" key={item.file}>
+          <iframe
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            sandbox="allow-scripts"
+            src={item.src}
+            title={item.file}
+          />
+          <a href={item.src} rel="noreferrer" target="_blank">在新窗口打开</a>
+        </div>
+      ))}
       {isUser && message.attachments?.length ? (
         <div className="cwu-message-attachments" aria-label="本轮附件">
           {message.attachments.map((attachment) => (
@@ -709,6 +736,18 @@ function Message({ message, onOpenLink }) {
         </div>
       ) : null}
     </agent-session-message>
+  );
+}
+
+function MediaGallery({ items }) {
+  return (
+    <div className="cwu-message-media" aria-label="消息图片">
+      {items.map((item) => (
+        <a href={item.src} key={item.id} rel="noreferrer" target="_blank">
+          <img alt={item.alt} loading="lazy" src={item.src} />
+        </a>
+      ))}
+    </div>
   );
 }
 
@@ -731,6 +770,7 @@ function TechnicalDetails({ items }) {
             <details key={item.id} open={item.status === 'inProgress'}>
               <summary><span>{item.title}</span><em>{item.status}</em></summary>
               {item.detail ? <pre>{item.detail}</pre> : null}
+              {item.media?.length ? <MediaGallery items={item.media} /> : null}
             </details>
           ))}
         </div>

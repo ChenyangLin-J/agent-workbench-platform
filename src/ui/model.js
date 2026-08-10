@@ -26,6 +26,7 @@ export function normalizeSessionViewModel(value = {}) {
                 kind: ['image', 'audio', 'file'].includes(attachment?.kind) ? attachment.kind : 'file',
               }))
             : [],
+          media: normalizeMedia(message?.media, `message-${index}`),
         }))
       : [],
     plan: Array.isArray(value.plan)
@@ -42,6 +43,7 @@ export function normalizeSessionViewModel(value = {}) {
           status: String(item?.status || ''),
           detail: String(item?.detail || ''),
           turnId: stringOrNull(item?.turnId),
+          media: normalizeMedia(item?.media, `technical-${index}`),
         }))
       : [],
     pendingRequests: Array.isArray(value.pendingRequests)
@@ -86,6 +88,29 @@ export function normalizeSessionViewModel(value = {}) {
     executionProfile: String(value.executionProfile || ''),
     externalUrl: stringOrNull(value.externalUrl),
   };
+}
+
+export function extractInlineVisualizations(content = '') {
+  const files = [];
+  const markdown = String(content).replace(
+    /^[ \t]*::codex-inline-vis\{file="([a-z0-9](?:[a-z0-9-]{0,126})\.html)"\}[ \t]*$/gim,
+    (_, file) => {
+      files.push(file);
+      return '';
+    },
+  ).replace(/\n{3,}/g, '\n\n').trim();
+  return { markdown, files };
+}
+
+function normalizeMedia(value, fallbackPrefix) {
+  return Array.isArray(value)
+    ? value.map((media, index) => ({
+        id: String(media?.id || `${fallbackPrefix}-media-${index}`),
+        kind: media?.kind === 'image' ? 'image' : 'file',
+        src: String(media?.src || ''),
+        alt: String(media?.alt || media?.name || '图片'),
+      })).filter((media) => media.kind === 'image' && media.src)
+    : [];
 }
 
 export function normalizeSessionBrowserViewModel(value = {}) {

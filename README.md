@@ -8,7 +8,7 @@ The package lets multiple products reuse one implementation while keeping their 
 
 - Codex App Server connections for stdio and WebSocket transports
 - Provider-neutral Session Kernel with queue, steer, interrupt, request, and replay contracts
-- Session presentation, message stream, Composer, status, and responsive React UI
+- Session presentation, message stream, image/inline-visualization rendering, Composer, status, and responsive React UI
 - Codex-native Sub Agent discovery, metadata, active-Turn interruption, and thread-tree normalization
 - Attachments, approvals, and Realtime V3 browser contracts
 - On-demand shared MCP and Playwright Browser Provider primitives
@@ -24,7 +24,7 @@ Pin a release tag from any GitHub or GitLab consumer:
 ```json
 {
   "dependencies": {
-    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.1.2.tar.gz"
+    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.1.3.tar.gz"
   }
 }
 ```

@@ -130,6 +130,12 @@
 .cwu-message-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .cwu-message-attachments > span { max-width: 260px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--cwu-border); border-radius: 8px; background: var(--cwu-surface); padding: 5px 8px; color: var(--cwu-muted); font-size: 10px; }
 .cwu-message-attachments i { color: var(--cwu-accent); font-style: normal; }
+.cwu-message-media { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 10px; max-height: 520px; margin-top: 12px; overflow: auto; }
+.cwu-message-media a { display: block; min-width: 0; border: 1px solid var(--cwu-border); border-radius: 12px; overflow: hidden; background: var(--cwu-soft); }
+.cwu-message-media img { display: block; width: 100%; max-height: 420px; object-fit: contain; }
+.cwu-inline-visualization { margin-top: 14px; }
+.cwu-inline-visualization iframe { display: block; width: 100%; height: min(620px, 68vh); border: 1px solid var(--cwu-border); border-radius: 12px; background: var(--cwu-surface); }
+.cwu-inline-visualization > a { display: inline-block; margin-top: 6px; color: var(--cwu-muted); font-size: 11px; }
 .cwu-document-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; background: rgba(20, 18, 16, .46); padding: 28px; backdrop-filter: blur(3px); }
 .cwu-document-preview { width: min(960px, 100%); height: min(82vh, 900px); min-height: 320px; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--cwu-border); border-radius: 14px; background: var(--cwu-surface); box-shadow: 0 24px 80px rgba(20, 18, 16, .28); }
 .cwu-document-preview > header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--cwu-border); padding: 10px 14px 10px 18px; }
@@ -175,6 +181,7 @@
 .cwu-technical-list summary { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; padding: 10px 12px; font-size: 12px; }
 .cwu-technical-list summary em { color: var(--cwu-muted); font-size: 10px; font-style: normal; }
 .cwu-technical-list pre { max-height: 260px; margin: 0; overflow: auto; white-space: pre-wrap; background: var(--cwu-soft); padding: 10px 12px; color: var(--cwu-muted); font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cwu-technical-list .cwu-message-media { margin: 10px 12px 12px; }
 .cwu-composer-wrap { position: sticky; z-index: 8; bottom: 0; pointer-events: none; padding: 0 20px 22px; background: linear-gradient(transparent, var(--cwu-bg) 35%); }
 .cwu-composer { width: min(820px, 100%); margin: 0 auto; border: 1px solid var(--cwu-border); border-radius: 16px; background: var(--cwu-surface); box-shadow: 0 12px 36px rgba(40, 34, 28, .12); padding: 10px; pointer-events: auto; }
 .cwu-composer-form { display: contents; }
