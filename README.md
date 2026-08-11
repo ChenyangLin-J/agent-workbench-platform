@@ -25,10 +25,12 @@ Pin a release tag from any GitHub or GitLab consumer:
 ```json
 {
   "dependencies": {
-    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.3.2.tar.gz"
+    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.3.9.tar.gz"
   }
 }
 ```
+
+Release tags follow semantic compatibility boundaries. Consumers may automatically accept a newer patch in their current minor line after their own tests pass; minor and major upgrades require product-level review. A package change on `main` must bump `package.json`: GitHub Actions tests it, creates the matching tag and release, and rejects package changes that reuse an existing version.
 
 Consumers provide React and their own compatible Codex CLI version. This lets independent products keep separate accounts and upgrade from `0.145.x` to `0.147.x` without forking Core:
 

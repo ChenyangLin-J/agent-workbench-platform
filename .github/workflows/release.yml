@@ -1,0 +1,43 @@
+name: release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Validate version and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          tag="v${version}"
+          if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+            if git diff --quiet "${tag}..HEAD" -- src scripts package.json package-lock.json; then
+              echo "${tag} already covers the current package version; no release is needed."
+              exit 0
+            fi
+            echo "Package files changed after ${tag}. Bump package.json before merging." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "${tag}"
+          git push origin "${tag}"
+          gh release create "${tag}" --title "${tag}" --generate-notes
