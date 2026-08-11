@@ -46,6 +46,8 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /extensions\.renderComposerOverlay/);
   assert.match(source, /extensions\.renderHeaderActions/);
   assert.match(source, /extensions\.renderMessageContent/);
+  assert.match(source, /actions\.onEditMessage/);
+  assert.match(source, /actions\.onForkMessage/);
   assert.match(source, /data-message-id=\{message\.id\}/);
   assert.match(source, /normalizeSessionFeatures\(features\)/);
   assert.match(source, /normalizeAttachmentPolicy\(attachmentPolicy\)/);
@@ -69,6 +71,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /cwu-queued-turns/);
   assert.match(source, /const submittedDraft = draft/);
   assert.match(source, /setDraft\(submittedDraft\)/);
+  assert.match(source, /handleAttachmentDrop/);
+  assert.match(source, /松开以上传附件/);
   assert.match(styles, /\.cwu-browser-row-action/);
   assert.match(source, /<svg aria-hidden="true" fill="none" viewBox="0 0 24 24">/);
   assert.match(styles, /\.cwu-browser-row-action svg/);
@@ -91,6 +95,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   const session = normalizeSessionViewModel({
     isDraft: true,
     composerDisabled: true,
+    messages: [{ id: 'm1', role: 'user', content: '问题', canEdit: true, canFork: true }],
     hasEarlierTurns: true,
     loadedTurnCount: 20,
     queuedTurns: [{ id: 'q1', prompt: '继续', attachments: [{ name: 'a.png' }] }],
@@ -98,6 +103,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(session.hasEarlierTurns, true);
   assert.equal(session.isDraft, true);
   assert.equal(session.composerDisabled, true);
+  assert.equal(session.messages[0].canEdit, true);
+  assert.equal(session.messages[0].canFork, true);
   assert.equal(session.loadedTurnCount, 20);
   assert.equal(session.queuedTurns[0].attachments[0].name, 'a.png');
 });

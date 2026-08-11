@@ -21,6 +21,8 @@ export function normalizeSessionViewModel(value = {}) {
           id: String(message?.id || `message-${index}`),
           content: String(message?.content || ''),
           turnId: stringOrNull(message?.turnId),
+          canEdit: Boolean(message?.canEdit),
+          canFork: Boolean(message?.canFork),
           attachments: Array.isArray(message?.attachments)
             ? message.attachments.map((attachment, attachmentIndex) => ({
                 id: String(attachment?.id || `attachment-${index}-${attachmentIndex}`),

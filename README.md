@@ -59,7 +59,7 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 
 ## UI ownership
 
-`SessionBrowser` and `SessionWorkspace` provide the standard Session search/list/archive interaction, transcript and earlier-message paging, queued turns, requests, Composer, attachments, status, Sub Agent, and Realtime UI. Products supply grouping labels, archive and paging actions, and their own navigation. They can append product-specific content after a standard message with `extensions.renderAfterMessage`; Core does not know about projects, analysis cards, reports, or artifact canvases.
+`SessionBrowser` and `SessionWorkspace` provide the standard Session search/list/archive interaction, transcript and earlier-message paging, queued turns, requests, Composer, click/drag attachment upload, user-message Edit/Fork actions, status, Sub Agent, and Realtime UI. Products mark eligible messages with `canEdit` / `canFork`, implement `actions.onEditMessage` / `actions.onForkMessage`, and supply grouping labels, archive and paging actions, and their own navigation. They can append product-specific content after a standard message with `extensions.renderAfterMessage`; Core does not know about projects, analysis cards, reports, or artifact canvases.
 
 ## Development
 

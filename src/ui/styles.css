@@ -155,6 +155,18 @@
 .cwu-message-body code { font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cwu-message-body table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .cwu-message-body th, .cwu-message-body td { border: 1px solid var(--cwu-border); padding: 7px 9px; text-align: left; }
+.cwu-message-actions { display: flex; justify-content: flex-end; gap: 3px; margin-top: 6px; opacity: 0; transition: opacity 120ms ease; }
+.cwu-message:hover .cwu-message-actions, .cwu-message:focus-within .cwu-message-actions { opacity: 1; }
+.cwu-message-actions button { border: 0; border-radius: 7px; background: transparent; color: var(--cwu-muted); padding: 3px 6px; font: inherit; font-size: 10px; cursor: pointer; }
+.cwu-message-actions button:hover, .cwu-message-actions button:focus-visible { background: var(--cwu-surface); color: var(--cwu-text); }
+.cwu-message-actions button:disabled { cursor: default; opacity: .45; }
+.cwu-message.is-user.is-editing { width: min(620px, 100%); max-width: 100%; background: transparent; padding: 0; }
+.cwu-message-editor { display: grid; gap: 9px; border: 1px solid var(--cwu-border); border-radius: 13px; background: var(--cwu-surface); padding: 10px; box-shadow: 0 8px 24px rgba(40, 34, 28, .1); }
+.cwu-message-editor textarea { width: 100%; min-height: 72px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--cwu-text); padding: 2px; font: inherit; font-size: 14px; line-height: 1.55; }
+.cwu-message-editor > div { display: flex; justify-content: flex-end; gap: 6px; }
+.cwu-message-editor button { min-height: 30px; border: 1px solid var(--cwu-border); border-radius: 8px; background: var(--cwu-surface); color: var(--cwu-text); padding: 5px 10px; font: inherit; font-size: 11px; cursor: pointer; }
+.cwu-message-editor button:last-child { border-color: var(--cwu-text); background: var(--cwu-text); color: var(--cwu-surface); }
+.cwu-message-editor button:disabled { cursor: default; opacity: .45; }
 .cwu-message-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .cwu-message-attachments > span { max-width: 260px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--cwu-border); border-radius: 8px; background: var(--cwu-surface); padding: 5px 8px; color: var(--cwu-muted); font-size: 10px; }
 .cwu-message-attachments i { color: var(--cwu-accent); font-style: normal; }
@@ -223,7 +235,9 @@
 .cwu-queued-turns small { display: block; margin-top: 4px; overflow: hidden; color: var(--cwu-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
 .cwu-queued-turns article button { flex: 0 0 auto; border: 0; background: transparent; color: var(--cwu-error); padding: 5px 6px; font: inherit; font-size: 10px; cursor: pointer; }
 .cwu-queued-turns article button:disabled { cursor: default; opacity: .45; }
-.cwu-composer { width: min(820px, 100%); margin: 0 auto; border: 1px solid var(--cwu-border); border-radius: 16px; background: var(--cwu-surface); box-shadow: 0 12px 36px rgba(40, 34, 28, .12); padding: 10px; pointer-events: auto; }
+.cwu-composer { position: relative; width: min(820px, 100%); margin: 0 auto; border: 1px solid var(--cwu-border); border-radius: 16px; background: var(--cwu-surface); box-shadow: 0 12px 36px rgba(40, 34, 28, .12); padding: 10px; pointer-events: auto; }
+.cwu-composer.is-dragging { border-color: var(--cwu-accent); box-shadow: 0 12px 36px rgba(40, 34, 28, .12), 0 0 0 3px color-mix(in srgb, var(--cwu-accent) 14%, transparent); }
+.cwu-attachment-dropzone { position: absolute; z-index: 4; inset: 5px; display: grid; place-items: center; border: 1px dashed var(--cwu-accent); border-radius: 12px; background: color-mix(in srgb, var(--cwu-surface) 92%, var(--cwu-accent)); color: var(--cwu-accent); font-size: 12px; font-weight: 650; pointer-events: none; }
 .cwu-composer-form { display: contents; }
 .cwu-attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 4px 5px; }
 .cwu-attachment { max-width: min(260px, 100%); display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--cwu-border); border-radius: 8px; background: var(--cwu-soft); padding: 5px 6px 5px 8px; color: var(--cwu-text); font-size: 10px; }
@@ -265,6 +279,7 @@
   .cwu-session-actions { grid-column: 1 / -1; justify-content: space-between; }
   .cwu-transcript { padding: 24px 14px 20px; }
   .cwu-message.is-user { max-width: 88%; }
+  .cwu-message-actions { opacity: 1; }
   .cwu-request { align-items: stretch; flex-direction: column; }
   .cwu-request > div:last-child { flex-wrap: wrap; }
   .cwu-composer-wrap { padding: 0 10px 12px; }

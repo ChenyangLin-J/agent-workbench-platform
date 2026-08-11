@@ -340,6 +340,7 @@ export function SessionWorkspace({
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [attachmentUploadState, setAttachmentUploadState] = useState({ status: 'idle', error: '' });
+  const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [deletingQueuedIds, setDeletingQueuedIds] = useState(() => new Set());
@@ -364,6 +365,7 @@ export function SessionWorkspace({
     followLatestRef.current = true;
     setAttachments([]);
     setAttachmentUploadState({ status: 'idle', error: '' });
+    setAttachmentDragActive(false);
   }, [view.sessionId]);
 
   useEffect(() => {
@@ -416,14 +418,24 @@ export function SessionWorkspace({
     }
   }
 
-  async function uploadAttachments(event) {
+  async function uploadFiles(fileList) {
     const availableSlots = Math.max(0, uploadPolicy.maxCount - attachments.length);
-    const files = [...(event.target.files || [])].slice(0, availableSlots);
-    event.target.value = '';
-    if (!files.length || !actions.onUploadAttachments) return;
+    const candidates = [...(fileList || [])].slice(0, availableSlots);
+    const files = candidates.filter((file) => (
+      file.size <= uploadPolicy.maxBytes && fileMatchesAccept(file, uploadPolicy.accept)
+    ));
+    if (!actions.onUploadAttachments) return;
+    if (!files.length) {
+      if (candidates.length) {
+        setAttachmentUploadState({ status: 'error', error: '附件不符合格式或大小限制。' });
+      }
+      return;
+    }
     setAttachmentUploadState({ status: 'uploading', error: '' });
     const uploaded = [];
-    const errors = [];
+    const errors = candidates.length > files.length
+      ? ['部分附件不符合格式或大小限制。']
+      : [];
     for (const file of files) {
       try {
         uploaded.push(...((await actions.onUploadAttachments([file])) || []));
@@ -436,6 +448,33 @@ export function SessionWorkspace({
       status: errors.length ? 'error' : 'idle',
       error: errors[0] || '',
     });
+  }
+
+  async function uploadAttachments(event) {
+    const files = event.target.files;
+    event.target.value = '';
+    await uploadFiles(files);
+  }
+
+  function handleAttachmentDrag(event) {
+    if (!event.dataTransfer?.types?.includes('Files') || !actions.onUploadAttachments) return;
+    event.preventDefault();
+    if (composerDisabled || uploading || attachments.length >= uploadPolicy.maxCount) return;
+    event.dataTransfer.dropEffect = 'copy';
+    setAttachmentDragActive(true);
+  }
+
+  function handleAttachmentDragLeave(event) {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setAttachmentDragActive(false);
+  }
+
+  async function handleAttachmentDrop(event) {
+    if (!event.dataTransfer?.types?.includes('Files') || !actions.onUploadAttachments) return;
+    event.preventDefault();
+    setAttachmentDragActive(false);
+    if (composerDisabled || uploading || attachments.length >= uploadPolicy.maxCount) return;
+    await uploadFiles(event.dataTransfer.files);
   }
 
   async function openSubagents() {
@@ -536,6 +575,8 @@ export function SessionWorkspace({
               <React.Fragment key={message.id}>
                 <Message
                   message={message}
+                  onEditMessage={actions.onEditMessage}
+                  onForkMessage={actions.onForkMessage}
                   onOpenLink={actions.onOpenLink}
                   renderContent={extensions.renderMessageContent}
                   session={view}
@@ -600,7 +641,16 @@ export function SessionWorkspace({
               </div>
             </section>
           ) : null}
-          <agent-session-composer className="cwu-composer">
+          <agent-session-composer
+            className={`cwu-composer ${attachmentDragActive ? 'is-dragging' : ''}`}
+            onDragEnter={handleAttachmentDrag}
+            onDragLeave={handleAttachmentDragLeave}
+            onDragOver={handleAttachmentDrag}
+            onDrop={handleAttachmentDrop}
+          >
+          {attachmentDragActive ? (
+            <div className="cwu-attachment-dropzone" role="status">松开以上传附件</div>
+          ) : null}
           <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); submit(composer.primaryMode); }}>
             {extensions.renderComposerOverlay?.({ draft, session: view, setDraft }) || null}
             {attachments.length || uploading || attachmentUploadState.error ? (
@@ -874,9 +924,24 @@ function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink }) {
   );
 }
 
-function Message({ message, onOpenLink, renderContent, session, sessionId, visualizationUrl }) {
+function Message({
+  message,
+  onEditMessage,
+  onForkMessage,
+  onOpenLink,
+  renderContent,
+  session,
+  sessionId,
+  visualizationUrl,
+}) {
   const isUser = message.role === 'user';
   const isCommentary = message.phase === 'commentary';
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(message.content);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [forking, setForking] = useState(false);
+  const canEdit = isUser && message.canEdit && typeof onEditMessage === 'function';
+  const canFork = isUser && message.canFork && typeof onForkMessage === 'function';
   const markdownComponents = markdownLinkComponents(onOpenLink);
   const inline = extractInlineVisualizations(message.content);
   const visualizations = typeof visualizationUrl === 'function'
@@ -900,12 +965,68 @@ function Message({ message, onOpenLink, renderContent, session, sessionId, visua
     message,
     session,
   });
+
+  async function saveEdit() {
+    const prompt = editDraft.trim();
+    if (!prompt || savingEdit || !canEdit) return;
+    setSavingEdit(true);
+    try {
+      await onEditMessage({ messageId: message.id, turnId: message.turnId, prompt });
+      setEditing(false);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function forkMessage() {
+    if (forking || !canFork) return;
+    setForking(true);
+    try {
+      await onForkMessage({ messageId: message.id, turnId: message.turnId, prompt: message.content });
+    } finally {
+      setForking(false);
+    }
+  }
+
   return (
-    <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'}`} data-message-id={message.id} phase={message.phase} role={message.role}>
+    <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'} ${editing ? 'is-editing' : ''}`} data-message-id={message.id} phase={message.phase} role={message.role}>
       {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
-      <div className="cwu-message-body">
-        {customContent === undefined ? defaultContent : customContent}
-      </div>
+      {editing ? (
+        <div className="cwu-message-editor">
+          <textarea
+            aria-label="编辑消息"
+            autoFocus
+            disabled={savingEdit}
+            onChange={(event) => setEditDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setEditing(false);
+              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') saveEdit();
+            }}
+            rows={Math.min(8, Math.max(2, editDraft.split('\n').length))}
+            value={editDraft}
+          />
+          <div>
+            <button disabled={savingEdit} onClick={() => setEditing(false)} type="button">取消</button>
+            <button disabled={savingEdit || !editDraft.trim()} onClick={saveEdit} type="button">
+              {savingEdit ? '发送中…' : '发送'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="cwu-message-body">
+          {customContent === undefined ? defaultContent : customContent}
+        </div>
+      )}
+      {!editing && (canEdit || canFork) ? (
+        <div className="cwu-message-actions" aria-label="消息操作">
+          {canEdit ? (
+            <button onClick={() => { setEditDraft(message.content); setEditing(true); }} type="button">编辑</button>
+          ) : null}
+          {canFork ? (
+            <button disabled={forking} onClick={forkMessage} type="button">{forking ? 'Fork 中…' : 'Fork'}</button>
+          ) : null}
+        </div>
+      ) : null}
       {message.media?.length ? <MediaGallery items={message.media} /> : null}
       {visualizations.map((item) => (
         <div className="cwu-inline-visualization" key={item.file}>
@@ -1063,6 +1184,18 @@ function defaultFormatTime(value) {
   return new Intl.DateTimeFormat('zh-CN', {
     month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
   }).format(new Date(value));
+}
+
+function fileMatchesAccept(file, accept) {
+  const rules = String(accept || '').split(',').map((rule) => rule.trim().toLowerCase()).filter(Boolean);
+  if (!rules.length) return true;
+  const name = String(file?.name || '').toLowerCase();
+  const mimeType = String(file?.type || '').toLowerCase();
+  return rules.some((rule) => {
+    if (rule.startsWith('.')) return name.endsWith(rule);
+    if (rule.endsWith('/*')) return mimeType.startsWith(rule.slice(0, -1));
+    return mimeType === rule;
+  });
 }
 
 export {
