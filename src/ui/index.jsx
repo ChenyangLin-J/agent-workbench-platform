@@ -246,7 +246,18 @@ export function SessionBrowser({
                       onClick={() => setArchived(session, !session.archived)}
                       title={session.archived ? (labels.restore || '恢复') : (labels.archive || '归档')}
                       type="button"
-                    >{archivingIds.has(session.id) ? '…' : session.archived ? (labels.restore || '恢复') : (labels.archive || '归档')}</button>
+                    >{archivingIds.has(session.id) ? <span aria-hidden="true">…</span> : session.archived ? (
+                      <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+                        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                        <path d="M3 3v5h5" />
+                      </svg>
+                    ) : (
+                      <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+                        <path d="M4 7h16" />
+                        <path d="M5 7l1 13h12l1-13" />
+                        <path d="M9 11v5M15 11v5M9 4h6l1 3H8l1-3Z" />
+                      </svg>
+                    )}</button>
                   ) : null}
                 </div>
                 );
