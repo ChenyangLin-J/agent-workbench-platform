@@ -44,23 +44,17 @@ export function SessionBrowser({
   const [createTargetId, setCreateTargetId] = useState(view.createTargets[0]?.id || '');
   const [creating, setCreating] = useState(false);
   const [expandedGroupIds, setExpandedGroupIds] = useState(() => new Set());
-  const autoCollapsedList = useRef(false);
-  const allowNarrowExpandedList = useRef(false);
-  const toggleListAction = useRef(actions.onToggleList);
+  const [narrowListOpen, setNarrowListOpen] = useState(false);
   const [isNarrow, setIsNarrow] = useState(() => (
     typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 640px)').matches
   ));
 
   useEffect(() => {
-    toggleListAction.current = actions.onToggleList;
-  }, [actions.onToggleList]);
-
-  useEffect(() => {
     if (typeof window.matchMedia !== 'function') return undefined;
     const media = window.matchMedia('(max-width: 640px)');
     const syncResponsiveList = () => {
-      if (!media.matches) allowNarrowExpandedList.current = false;
       setIsNarrow(media.matches);
+      if (!media.matches) setNarrowListOpen(false);
     };
     syncResponsiveList();
     media.addEventListener('change', syncResponsiveList);
@@ -72,21 +66,17 @@ export function SessionBrowser({
   }, []);
 
   useEffect(() => {
-    if (isNarrow && detail && !view.listCollapsed && !allowNarrowExpandedList.current) {
-      autoCollapsedList.current = true;
-      toggleListAction.current?.(true, { persist: false, reason: 'responsive' });
-    } else if (!isNarrow && autoCollapsedList.current && view.listCollapsed) {
-      autoCollapsedList.current = false;
-      toggleListAction.current?.(false, { persist: false, reason: 'responsive' });
-    }
-  }, [detail, isNarrow, view.listCollapsed]);
+    if (isNarrow) setNarrowListOpen(false);
+  }, [detail?.session?.sessionId, isNarrow]);
+
+  const listCollapsed = isNarrow && detail ? !narrowListOpen : view.listCollapsed;
 
   function toggleSessionList() {
-    const nextCollapsed = !view.listCollapsed;
-    if (isNarrow) {
-      allowNarrowExpandedList.current = !nextCollapsed;
-      if (!nextCollapsed) autoCollapsedList.current = false;
+    if (isNarrow && detail) {
+      setNarrowListOpen((current) => !current);
+      return;
     }
+    const nextCollapsed = !view.listCollapsed;
     actions.onToggleList?.(nextCollapsed);
   }
 
@@ -139,8 +129,8 @@ export function SessionBrowser({
 
   const formatTime = labels.formatTime || defaultFormatTime;
   return (
-    <div className={`cwu-browser ${view.listCollapsed ? 'is-list-collapsed' : ''}`}>
-      <aside className="cwu-browser-list" aria-hidden={view.listCollapsed} aria-label={labels.listAriaLabel || 'Session 列表'}>
+    <div className={`cwu-browser ${listCollapsed ? 'is-list-collapsed' : ''}`}>
+      <aside className="cwu-browser-list" aria-hidden={listCollapsed} aria-label={labels.listAriaLabel || 'Session 列表'}>
         <header className="cwu-browser-summary">
           <span>{view.loading ? (labels.loading || '正在读取 Sessions…') : `${view.sessions.length} ${labels.countSuffix || '个 Session'}`}</span>
           {view.createTargets.length && actions.onCreate ? (
@@ -281,13 +271,13 @@ export function SessionBrowser({
       </aside>
 
       <button
-        aria-expanded={!view.listCollapsed}
-        aria-label={view.listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
+        aria-expanded={!listCollapsed}
+        aria-label={listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
         className="cwu-browser-list-toggle"
         onClick={toggleSessionList}
-        title={view.listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
+        title={listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
         type="button"
-      >{view.listCollapsed ? '›' : '‹'}</button>
+      >{listCollapsed ? '›' : '‹'}</button>
 
       <section className="cwu-browser-detail" aria-label={labels.detailAriaLabel || 'Session 详情'}>
         {detail ? <SessionWorkspace key={detail.session?.sessionId || 'session-detail'} {...detail} /> : (
