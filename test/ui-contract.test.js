@@ -55,6 +55,10 @@ test('Session UI exposes product extension content without owning product naviga
   assert.doesNotMatch(source, /ArtifactCanvas|project-navigation/);
 });
 
+test('browser custom elements can be imported during server rendering', async () => {
+  await assert.doesNotReject(import('../src/browser/subagent-elements.js'));
+});
+
 test('Session UI owns search, row archive, history pagination, and queued-turn presentation', async () => {
   const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
   assert.match(source, /cwu-browser-search/);
