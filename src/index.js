@@ -30,6 +30,8 @@ export {
   normalizeVisibility,
 } from './capabilities.js';
 
+export { useSessionUserInput } from './ui-hooks.js';
+
 export {
   CodexSubagentService,
   activeCodexTurn,

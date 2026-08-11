@@ -25,7 +25,7 @@ Pin a release tag from any GitHub or GitLab consumer:
 ```json
 {
   "dependencies": {
-    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.2.1.tar.gz"
+    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.2.2.tar.gz"
   }
 }
 ```
@@ -49,6 +49,7 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 - `@agent-workbench/platform/subagents`
 - `@agent-workbench/platform/attachments`
 - `@agent-workbench/platform/capabilities`
+- `@agent-workbench/platform/ui-hooks`
 - `@agent-workbench/platform/runtime`
 - `@agent-workbench/platform/runtime/core`
 - `@agent-workbench/platform/browser-provider`

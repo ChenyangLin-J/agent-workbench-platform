@@ -1,6 +1,6 @@
 {
   "name": "@agent-workbench/platform",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Shared Codex runtime, Session UI, Sub Agent, Realtime, and browser-provider primitives for independent agent workbench products.",
   "license": "MIT",
   "repository": {
@@ -32,6 +32,7 @@
     "./subagents": "./src/subagents.js",
     "./attachments": "./src/attachments.js",
     "./capabilities": "./src/capabilities.js",
+    "./ui-hooks": "./src/ui-hooks.js",
     "./runtime": "./src/runtime.js",
     "./runtime/core": "./src/runtime/core/index.js",
     "./browser-provider": "./src/browser/provider.js",

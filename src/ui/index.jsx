@@ -16,6 +16,9 @@ import {
 import { sessionComposerPresentation } from '../session.js';
 import { normalizeSessionFeatures } from '../capabilities.js';
 import { normalizeAttachmentPolicy } from '../attachments.js';
+import { useSessionUserInput } from '../ui-hooks.js';
+
+export { useSessionUserInput } from '../ui-hooks.js';
 
 export function SessionBrowser({
   browser,
@@ -873,54 +876,6 @@ export function SessionUserInputCard({ request, onRespond }) {
       </button>
     </section>
   );
-}
-
-export function useSessionUserInput({ request, onRespond }) {
-  const [answers, setAnswers] = useState({});
-  const [status, setStatus] = useState('idle');
-  const questions = request.questions || [];
-  const containsSecret = questions.some((question) => question.isSecret);
-  const complete = questions.length > 0 && questions.every((question) => String(answers[question.id] || '').trim());
-
-  useEffect(() => {
-    setAnswers({});
-    setStatus('idle');
-  }, [request.token]);
-
-  function choose(questionId, value) {
-    if (status === 'saving') return;
-    setAnswers((current) => ({ ...current, [questionId]: value }));
-  }
-
-  async function submit() {
-    if (!complete || containsSecret || status === 'saving' || !onRespond) return;
-    setStatus('saving');
-    try {
-      await onRespond({
-        token: request.token,
-        answers: Object.fromEntries(questions.map((question) => [
-          question.id,
-          { answers: [String(answers[question.id]).trim()] },
-        ])),
-      });
-      setStatus('saved');
-    } catch (error) {
-      setStatus('error');
-      throw error;
-    }
-  }
-
-  return {
-    answers,
-    canSubmit: Boolean(onRespond && complete && !containsSecret && status !== 'saving'),
-    choose,
-    complete,
-    containsSecret,
-    questions,
-    saving: status === 'saving',
-    status,
-    submit,
-  };
 }
 
 function defaultFormatTime(value) {

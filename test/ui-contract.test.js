@@ -5,6 +5,7 @@ import { extractInlineVisualizations, normalizeSessionViewModel } from '../src/u
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
+const hooksUrl = new URL('../src/ui-hooks.js', import.meta.url);
 
 test('Session UI delegates message links and read-only document previews to its host', async () => {
   const [source, styles] = await Promise.all([
@@ -42,6 +43,8 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /extensions\.renderAfterMessage/);
   assert.match(source, /normalizeSessionFeatures\(features\)/);
   assert.match(source, /normalizeAttachmentPolicy\(attachmentPolicy\)/);
-  assert.match(source, /export function useSessionUserInput/);
+  const hooks = await readFile(hooksUrl, 'utf8');
+  assert.match(source, /useSessionUserInput/);
+  assert.match(hooks, /export function useSessionUserInput/);
   assert.doesNotMatch(source, /ArtifactCanvas|project-navigation/);
 });
