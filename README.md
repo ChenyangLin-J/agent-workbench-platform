@@ -8,7 +8,7 @@ The package lets multiple products reuse one implementation while keeping their 
 
 - Codex App Server connections for stdio and WebSocket transports
 - Provider-neutral Session Kernel with queue, steer, interrupt, request, and replay contracts
-- Session presentation, message stream, image/inline-visualization rendering, Composer, status, and responsive React UI
+- Session presentation, searchable/archivable Session list, message history paging, queue, image/inline-visualization rendering, Composer, status, and responsive React UI
 - Codex-native Sub Agent discovery, metadata, active-Turn interruption, and thread-tree normalization
 - Shared attachment metadata, limits, App Server inputs, approvals, and Realtime browser contracts
 - Product-configurable Session capabilities: Realtime visible/hidden and Sub Agents hidden/summary/full
@@ -25,7 +25,7 @@ Pin a release tag from any GitHub or GitLab consumer:
 ```json
 {
   "dependencies": {
-    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.2.2.tar.gz"
+    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.3.0.tar.gz"
   }
 }
 ```
@@ -59,7 +59,7 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 
 ## UI ownership
 
-`SessionBrowser` and `SessionWorkspace` provide the standard Session list, transcript, requests, Composer, attachments, status, Sub Agent, and Realtime UI. Products that keep an existing visual skin can reuse the same request state machine through `useSessionUserInput`. A product keeps its own navigation and can append product-specific content after a standard message with `extensions.renderAfterMessage`; Core does not know about projects, analysis cards, reports, or artifact canvases.
+`SessionBrowser` and `SessionWorkspace` provide the standard Session search/list/archive interaction, transcript and earlier-message paging, queued turns, requests, Composer, attachments, status, Sub Agent, and Realtime UI. Products supply grouping labels, archive and paging actions, and their own navigation. They can append product-specific content after a standard message with `extensions.renderAfterMessage`; Core does not know about projects, analysis cards, reports, or artifact canvases.
 
 ## Development
 

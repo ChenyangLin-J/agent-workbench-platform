@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { extractInlineVisualizations, normalizeSessionViewModel } from '../src/ui/model.js';
+import { extractInlineVisualizations, normalizeSessionBrowserViewModel, normalizeSessionViewModel } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -47,4 +47,32 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /useSessionUserInput/);
   assert.match(hooks, /export function useSessionUserInput/);
   assert.doesNotMatch(source, /ArtifactCanvas|project-navigation/);
+});
+
+test('Session UI owns search, row archive, history pagination, and queued-turn presentation', async () => {
+  const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
+  assert.match(source, /cwu-browser-search/);
+  assert.match(source, /actions\.onArchive/);
+  assert.match(source, /cwu-history-separator/);
+  assert.match(source, /previousTop \+ \(current\.scrollHeight - previousHeight\)/);
+  assert.match(source, /cwu-queued-turns/);
+  assert.match(styles, /\.cwu-browser-row-action/);
+  assert.match(styles, /@media \(max-width: 640px\)/);
+
+  const browser = normalizeSessionBrowserViewModel({
+    archived: true,
+    sessions: [{ id: 'a', archived: true, canArchive: false }],
+  });
+  assert.equal(browser.archived, true);
+  assert.equal(browser.sessions[0].archived, true);
+  assert.equal(browser.sessions[0].canArchive, false);
+
+  const session = normalizeSessionViewModel({
+    hasEarlierTurns: true,
+    loadedTurnCount: 20,
+    queuedTurns: [{ id: 'q1', prompt: '继续', attachments: [{ name: 'a.png' }] }],
+  });
+  assert.equal(session.hasEarlierTurns, true);
+  assert.equal(session.loadedTurnCount, 20);
+  assert.equal(session.queuedTurns[0].attachments[0].name, 'a.png');
 });

@@ -86,6 +86,24 @@ export function normalizeSessionViewModel(value = {}) {
         })).filter((agent) => agent.id)
       : [],
     executionProfile: String(value.executionProfile || ''),
+    queuedTurns: Array.isArray(value.queuedTurns)
+      ? value.queuedTurns.map((item, index) => ({
+          id: String(item?.id || `queued-turn-${index}`),
+          prompt: String(item?.prompt || ''),
+          attachments: Array.isArray(item?.attachments)
+            ? item.attachments.map((attachment, attachmentIndex) => ({
+                id: String(attachment?.id || `queued-attachment-${index}-${attachmentIndex}`),
+                name: String(attachment?.name || '附件'),
+              }))
+            : [],
+          createdAt: normalizeTimestamp(item?.createdAt),
+        }))
+      : [],
+    hasEarlierTurns: Boolean(value.hasEarlierTurns),
+    historyLoading: Boolean(value.historyLoading),
+    loadedTurnCount: Number.isFinite(Number(value.loadedTurnCount))
+      ? Math.max(0, Number(value.loadedTurnCount))
+      : null,
     externalUrl: stringOrNull(value.externalUrl),
   };
 }
@@ -126,6 +144,8 @@ export function normalizeSessionBrowserViewModel(value = {}) {
           ? session.status
           : 'idle',
         statusLabel: String(session?.statusLabel || ''),
+        archived: Boolean(session?.archived),
+        canArchive: session?.canArchive !== false,
       }))
     : [];
   sessions.sort((left, right) => right.updatedAt - left.updatedAt || left.title.localeCompare(right.title));
@@ -135,6 +155,7 @@ export function normalizeSessionBrowserViewModel(value = {}) {
     groupMode: value.groupMode === 'time' ? 'time' : 'context',
     loading: Boolean(value.loading),
     listCollapsed: Boolean(value.listCollapsed),
+    archived: Boolean(value.archived),
     createTargets: Array.isArray(value.createTargets)
       ? value.createTargets.map((target, index) => ({
           id: String(target?.id || `target-${index}`),

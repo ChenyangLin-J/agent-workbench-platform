@@ -27,9 +27,19 @@ export function SessionBrowser({
   labels = {},
 }) {
   const view = useMemo(() => normalizeSessionBrowserViewModel(browser), [browser]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [archivingIds, setArchivingIds] = useState(() => new Set());
+  const [undoArchive, setUndoArchive] = useState(null);
+  const visibleSessions = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase();
+    if (!query) return view.sessions;
+    return view.sessions.filter((session) => (
+      `${session.title} ${session.contextLabel}`.toLocaleLowerCase().includes(query)
+    ));
+  }, [searchQuery, view.sessions]);
   const groups = useMemo(
-    () => groupSessionSummaries(view.sessions, view.groupMode),
-    [view.groupMode, view.sessions],
+    () => groupSessionSummaries(visibleSessions, view.groupMode),
+    [view.groupMode, visibleSessions],
   );
   const [createTargetId, setCreateTargetId] = useState(view.createTargets[0]?.id || '');
   const [creating, setCreating] = useState(false);
@@ -85,6 +95,12 @@ export function SessionBrowser({
     setCreateTargetId(view.createTargets[0]?.id || '');
   }, [createTargetId, view.createTargets]);
 
+  useEffect(() => {
+    if (!undoArchive) return undefined;
+    const timeout = setTimeout(() => setUndoArchive(null), 8000);
+    return () => clearTimeout(timeout);
+  }, [undoArchive]);
+
   async function createSession(targetId = createTargetId) {
     if (!targetId || creating || !actions.onCreate) return;
     setCreating(true);
@@ -102,6 +118,23 @@ export function SessionBrowser({
       else next.add(groupId);
       return next;
     });
+  }
+
+  async function setArchived(session, archived) {
+    if (!actions.onArchive || archivingIds.has(session.id)) return;
+    setArchivingIds((current) => new Set(current).add(session.id));
+    try {
+      await actions.onArchive(session, archived);
+      setUndoArchive(archived ? session : null);
+    } catch {
+      setUndoArchive(null);
+    } finally {
+      setArchivingIds((current) => {
+        const next = new Set(current);
+        next.delete(session.id);
+        return next;
+      });
+    }
   }
 
   const formatTime = labels.formatTime || defaultFormatTime;
@@ -131,6 +164,18 @@ export function SessionBrowser({
           ) : null}
         </header>
 
+        <label className="cwu-browser-search">
+          <span aria-hidden="true">⌕</span>
+          <input
+            aria-label={labels.searchAriaLabel || '搜索 Sessions'}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder={labels.searchPlaceholder || '搜索 Session 或归属'}
+            type="search"
+            value={searchQuery}
+          />
+          {searchQuery ? <button aria-label="清空搜索" onClick={() => setSearchQuery('')} type="button">×</button> : null}
+        </label>
+
         <div className="cwu-browser-toolbar">
           <div role="group" aria-label={labels.groupAriaLabel || 'Session 展示方式'}>
             <button
@@ -149,7 +194,7 @@ export function SessionBrowser({
 
         <div className="cwu-browser-groups">
           {!view.loading && !groups.length ? (
-            <div className="cwu-browser-list-empty">{labels.listEmpty || '还没有 Session，可从上方新建。'}</div>
+            <div className="cwu-browser-list-empty">{searchQuery ? (labels.searchEmpty || '没有匹配的 Session。') : (labels.listEmpty || '还没有 Session，可从上方新建。')}</div>
           ) : groups.map((group) => {
             const projectGroup = view.groupMode === 'context';
             const expanded = projectGroup && expandedGroupIds.has(group.id);
@@ -189,21 +234,31 @@ export function SessionBrowser({
               {visibleSessions.map((session) => {
                 const unread = session.status === 'unread';
                 return (
-                <button
+                <div
                   className={`cwu-browser-row ${session.id === view.selectedSessionId ? 'is-active' : ''} ${unread ? 'is-unread' : ''}`}
                   key={session.id}
-                  onClick={() => actions.onSelect?.(session)}
-                  type="button"
                 >
-                  <span
-                    aria-hidden="true"
-                    className={`cwu-browser-row-status cwu-status-${sessionStatusTone(session.status)}`}
-                  />
-                  <span className="cwu-browser-row-copy">
-                    <strong>{session.title}</strong>
-                    <small>{unread ? '新结果 · ' : ''}{view.groupMode === 'context' ? formatTime(session.updatedAt) : `${session.contextLabel} · ${formatTime(session.updatedAt)}`}</small>
-                  </span>
-                </button>
+                  <button className="cwu-browser-row-main" onClick={() => actions.onSelect?.(session)} type="button">
+                    <span
+                      aria-hidden="true"
+                      className={`cwu-browser-row-status cwu-status-${sessionStatusTone(session.status)}`}
+                    />
+                    <span className="cwu-browser-row-copy">
+                      <strong>{session.title}</strong>
+                      <small>{unread ? '新结果 · ' : ''}{view.groupMode === 'context' ? formatTime(session.updatedAt) : `${session.contextLabel} · ${formatTime(session.updatedAt)}`}</small>
+                    </span>
+                  </button>
+                  {actions.onArchive && session.canArchive ? (
+                    <button
+                      aria-label={`${session.archived ? (labels.restore || '恢复') : (labels.archive || '归档')}：${session.title}`}
+                      className="cwu-browser-row-action"
+                      disabled={archivingIds.has(session.id)}
+                      onClick={() => setArchived(session, !session.archived)}
+                      title={session.archived ? (labels.restore || '恢复') : (labels.archive || '归档')}
+                      type="button"
+                    >{archivingIds.has(session.id) ? '…' : session.archived ? (labels.restore || '恢复') : (labels.archive || '归档')}</button>
+                  ) : null}
+                </div>
                 );
               })}
               {projectGroup && hiddenCount > 0 ? (
@@ -217,6 +272,12 @@ export function SessionBrowser({
             );
           })}
         </div>
+        {undoArchive ? (
+          <div className="cwu-browser-undo" role="status">
+            <span title={undoArchive.title}>已归档「{undoArchive.title}」</span>
+            <button onClick={() => { setArchived(undoArchive, false); setUndoArchive(null); }} type="button">{labels.undo || '撤销'}</button>
+          </div>
+        ) : null}
       </aside>
 
       <button
@@ -260,6 +321,7 @@ export function SessionWorkspace({
   const [attachmentUploadState, setAttachmentUploadState] = useState({ status: 'idle', error: '' });
   const [submitting, setSubmitting] = useState(false);
   const [subagentsOpen, setSubagentsOpen] = useState(false);
+  const [deletingQueuedIds, setDeletingQueuedIds] = useState(() => new Set());
   const running = view.status === 'running';
   const uploading = attachmentUploadState.status === 'uploading';
   const canSubmit = Boolean((draft.trim() || attachments.length) && !submitting && !uploading && actions.onSubmit);
@@ -346,6 +408,33 @@ export function SessionWorkspace({
     await actions.onRefreshSubagents?.();
   }
 
+  async function loadEarlier() {
+    const target = transcriptRef.current;
+    if (!target || !actions.onLoadEarlier || view.historyLoading) return;
+    followLatestRef.current = false;
+    const previousHeight = target.scrollHeight;
+    const previousTop = target.scrollTop;
+    await actions.onLoadEarlier();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const current = transcriptRef.current;
+      if (current) current.scrollTop = previousTop + (current.scrollHeight - previousHeight);
+    }));
+  }
+
+  async function deleteQueuedTurn(queuedTurnId) {
+    if (!actions.onDeleteQueuedTurn || deletingQueuedIds.has(queuedTurnId)) return;
+    setDeletingQueuedIds((current) => new Set(current).add(queuedTurnId));
+    try {
+      await actions.onDeleteQueuedTurn(queuedTurnId);
+    } finally {
+      setDeletingQueuedIds((current) => {
+        const next = new Set(current);
+        next.delete(queuedTurnId);
+        return next;
+      });
+    }
+  }
+
   return (
     <div className="cwu-session-shell" data-status={view.status}>
       {documentPreview ? (
@@ -394,6 +483,18 @@ export function SessionWorkspace({
       <main className="cwu-session-main">
         <agent-session-stream className="cwu-transcript" onScroll={updateFollowState} ref={transcriptRef}>
           <div className="cwu-message-column">
+            {view.hasEarlierTurns && actions.onLoadEarlier ? (
+              <div className="cwu-history-separator">
+                <span />
+                <button disabled={view.historyLoading} onClick={loadEarlier} type="button">
+                  {view.historyLoading ? (labels.historyLoading || '正在加载…') : (labels.loadEarlier || '查看更早消息')}
+                </button>
+                {view.loadedTurnCount != null ? <small>已显示最近 {view.loadedTurnCount} 轮</small> : null}
+                <span />
+              </div>
+            ) : view.loadedTurnCount ? (
+              <div className="cwu-history-start"><span />{labels.historyStart || '已到最早消息'}<span /></div>
+            ) : null}
             {view.messages.length ? view.messages.map((message) => (
               <React.Fragment key={message.id}>
                 <Message
@@ -436,6 +537,29 @@ export function SessionWorkspace({
         </agent-session-stream>
 
         <footer className="cwu-composer-wrap">
+          {view.queuedTurns.length ? (
+            <section aria-label={labels.queuedTitle || '下一轮待发送'} className="cwu-queued-turns">
+              <header><strong>{labels.queuedTitle || '下一轮待发送'}</strong><span>{view.queuedTurns.length} 条</span></header>
+              <div className="cwu-queued-turn-list">
+                {view.queuedTurns.map((item) => (
+                  <article key={item.id}>
+                    <div>
+                      <p>{item.prompt || labels.queuedAttachmentOnly || '附件消息'}</p>
+                      {item.attachments.length ? <small>{item.attachments.map((attachment) => attachment.name).join(' · ')}</small> : null}
+                    </div>
+                    {actions.onDeleteQueuedTurn ? (
+                      <button
+                        aria-label={`删除下一轮消息：${item.prompt || '附件消息'}`}
+                        disabled={deletingQueuedIds.has(item.id)}
+                        onClick={() => deleteQueuedTurn(item.id)}
+                        type="button"
+                      >{deletingQueuedIds.has(item.id) ? '删除中…' : '删除'}</button>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
           <agent-session-composer className="cwu-composer">
           <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); submit(composer.primaryMode); }}>
             {attachments.length || uploading || attachmentUploadState.error ? (
