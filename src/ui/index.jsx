@@ -213,6 +213,7 @@ export function SessionBrowser({
                     && view.createTargets.some((target) => target.id === group.id) ? (
                     <button
                       aria-label={`${labels.createInContext || '在此归属下新建 Session'}：${group.label}`}
+                      className="cwu-browser-group-create"
                       disabled={creating}
                       onClick={() => createSession(group.id)}
                       title={labels.createLabel || '新建 Session'}

@@ -48,6 +48,13 @@
 .cwu-browser-group-heading button:hover { background: color-mix(in srgb, var(--cwu-accent) 14%, transparent); color: var(--cwu-accent); }
 .cwu-browser-group-heading .cwu-browser-group-toggle:hover { background: transparent; color: var(--cwu-text); }
 .cwu-browser-group-heading button:disabled { cursor: default; opacity: .45; }
+.cwu-browser-group-create { transition: background .12s ease, color .12s ease; }
+@media (hover: hover) and (pointer: fine) {
+  .cwu-browser-group-create { opacity: 0; pointer-events: none; }
+  .cwu-browser-group-heading:hover .cwu-browser-group-create,
+  .cwu-browser-group-heading:focus-within .cwu-browser-group-create,
+  .cwu-browser-group-create:focus-visible { opacity: 1; pointer-events: auto; }
+}
 .cwu-browser-row { width: calc(100% - 12px); min-width: 0; display: flex; align-items: stretch; margin: 1px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--cwu-text); }
 .cwu-browser-row:hover { background: color-mix(in srgb, var(--cwu-accent) 6%, transparent); }
 .cwu-browser-row.is-active { background: color-mix(in srgb, var(--cwu-accent) 13%, var(--cwu-soft)); }
