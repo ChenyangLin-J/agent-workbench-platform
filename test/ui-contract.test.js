@@ -36,3 +36,11 @@ test('Session UI embeds visualizations in a sandbox and renders image media', as
   assert.match(styles, /\.cwu-inline-visualization iframe/);
   assert.match(styles, /\.cwu-message-media img/);
 });
+
+test('Session UI exposes product extension content without owning product navigation or canvas', async () => {
+  const source = await readFile(uiUrl, 'utf8');
+  assert.match(source, /extensions\.renderAfterMessage/);
+  assert.match(source, /normalizeSessionFeatures\(features\)/);
+  assert.match(source, /normalizeAttachmentPolicy\(attachmentPolicy\)/);
+  assert.doesNotMatch(source, /ArtifactCanvas|project-navigation/);
+});

@@ -10,7 +10,8 @@ The package lets multiple products reuse one implementation while keeping their 
 - Provider-neutral Session Kernel with queue, steer, interrupt, request, and replay contracts
 - Session presentation, message stream, image/inline-visualization rendering, Composer, status, and responsive React UI
 - Codex-native Sub Agent discovery, metadata, active-Turn interruption, and thread-tree normalization
-- Attachments, approvals, and Realtime V3 browser contracts
+- Shared attachment metadata, limits, App Server inputs, approvals, and Realtime browser contracts
+- Product-configurable Session capabilities: Realtime visible/hidden and Sub Agents hidden/summary/full
 - On-demand shared MCP and Playwright Browser Provider primitives
 
 ## Product boundary
@@ -24,16 +25,17 @@ Pin a release tag from any GitHub or GitLab consumer:
 ```json
 {
   "dependencies": {
-    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.1.3.tar.gz"
+    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.2.0.tar.gz"
   }
 }
 ```
 
-React consumers also provide the peer dependencies:
+Consumers provide React and their own compatible Codex CLI version. This lets independent products keep separate accounts and upgrade from `0.145.x` to `0.147.x` without forking Core:
 
 ```json
 {
   "dependencies": {
+    "@openai/codex": "0.147.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   }
@@ -45,12 +47,18 @@ React consumers also provide the peer dependencies:
 - `@agent-workbench/platform`
 - `@agent-workbench/platform/session`
 - `@agent-workbench/platform/subagents`
+- `@agent-workbench/platform/attachments`
+- `@agent-workbench/platform/capabilities`
 - `@agent-workbench/platform/runtime`
 - `@agent-workbench/platform/runtime/core`
 - `@agent-workbench/platform/browser-provider`
 - `@agent-workbench/platform/realtime-controller`
 - `@agent-workbench/platform/ui`
 - `@agent-workbench/platform/styles.css`
+
+## UI ownership
+
+`SessionBrowser` and `SessionWorkspace` provide the standard Session list, transcript, requests, Composer, attachments, status, Sub Agent, and Realtime UI. A product keeps its own navigation and can append product-specific content after a standard message with `extensions.renderAfterMessage`; Core does not know about projects, analysis cards, reports, or artifact canvases.
 
 ## Development
 

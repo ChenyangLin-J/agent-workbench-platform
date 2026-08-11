@@ -1,5 +1,7 @@
 export const APP_SERVER_FEATURES = Object.freeze(['realtime_conversation']);
 
+import { sessionAttachmentKind } from './attachments.js';
+
 export {
   CodexSubagentService,
   activeCodexTurn,
@@ -57,12 +59,12 @@ export function appServerRuntimeCapabilities({
 export function appServerAttachmentInput({ mimeType = '', name = '', path = '' } = {}) {
   const normalizedPath = String(path || '').trim();
   if (!normalizedPath) throw new TypeError('Attachment path is required.');
-  const normalizedMime = String(mimeType || '').trim().toLowerCase();
   const normalizedName = String(name || '').trim();
-  if (isAudioAttachment(normalizedMime, normalizedName || normalizedPath)) {
+  const kind = sessionAttachmentKind({ mimeType, name: normalizedName, path: normalizedPath });
+  if (kind === 'audio') {
     return { type: 'localAudio', path: normalizedPath };
   }
-  if (normalizedMime.startsWith('image/')) return { type: 'localImage', path: normalizedPath };
+  if (kind === 'image') return { type: 'localImage', path: normalizedPath };
   return { type: 'mention', name: normalizedName || 'attachment', path: normalizedPath };
 }
 
@@ -127,12 +129,6 @@ export class CodexAppServerApi {
     requiredId(threadId, 'Thread');
     return this.request('thread/realtime/stop', { threadId });
   }
-}
-
-function isAudioAttachment(mimeType, fileName) {
-  if (mimeType.startsWith('audio/')) return true;
-  if (mimeType && mimeType !== 'application/octet-stream') return false;
-  return /\.(?:aac|aif|aiff|caf|flac|m4a|mp3|oga|ogg|opus|wav|weba|webm)$/i.test(fileName);
 }
 
 function uniqueStrings(values) {

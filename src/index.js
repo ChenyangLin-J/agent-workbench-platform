@@ -16,6 +16,21 @@ export {
 } from './runtime.js';
 
 export {
+  MAX_SESSION_ATTACHMENTS,
+  MAX_SESSION_ATTACHMENT_BYTES,
+  normalizeAttachmentPolicy,
+  normalizeSessionAttachment,
+  sessionAttachmentKind,
+  validateSessionAttachment,
+} from './attachments.js';
+
+export {
+  normalizeSessionFeatures,
+  normalizeSubagentMode,
+  normalizeVisibility,
+} from './capabilities.js';
+
+export {
   CodexSubagentService,
   activeCodexTurn,
   codexThreadStatus,

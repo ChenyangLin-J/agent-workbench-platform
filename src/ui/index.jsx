@@ -14,6 +14,8 @@ import {
   sessionStatusTone,
 } from './model.js';
 import { sessionComposerPresentation } from '../session.js';
+import { normalizeSessionFeatures } from '../capabilities.js';
+import { normalizeAttachmentPolicy } from '../attachments.js';
 
 export function SessionBrowser({
   browser,
@@ -238,12 +240,16 @@ export function SessionBrowser({
 
 export function SessionWorkspace({
   session,
+  attachmentPolicy = {},
   documentPreview = null,
   actions = {},
+  extensions = {},
   features = {},
   labels = {},
 }) {
   const view = useMemo(() => normalizeSessionViewModel(session), [session]);
+  const enabledFeatures = useMemo(() => normalizeSessionFeatures(features), [features]);
+  const uploadPolicy = useMemo(() => normalizeAttachmentPolicy(attachmentPolicy), [attachmentPolicy]);
   const transcriptRef = useRef(null);
   const followLatestRef = useRef(true);
   const [draft, setDraft] = useState('');
@@ -254,7 +260,7 @@ export function SessionWorkspace({
   const running = view.status === 'running';
   const uploading = attachmentUploadState.status === 'uploading';
   const canSubmit = Boolean((draft.trim() || attachments.length) && !submitting && !uploading && actions.onSubmit);
-  const composer = sessionComposerPresentation({ running, submitting, canSteer: features.steer !== false });
+  const composer = sessionComposerPresentation({ running, submitting, canSteer: enabledFeatures.steer });
   const technicalByTurn = new Map();
   const lastMessageByTurn = new Map();
   for (const item of view.technicalItems) {
@@ -311,7 +317,7 @@ export function SessionWorkspace({
   }
 
   async function uploadAttachments(event) {
-    const availableSlots = Math.max(0, 5 - attachments.length);
+    const availableSlots = Math.max(0, uploadPolicy.maxCount - attachments.length);
     const files = [...(event.target.files || [])].slice(0, availableSlots);
     event.target.value = '';
     if (!files.length || !actions.onUploadAttachments) return;
@@ -325,7 +331,7 @@ export function SessionWorkspace({
         errors.push(error?.message || `${file.name} 上传失败`);
       }
     }
-    if (uploaded.length) setAttachments((current) => [...current, ...uploaded].slice(0, 5));
+    if (uploaded.length) setAttachments((current) => [...current, ...uploaded].slice(0, uploadPolicy.maxCount));
     setAttachmentUploadState({
       status: errors.length ? 'error' : 'idle',
       error: errors[0] || '',
@@ -360,12 +366,13 @@ export function SessionWorkspace({
           {running && actions.onInterrupt ? (
             <button className="cwu-button" onClick={actions.onInterrupt} type="button">停止</button>
           ) : null}
-          {features.subagents && actions.onOpenSubagent ? (
+          {enabledFeatures.subagents !== 'hidden'
+            && (view.subagents.length || actions.onRefreshSubagents || actions.onOpenSubagent) ? (
             <button className="cwu-button" onClick={openSubagents} type="button">
               Agents{view.subagents.length ? ` ${view.subagents.length}` : ''}
             </button>
           ) : null}
-          {features.realtimeV3 && actions.onRealtimeMessage ? (
+          {enabledFeatures.realtime === 'visible' && actions.onRealtimeMessage ? (
             <RealtimePanel
               enabled={!running && view.status !== 'connecting' && view.status !== 'error'}
               event={session.realtimeEvent}
@@ -375,7 +382,7 @@ export function SessionWorkspace({
               onSend={actions.onRealtimeMessage}
             />
           ) : null}
-          {features.externalLink !== false && view.externalUrl ? (
+          {enabledFeatures.externalLink === 'visible' && view.externalUrl ? (
             <a className="cwu-button" href={view.externalUrl}>{labels.externalLink || 'Agent App'}</a>
           ) : null}
         </div>
@@ -392,7 +399,8 @@ export function SessionWorkspace({
                   sessionId={view.sessionId}
                   visualizationUrl={actions.visualizationUrl}
                 />
-                {features.technicalDetails
+                {extensions.renderAfterMessage?.({ message, session: view }) || null}
+                {enabledFeatures.technicalDetails
                   && message.turnId
                   && lastMessageByTurn.get(message.turnId) === message.id
                   && technicalByTurn.get(message.turnId)?.length ? (
@@ -411,14 +419,14 @@ export function SessionWorkspace({
             ) : null}
 
             {view.pendingRequests.map((request) => (
-              <RequestCard
+              <SessionRequestCard
                 key={request.token}
                 request={request}
                 onRespond={actions.onRespondToRequest}
               />
             ))}
 
-            {features.technicalDetails && technicalByTurn.get('unassigned')?.length ? (
+            {enabledFeatures.technicalDetails && technicalByTurn.get('unassigned')?.length ? (
               <TechnicalDetails items={technicalByTurn.get('unassigned')} />
             ) : null}
           </div>
@@ -461,15 +469,16 @@ export function SessionWorkspace({
             />
             <div className="cwu-composer-footer">
               <div className="cwu-composer-meta">
-                {features.attachments !== false && actions.onUploadAttachments ? (
+                {enabledFeatures.attachments === 'visible' && actions.onUploadAttachments ? (
                   <label
-                    aria-disabled={submitting || uploading || attachments.length >= 5}
+                    aria-disabled={submitting || uploading || attachments.length >= uploadPolicy.maxCount}
                     className="cwu-attach-button"
-                    title={attachments.length >= 5 ? '单次最多 5 个附件' : '添加图片或附件'}
+                    title={attachments.length >= uploadPolicy.maxCount ? `单次最多 ${uploadPolicy.maxCount} 个附件` : '添加图片或附件'}
                   >
                     <input
+                      accept={uploadPolicy.accept || undefined}
                       aria-label="添加图片或附件"
-                      disabled={submitting || uploading || attachments.length >= 5}
+                      disabled={submitting || uploading || attachments.length >= uploadPolicy.maxCount}
                       multiple
                       onChange={uploadAttachments}
                       type="file"
@@ -509,7 +518,7 @@ export function SessionWorkspace({
             <p>来自当前 Session 的 Codex 子线程；项目归属仍由当前产品提供。</p>
             <agent-subagent-list className="cwu-subagent-list">
               {view.subagents.length ? view.subagents.map((agent) => (
-                <SubagentCard actions={actions} agent={agent} key={agent.id} />
+                <SubagentCard actions={actions} agent={agent} key={agent.id} mode={enabledFeatures.subagents} />
               )) : <div className="cwu-subagent-empty">当前 Session 还没有子 Agent。</div>}
             </agent-subagent-list>
           </section>
@@ -519,7 +528,7 @@ export function SessionWorkspace({
   );
 }
 
-function SubagentCard({ agent, actions }) {
+export function SubagentCard({ agent, actions, mode = 'full' }) {
   const [stopping, setStopping] = useState(false);
   const title = [agent.nickname, agent.role].filter(Boolean).join(' · ') || agent.name;
   const meta = [agent.model, agent.reasoningEffort].filter(Boolean).join(' · ');
@@ -531,16 +540,18 @@ function SubagentCard({ agent, actions }) {
   return (
     <agent-subagent-card className="cwu-subagent-card" data-state={agent.statusType}>
       <header><strong>{title}</strong><span>{agent.state ? `${agent.status} · ${agent.state}` : agent.status}</span></header>
-      {meta ? <small>{meta}</small> : null}
-      <p>{agent.prompt || agent.stateMessage || agent.name}</p>
-      <div>
-        <button className="cwu-button" onClick={() => actions.onOpenSubagent?.(agent)} type="button">打开线程</button>
-        {agent.canStop && actions.onStopSubagent ? (
-          <button className="cwu-button cwu-danger" disabled={stopping} onClick={stop} type="button">
-            {stopping ? '正在停止…' : '停止 Agent'}
-          </button>
-        ) : null}
-      </div>
+      {mode === 'full' && meta ? <small>{meta}</small> : null}
+      {mode === 'full' ? <p>{agent.prompt || agent.stateMessage || agent.name}</p> : null}
+      {mode === 'full' ? (
+        <div>
+          {actions.onOpenSubagent ? <button className="cwu-button" onClick={() => actions.onOpenSubagent(agent)} type="button">打开线程</button> : null}
+          {agent.canStop && actions.onStopSubagent ? (
+            <button className="cwu-button cwu-danger" disabled={stopping} onClick={stop} type="button">
+              {stopping ? '正在停止…' : '停止 Agent'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </agent-subagent-card>
   );
 }
@@ -790,10 +801,10 @@ function RuntimeProgress({ plan }) {
   );
 }
 
-function RequestCard({ request, onRespond }) {
+export function SessionRequestCard({ request, onRespond }) {
   if (!onRespond) return null;
   if (request.kind === 'item/tool/requestUserInput') {
-    return <UserInputCard onRespond={onRespond} request={request} />;
+    return <SessionUserInputCard onRespond={onRespond} request={request} />;
   }
   return (
     <section className="cwu-request">
@@ -807,7 +818,7 @@ function RequestCard({ request, onRespond }) {
   );
 }
 
-function UserInputCard({ request, onRespond }) {
+export function SessionUserInputCard({ request, onRespond }) {
   const [answers, setAnswers] = useState({});
   const [saving, setSaving] = useState(false);
   const questions = request.questions || [];

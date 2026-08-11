@@ -10,7 +10,7 @@ import {
   CODEX_PROVIDER_VERSION,
 } from '../src/runtime/core/index.js';
 
-test('Codex Provider resolves its exact package-local CLI', async () => {
+test('Codex Provider resolves the consumer-provided compatible CLI', async () => {
   const launch = bundledCodexLaunch();
   assert.equal(CODEX_PROVIDER_VERSION, '0.147.0');
   assert.equal(launch.command, process.execPath);
@@ -19,7 +19,8 @@ test('Codex Provider resolves its exact package-local CLI', async () => {
     new URL('../package.json', import.meta.url),
     'utf8',
   ));
-  assert.equal(packageJson.dependencies['@openai/codex'], CODEX_PROVIDER_VERSION);
+  assert.equal(packageJson.peerDependencies['@openai/codex'], '>=0.145.0 <0.148.0');
+  assert.equal(packageJson.dependencies?.['@openai/codex'], undefined);
 });
 
 test('connection initializes once and correlates concurrent JSONL requests', async (t) => {
