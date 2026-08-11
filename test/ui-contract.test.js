@@ -88,12 +88,14 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
 
   const session = normalizeSessionViewModel({
     isDraft: true,
+    composerDisabled: true,
     hasEarlierTurns: true,
     loadedTurnCount: 20,
     queuedTurns: [{ id: 'q1', prompt: '继续', attachments: [{ name: 'a.png' }] }],
   });
   assert.equal(session.hasEarlierTurns, true);
   assert.equal(session.isDraft, true);
+  assert.equal(session.composerDisabled, true);
   assert.equal(session.loadedTurnCount, 20);
   assert.equal(session.queuedTurns[0].attachments[0].name, 'a.png');
 });

@@ -345,7 +345,8 @@ export function SessionWorkspace({
   const [deletingQueuedIds, setDeletingQueuedIds] = useState(() => new Set());
   const running = view.status === 'running';
   const uploading = attachmentUploadState.status === 'uploading';
-  const canSubmit = Boolean((draft.trim() || attachments.length) && !submitting && !uploading && actions.onSubmit);
+  const composerDisabled = view.composerDisabled || submitting;
+  const canSubmit = Boolean((draft.trim() || attachments.length) && !composerDisabled && !uploading && actions.onSubmit);
   const composer = sessionComposerPresentation({ running, submitting, canSteer: enabledFeatures.steer });
   const technicalByTurn = new Map();
   const lastMessageByTurn = new Map();
@@ -615,7 +616,7 @@ export function SessionWorkspace({
             ) : null}
             <textarea
               aria-label={labels.composerPlaceholder || '输入需求'}
-              disabled={submitting}
+              disabled={composerDisabled}
               maxLength={12000}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
@@ -656,7 +657,7 @@ export function SessionWorkspace({
                     {composer.secondaryLabel}
                   </button>
                 ) : null}
-                <button className="cwu-send" disabled={!canSubmit} type="submit">
+                <button className="cwu-send" disabled={!canSubmit} title={composer.primaryLabel} type="submit">
                   {composer.primaryLabel}
                 </button>
               </div>

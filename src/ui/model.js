@@ -8,6 +8,7 @@ export function normalizeSessionViewModel(value = {}) {
   return {
     sessionId: stringOrNull(value.sessionId),
     isDraft: Boolean(value.isDraft),
+    composerDisabled: Boolean(value.composerDisabled),
     title: String(value.title || '未命名 Session'),
     contextLabel: String(value.contextLabel || 'Agent Session'),
     status: ['connecting', 'running', 'waiting', 'idle', 'error'].includes(value.status)
