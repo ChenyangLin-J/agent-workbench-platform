@@ -394,17 +394,23 @@ export function SessionWorkspace({
   async function submit(mode = 'turn') {
     const prompt = draft.trim();
     if ((!prompt && !attachments.length) || submitting || uploading || !actions.onSubmit) return;
+    const submittedDraft = draft;
+    const submittedAttachments = attachments;
     followLatest();
     setSubmitting(true);
+    setDraft('');
+    setAttachments([]);
+    setAttachmentUploadState({ status: 'idle', error: '' });
     try {
       await actions.onSubmit({
         prompt,
         mode,
-        attachments,
+        attachments: submittedAttachments,
       });
-      setDraft('');
-      setAttachments([]);
-      setAttachmentUploadState({ status: 'idle', error: '' });
+    } catch (error) {
+      setDraft(submittedDraft);
+      setAttachments(submittedAttachments);
+      throw error;
     } finally {
       setSubmitting(false);
     }

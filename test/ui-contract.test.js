@@ -67,6 +67,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /cwu-history-separator/);
   assert.match(source, /previousTop \+ \(current\.scrollHeight - previousHeight\)/);
   assert.match(source, /cwu-queued-turns/);
+  assert.match(source, /const submittedDraft = draft/);
+  assert.match(source, /setDraft\(submittedDraft\)/);
   assert.match(styles, /\.cwu-browser-row-action/);
   assert.match(source, /<svg aria-hidden="true" fill="none" viewBox="0 0 24 24">/);
   assert.match(styles, /\.cwu-browser-row-action svg/);
