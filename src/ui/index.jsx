@@ -482,6 +482,7 @@ export function SessionWorkspace({
           <h1>{view.title}</h1>
         </div>
         <div className="cwu-session-actions">
+          {extensions.renderHeaderActions?.({ session: view }) || null}
           <SessionStatus label={view.statusLabel} state={view.status} tone={sessionStatusTone(view.status)} />
           {running && actions.onInterrupt ? (
             <button className="cwu-button" onClick={actions.onInterrupt} type="button">停止</button>
@@ -528,6 +529,8 @@ export function SessionWorkspace({
                 <Message
                   message={message}
                   onOpenLink={actions.onOpenLink}
+                  renderContent={extensions.renderMessageContent}
+                  session={view}
                   sessionId={view.sessionId}
                   visualizationUrl={actions.visualizationUrl}
                 />
@@ -561,6 +564,7 @@ export function SessionWorkspace({
             {enabledFeatures.technicalDetails && technicalByTurn.get('unassigned')?.length ? (
               <TechnicalDetails items={technicalByTurn.get('unassigned')} />
             ) : null}
+            {extensions.renderAfterMessages?.({ session: view }) || null}
           </div>
         </agent-session-stream>
 
@@ -590,6 +594,7 @@ export function SessionWorkspace({
           ) : null}
           <agent-session-composer className="cwu-composer">
           <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); submit(composer.primaryMode); }}>
+            {extensions.renderComposerOverlay?.({ draft, session: view, setDraft }) || null}
             {attachments.length || uploading || attachmentUploadState.error ? (
               <div className="cwu-attachments" aria-live="polite">
                 {attachments.map((attachment) => (
@@ -861,7 +866,7 @@ function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink }) {
   );
 }
 
-function Message({ message, onOpenLink, sessionId, visualizationUrl }) {
+function Message({ message, onOpenLink, renderContent, session, sessionId, visualizationUrl }) {
   const isUser = message.role === 'user';
   const isCommentary = message.phase === 'commentary';
   const markdownComponents = markdownLinkComponents(onOpenLink);
@@ -878,11 +883,20 @@ function Message({ message, onOpenLink, sessionId, visualizationUrl }) {
         attachment.kind !== 'image' || !message.media?.length
       ))
     : [];
+  const defaultContent = isUser
+    ? renderedContent
+    : <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>{renderedContent || (visualizations.length ? '' : '…')}</ReactMarkdown>;
+  const customContent = renderContent?.({
+    content: renderedContent,
+    defaultContent,
+    message,
+    session,
+  });
   return (
-    <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'}`} phase={message.phase} role={message.role}>
+    <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'}`} data-message-id={message.id} phase={message.phase} role={message.role}>
       {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
       <div className="cwu-message-body">
-        {isUser ? renderedContent : <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>{renderedContent || (visualizations.length ? '' : '…')}</ReactMarkdown>}
+        {customContent === undefined ? defaultContent : customContent}
       </div>
       {message.media?.length ? <MediaGallery items={message.media} /> : null}
       {visualizations.map((item) => (

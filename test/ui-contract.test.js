@@ -41,6 +41,11 @@ test('Session UI embeds visualizations in a sandbox and renders image media', as
 test('Session UI exposes product extension content without owning product navigation or canvas', async () => {
   const source = await readFile(uiUrl, 'utf8');
   assert.match(source, /extensions\.renderAfterMessage/);
+  assert.match(source, /extensions\.renderAfterMessages/);
+  assert.match(source, /extensions\.renderComposerOverlay/);
+  assert.match(source, /extensions\.renderHeaderActions/);
+  assert.match(source, /extensions\.renderMessageContent/);
+  assert.match(source, /data-message-id=\{message\.id\}/);
   assert.match(source, /normalizeSessionFeatures\(features\)/);
   assert.match(source, /normalizeAttachmentPolicy\(attachmentPolicy\)/);
   const hooks = await readFile(hooksUrl, 'utf8');
