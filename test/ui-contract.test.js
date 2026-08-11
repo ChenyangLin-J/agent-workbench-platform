@@ -42,6 +42,7 @@ test('Session UI exposes product extension content without owning product naviga
   const source = await readFile(uiUrl, 'utf8');
   assert.match(source, /extensions\.renderAfterMessage/);
   assert.match(source, /extensions\.renderAfterMessages/);
+  assert.match(source, /extensions\.renderBeforeMessages/);
   assert.match(source, /extensions\.renderComposerOverlay/);
   assert.match(source, /extensions\.renderHeaderActions/);
   assert.match(source, /extensions\.renderMessageContent/);

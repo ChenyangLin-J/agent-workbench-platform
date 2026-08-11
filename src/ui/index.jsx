@@ -511,6 +511,7 @@ export function SessionWorkspace({
 
       <main className="cwu-session-main">
         <agent-session-stream className="cwu-transcript" onScroll={updateFollowState} ref={transcriptRef}>
+          {extensions.renderBeforeMessages?.({ session: view }) || null}
           <div className="cwu-message-column">
             {view.hasEarlierTurns && actions.onLoadEarlier ? (
               <div className="cwu-history-separator">
