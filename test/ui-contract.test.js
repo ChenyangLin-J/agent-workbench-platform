@@ -42,5 +42,6 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /extensions\.renderAfterMessage/);
   assert.match(source, /normalizeSessionFeatures\(features\)/);
   assert.match(source, /normalizeAttachmentPolicy\(attachmentPolicy\)/);
+  assert.match(source, /export function useSessionUserInput/);
   assert.doesNotMatch(source, /ArtifactCanvas|project-navigation/);
 });

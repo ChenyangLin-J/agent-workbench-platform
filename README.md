@@ -25,7 +25,7 @@ Pin a release tag from any GitHub or GitLab consumer:
 ```json
 {
   "dependencies": {
-    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.2.0.tar.gz"
+    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.2.1.tar.gz"
   }
 }
 ```
@@ -58,7 +58,7 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 
 ## UI ownership
 
-`SessionBrowser` and `SessionWorkspace` provide the standard Session list, transcript, requests, Composer, attachments, status, Sub Agent, and Realtime UI. A product keeps its own navigation and can append product-specific content after a standard message with `extensions.renderAfterMessage`; Core does not know about projects, analysis cards, reports, or artifact canvases.
+`SessionBrowser` and `SessionWorkspace` provide the standard Session list, transcript, requests, Composer, attachments, status, Sub Agent, and Realtime UI. Products that keep an existing visual skin can reuse the same request state machine through `useSessionUserInput`. A product keeps its own navigation and can append product-specific content after a standard message with `extensions.renderAfterMessage`; Core does not know about projects, analysis cards, reports, or artifact canvases.
 
 ## Development
 
