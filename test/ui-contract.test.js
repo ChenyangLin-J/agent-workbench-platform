@@ -52,6 +52,7 @@ test('Session UI exposes product extension content without owning product naviga
 test('Session UI owns search, row archive, history pagination, and queued-turn presentation', async () => {
   const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
   assert.match(source, /cwu-browser-search/);
+  assert.match(source, /const \[searchOpen, setSearchOpen\]/);
   assert.match(source, /actions\.onArchive/);
   assert.match(source, /cwu-history-separator/);
   assert.match(source, /previousTop \+ \(current\.scrollHeight - previousHeight\)/);
@@ -63,6 +64,9 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(styles, /\.cwu-browser-group-heading:hover \.cwu-browser-group-create/);
   assert.match(styles, /@media \(hover: hover\) and \(pointer: fine\)/);
   assert.match(styles, /@media \(max-width: 640px\)/);
+  assert.match(styles, /resize: none/);
+  assert.doesNotMatch(styles, /\.cwu-composer-footer \{ align-items: flex-start; flex-direction: column; \}/);
+  assert.match(styles, /max-height: 240px/);
 
   const browser = normalizeSessionBrowserViewModel({
     archived: true,
@@ -73,11 +77,13 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(browser.sessions[0].canArchive, false);
 
   const session = normalizeSessionViewModel({
+    isDraft: true,
     hasEarlierTurns: true,
     loadedTurnCount: 20,
     queuedTurns: [{ id: 'q1', prompt: '继续', attachments: [{ name: 'a.png' }] }],
   });
   assert.equal(session.hasEarlierTurns, true);
+  assert.equal(session.isDraft, true);
   assert.equal(session.loadedTurnCount, 20);
   assert.equal(session.queuedTurns[0].attachments[0].name, 'a.png');
 });

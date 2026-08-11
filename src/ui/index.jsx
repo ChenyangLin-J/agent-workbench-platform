@@ -28,6 +28,7 @@ export function SessionBrowser({
 }) {
   const view = useMemo(() => normalizeSessionBrowserViewModel(browser), [browser]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [archivingIds, setArchivingIds] = useState(() => new Set());
   const [undoArchive, setUndoArchive] = useState(null);
   const visibleSessions = useMemo(() => {
@@ -154,18 +155,6 @@ export function SessionBrowser({
           ) : null}
         </header>
 
-        <label className="cwu-browser-search">
-          <span aria-hidden="true">⌕</span>
-          <input
-            aria-label={labels.searchAriaLabel || '搜索 Sessions'}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder={labels.searchPlaceholder || '搜索 Session 或归属'}
-            type="search"
-            value={searchQuery}
-          />
-          {searchQuery ? <button aria-label="清空搜索" onClick={() => setSearchQuery('')} type="button">×</button> : null}
-        </label>
-
         <div className="cwu-browser-toolbar">
           <div role="group" aria-label={labels.groupAriaLabel || 'Session 展示方式'}>
             <button
@@ -179,8 +168,37 @@ export function SessionBrowser({
               type="button"
             >{labels.timeGroup || '按时间'}</button>
           </div>
-          {actions.onRefresh ? <button onClick={actions.onRefresh} type="button">{labels.refresh || '刷新'}</button> : null}
+          <div className="cwu-browser-toolbar-actions">
+            <button
+              aria-expanded={searchOpen}
+              aria-label={labels.searchAriaLabel || '搜索 Sessions'}
+              className={searchOpen ? 'is-active' : ''}
+              onClick={() => setSearchOpen((current) => !current)}
+              title={labels.searchAriaLabel || '搜索 Sessions'}
+              type="button"
+            >⌕</button>
+            {actions.onRefresh ? <button onClick={actions.onRefresh} type="button">{labels.refresh || '刷新'}</button> : null}
+          </div>
         </div>
+
+        {searchOpen || searchQuery ? (
+          <label className="cwu-browser-search">
+            <span aria-hidden="true">⌕</span>
+            <input
+              aria-label={labels.searchAriaLabel || '搜索 Sessions'}
+              autoFocus
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={labels.searchPlaceholder || '搜索 Session 或归属'}
+              type="search"
+              value={searchQuery}
+            />
+            <button
+              aria-label={searchQuery ? '清空搜索' : '关闭搜索'}
+              onClick={() => { setSearchQuery(''); setSearchOpen(false); }}
+              type="button"
+            >×</button>
+          </label>
+        ) : null}
 
         <div className="cwu-browser-groups">
           {!view.loading && !groups.length ? (
@@ -189,7 +207,7 @@ export function SessionBrowser({
             const projectGroup = view.groupMode === 'context';
             const expanded = projectGroup && expandedGroupIds.has(group.id);
             const visibleSessions = projectGroup
-              ? group.sessions.slice(0, expanded ? 5 : 2)
+              ? group.sessions.slice(0, expanded ? group.sessions.length : 3)
               : group.sessions;
             const hiddenCount = group.sessions.length - visibleSessions.length;
             return (
@@ -268,7 +286,7 @@ export function SessionBrowser({
                   className="cwu-browser-group-more"
                   onClick={() => toggleGroup(group.id)}
                   type="button"
-                >{expanded ? '收起' : '展开'}</button>
+                >{expanded ? '收起' : `展开更多 ${hiddenCount} 个`}</button>
               ) : null}
             </section>
             );
@@ -317,6 +335,7 @@ export function SessionWorkspace({
   const enabledFeatures = useMemo(() => normalizeSessionFeatures(features), [features]);
   const uploadPolicy = useMemo(() => normalizeAttachmentPolicy(attachmentPolicy), [attachmentPolicy]);
   const transcriptRef = useRef(null);
+  const composerRef = useRef(null);
   const followLatestRef = useRef(true);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState([]);
@@ -350,6 +369,13 @@ export function SessionWorkspace({
     const target = transcriptRef.current;
     if (target && followLatestRef.current) target.scrollTop = target.scrollHeight;
   }, [view.sessionId, view.messages, view.status]);
+
+  useEffect(() => {
+    const target = composerRef.current;
+    if (!target) return;
+    target.style.height = 'auto';
+    target.style.height = `${Math.min(target.scrollHeight, 220)}px`;
+  }, [draft]);
 
   function followLatest() {
     followLatestRef.current = true;
@@ -593,6 +619,7 @@ export function SessionWorkspace({
                 }
               }}
               placeholder={labels.composerPlaceholder || '补充需求、反馈问题，或者继续修改…'}
+              ref={composerRef}
               rows={3}
               value={draft}
             />
@@ -615,7 +642,7 @@ export function SessionWorkspace({
                     <span aria-hidden="true">＋</span>附件
                   </label>
                 ) : null}
-                <span>{view.executionProfile}</span>
+                <span className="cwu-execution-profile">{view.executionProfile}</span>
               </div>
               <div>
                 {composer.showSecondary ? (
@@ -846,9 +873,14 @@ function Message({ message, onOpenLink, sessionId, visualizationUrl }) {
       })).filter((item) => item.src)
     : [];
   const renderedContent = visualizations.length ? inline.markdown : message.content;
+  const visibleAttachments = isUser
+    ? (message.attachments || []).filter((attachment) => (
+        attachment.kind !== 'image' || !message.media?.length
+      ))
+    : [];
   return (
     <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'}`} phase={message.phase} role={message.role}>
-      {!isUser ? <div className="cwu-message-label">{message.label}</div> : null}
+      {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
       <div className="cwu-message-body">
         {isUser ? renderedContent : <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>{renderedContent || (visualizations.length ? '' : '…')}</ReactMarkdown>}
       </div>
@@ -865,9 +897,9 @@ function Message({ message, onOpenLink, sessionId, visualizationUrl }) {
           <a href={item.src} rel="noreferrer" target="_blank">在新窗口打开</a>
         </div>
       ))}
-      {isUser && message.attachments?.length ? (
+      {visibleAttachments.length ? (
         <div className="cwu-message-attachments" aria-label="本轮附件">
-          {message.attachments.map((attachment) => (
+          {visibleAttachments.map((attachment) => (
             <span key={attachment.id} title={attachment.name}>
               <i aria-hidden="true">{attachment.kind === 'image' ? '▧' : attachment.kind === 'audio' ? '♪' : '▤'}</i>
               {attachment.name}
