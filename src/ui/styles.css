@@ -191,6 +191,15 @@
 .cwu-document-content h2 { margin-top: 30px; font-size: 20px; }
 .cwu-document-content h3 { margin-top: 24px; font-size: 17px; }
 .cwu-document-code { min-height: 100%; margin: 0; overflow: visible; background: var(--cwu-soft); padding: 24px 28px 50px; color: var(--cwu-text); white-space: pre-wrap; word-break: break-word; font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cwu-spreadsheet-preview { min-height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--cwu-soft); }
+.cwu-spreadsheet-preview > nav { display: flex; gap: 5px; overflow-x: auto; border-bottom: 1px solid var(--cwu-border); background: var(--cwu-surface); padding: 8px 12px 0; }
+.cwu-spreadsheet-preview > nav button { flex: 0 0 auto; border: 1px solid transparent; border-bottom: 0; border-radius: 7px 7px 0 0; background: transparent; padding: 7px 12px; color: var(--cwu-muted); font: inherit; font-size: 11px; cursor: pointer; }
+.cwu-spreadsheet-preview > nav button[aria-pressed="true"] { border-color: var(--cwu-border); background: var(--cwu-soft); color: var(--cwu-text); font-weight: 650; }
+.cwu-spreadsheet-scroll { min-height: 0; overflow: auto; }
+.cwu-spreadsheet-scroll table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; background: var(--cwu-surface); font-size: 11px; }
+.cwu-spreadsheet-scroll th, .cwu-spreadsheet-scroll td { max-width: 360px; border-right: 1px solid var(--cwu-border); border-bottom: 1px solid var(--cwu-border); padding: 7px 10px; text-align: left; vertical-align: top; white-space: pre-wrap; word-break: break-word; }
+.cwu-spreadsheet-scroll th { position: sticky; z-index: 1; top: 0; background: var(--cwu-soft); font-weight: 650; }
+.cwu-spreadsheet-note, .cwu-spreadsheet-empty { margin: 0; padding: 10px 14px; color: var(--cwu-muted); font-size: 11px; }
 .cwu-empty { padding: 16vh 0 40px; text-align: center; color: var(--cwu-muted); }
 .cwu-empty h2 { margin: 0 0 8px; color: var(--cwu-text); font-size: 20px; }
 .cwu-empty p, .cwu-progress p { margin: 0; }

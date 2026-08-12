@@ -913,13 +913,51 @@ function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink }) {
           </div>
         </header>
         <div className="cwu-document-body">
-          {file.format === 'markdown' ? (
+          {file.format === 'spreadsheet' ? (
+            <SpreadsheetPreview file={file} />
+          ) : file.format === 'markdown' ? (
             <div className="cwu-document-content cwu-message-body">
               <ReactMarkdown components={markdownLinkComponents(onOpenLink)} remarkPlugins={[remarkGfm]}>{file.content || ''}</ReactMarkdown>
             </div>
           ) : <pre className="cwu-document-code">{file.content || ''}</pre>}
         </div>
       </section>
+    </div>
+  );
+}
+
+function SpreadsheetPreview({ file }) {
+  const [activeSheet, setActiveSheet] = useState(0);
+  const sheets = Array.isArray(file.sheets) ? file.sheets : [];
+  const sheet = sheets[Math.min(activeSheet, Math.max(0, sheets.length - 1))];
+  if (!sheet) return <div className="cwu-spreadsheet-empty">这个工作簿没有可显示的工作表</div>;
+  return (
+    <div className="cwu-spreadsheet-preview">
+      <nav aria-label="工作表">
+        {sheets.map((item, index) => (
+          <button
+            aria-pressed={index === activeSheet}
+            key={`${item.name}-${index}`}
+            onClick={() => setActiveSheet(index)}
+            type="button"
+          >{item.name || `Sheet ${index + 1}`}</button>
+        ))}
+      </nav>
+      <div className="cwu-spreadsheet-scroll">
+        <table>
+          <tbody>
+            {(sheet.rows || []).map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {(row || []).map((cell, columnIndex) => {
+                  const Cell = rowIndex === 0 ? 'th' : 'td';
+                  return <Cell key={columnIndex}>{cell}</Cell>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {sheet.truncated ? <p className="cwu-spreadsheet-note">工作表较大，页面仅显示前 {sheet.rows.length} 行；完整内容请外部打开。</p> : null}
     </div>
   );
 }
