@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { extractInlineVisualizations, normalizeSessionBrowserViewModel, normalizeSessionViewModel } from '../src/ui/model.js';
+import { extractInlineVisualizations, normalizeSessionBrowserViewModel, normalizeSessionViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -30,6 +30,13 @@ test('Session UI extracts safe inline visualizations and keeps message media', (
 
   const view = normalizeSessionViewModel({ messages: [{ media: [{ kind: 'image', src: '/media/1', alt: '截图' }] }] });
   assert.equal(view.messages[0].media[0].src, '/media/1');
+});
+
+test('Session UI turns Codex file citations into local file links', () => {
+  assert.equal(
+    renderFileCitationsAsMarkdown('文件：:codex-file-citation{path="/tmp/report draft.xlsx" purpose="output"}'),
+    '文件：[文件：report draft.xlsx](/tmp/report%20draft.xlsx)',
+  );
 });
 
 test('Session UI embeds visualizations in a sandbox and renders image media', async () => {

@@ -11,6 +11,7 @@ import {
   extractInlineVisualizations,
   normalizeSessionBrowserViewModel,
   normalizeSessionViewModel,
+  renderFileCitationsAsMarkdown,
   sessionStatusTone,
 } from './model.js';
 import { sessionComposerPresentation } from '../session.js';
@@ -988,7 +989,7 @@ function Message({
         src: visualizationUrl({ file, messageId: message.id, sessionId }),
       })).filter((item) => item.src)
     : [];
-  const renderedContent = visualizations.length ? inline.markdown : message.content;
+  const renderedContent = renderFileCitationsAsMarkdown(visualizations.length ? inline.markdown : message.content);
   const visibleAttachments = isUser
     ? (message.attachments || []).filter((attachment) => (
         attachment.kind !== 'image' || !message.media?.length

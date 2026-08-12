@@ -124,6 +124,18 @@ export function extractInlineVisualizations(content = '') {
   return { markdown, files };
 }
 
+export function renderFileCitationsAsMarkdown(content = '') {
+  return String(content).replace(
+    /:codex-file-citation\{path="([^"]+)"(?:\s+purpose="[^"]+")?(?:\s+[^}]*)?\}/g,
+    (_, filePath) => {
+      const name = filePath.split('/').filter(Boolean).pop() || '文件';
+      const safeName = name.replace(/[\[\]]/g, '\\$&');
+      const safePath = filePath.replace(/[()]/g, '\\$&').replace(/ /g, '%20');
+      return `[文件：${safeName}](${safePath})`;
+    },
+  );
+}
+
 function normalizeMedia(value, fallbackPrefix) {
   return Array.isArray(value)
     ? value.map((media, index) => ({
