@@ -91,6 +91,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /cwu-queued-turns/);
   assert.match(source, /const submittedDraft = draft/);
   assert.match(source, /setDraft\(submittedDraft\)/);
+  assert.match(source, /useState\(view\.draft\)/);
+  assert.match(source, /actions\.onDraftChange\?\.\(event\.target\.value\)/);
   assert.match(source, /handleAttachmentDrop/);
   assert.match(source, /松开以上传附件/);
   assert.match(styles, /\.cwu-browser-row-action/);
@@ -115,6 +117,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
 
   const session = normalizeSessionViewModel({
     isDraft: true,
+    draft: '可恢复的输入',
     composerDisabled: true,
     messages: [{ id: 'm1', role: 'user', content: '问题', canEdit: true, canFork: true }],
     hasEarlierTurns: true,
@@ -123,6 +126,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   });
   assert.equal(session.hasEarlierTurns, true);
   assert.equal(session.isDraft, true);
+  assert.equal(session.draft, '可恢复的输入');
   assert.equal(session.composerDisabled, true);
   assert.equal(session.messages[0].canEdit, true);
   assert.equal(session.messages[0].canFork, true);

@@ -339,7 +339,7 @@ export function SessionWorkspace({
   const transcriptRef = useRef(null);
   const composerRef = useRef(null);
   const followLatestRef = useRef(true);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(view.draft);
   const [attachments, setAttachments] = useState([]);
   const [attachmentUploadState, setAttachmentUploadState] = useState({ status: 'idle', error: '' });
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
@@ -365,6 +365,7 @@ export function SessionWorkspace({
 
   useEffect(() => {
     followLatestRef.current = true;
+    setDraft(view.draft);
     setAttachments([]);
     setAttachmentUploadState({ status: 'idle', error: '' });
     setAttachmentDragActive(false);
@@ -676,7 +677,10 @@ export function SessionWorkspace({
               aria-label={labels.composerPlaceholder || '输入需求'}
               disabled={composerDisabled}
               maxLength={12000}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                actions.onDraftChange?.(event.target.value);
+              }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();

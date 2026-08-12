@@ -8,6 +8,7 @@ export function normalizeSessionViewModel(value = {}) {
   return {
     sessionId: stringOrNull(value.sessionId),
     isDraft: Boolean(value.isDraft),
+    draft: String(value.draft || ''),
     composerDisabled: Boolean(value.composerDisabled),
     title: String(value.title || '未命名 Session'),
     contextLabel: String(value.contextLabel || 'Agent Session'),
