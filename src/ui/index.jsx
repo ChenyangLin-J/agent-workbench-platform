@@ -9,6 +9,7 @@ import '../browser/subagent-elements.js';
 import {
   groupSessionSummaries,
   extractInlineVisualizations,
+  extractRemarkDirectives,
   normalizeSessionBrowserViewModel,
   normalizeSessionViewModel,
   renderFileCitationsAsMarkdown,
@@ -989,7 +990,8 @@ function Message({
         src: visualizationUrl({ file, messageId: message.id, sessionId }),
       })).filter((item) => item.src)
     : [];
-  const renderedContent = renderFileCitationsAsMarkdown(visualizations.length ? inline.markdown : message.content);
+  const directiveContent = extractRemarkDirectives(visualizations.length ? inline.markdown : message.content);
+  const renderedContent = renderFileCitationsAsMarkdown(directiveContent.markdown);
   const visibleAttachments = isUser
     ? (message.attachments || []).filter((attachment) => (
         attachment.kind !== 'image' || !message.media?.length
@@ -997,7 +999,10 @@ function Message({
     : [];
   const defaultContent = isUser
     ? renderedContent
-    : <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>{renderedContent || (visualizations.length ? '' : '…')}</ReactMarkdown>;
+    : <>
+        {renderedContent ? <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>{renderedContent}</ReactMarkdown> : null}
+        {!renderedContent && !visualizations.length && !directiveContent.directives.length ? '…' : null}
+      </>;
   const customContent = renderContent?.({
     content: renderedContent,
     defaultContent,
@@ -1054,6 +1059,7 @@ function Message({
       ) : (
         <div className="cwu-message-body">
           {customContent === undefined ? defaultContent : customContent}
+          {!isUser ? <RemarkDirectives directives={directiveContent.directives} onOpenLink={onOpenLink} /> : null}
         </div>
       )}
       {!editing && (canEdit || canFork) ? (
@@ -1091,6 +1097,41 @@ function Message({
       ) : null}
     </agent-session-message>
   );
+}
+
+function RemarkDirectives({ directives, onOpenLink }) {
+  if (!directives?.length) return null;
+  return <div className="cwu-remark-directives">
+    {directives.map((directive, index) => {
+      const attributes = directive.attributes || {};
+      if (directive.name === 'archive' || directive.name === 'codex-realtime-inline') return null;
+      if (directive.name === 'inbox-item') return (
+        <aside className="cwu-remark-card is-inbox" key={`${directive.name}-${index}`}>
+          <span>自动任务</span>
+          <strong>{attributes.title || '任务更新'}</strong>
+          {attributes.summary ? <p>{attributes.summary}</p> : null}
+        </aside>
+      );
+      if (directive.name === 'created-thread') {
+        const threadId = attributes.threadId || attributes.clientThreadId;
+        return (
+          <aside className="cwu-remark-card" key={`${directive.name}-${index}`}>
+            <span>新 Session</span>
+            <strong>{threadId || '已创建'}</strong>
+            {threadId && onOpenLink ? <button onClick={() => onOpenLink(`codex://threads/${threadId}`)} type="button">打开</button> : null}
+          </aside>
+        );
+      }
+      const values = Object.values(attributes).filter(Boolean);
+      return (
+        <aside className="cwu-remark-card" key={`${directive.name}-${index}`}>
+          <span>{directive.name.replace(/-/g, ' ')}</span>
+          <strong>{attributes.title || values[0] || '结构化结果'}</strong>
+          {attributes.summary || attributes.body ? <p>{attributes.summary || attributes.body}</p> : null}
+        </aside>
+      );
+    })}
+  </div>;
 }
 
 function MediaGallery({ items }) {

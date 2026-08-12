@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { extractInlineVisualizations, normalizeSessionBrowserViewModel, normalizeSessionViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
+import { extractInlineVisualizations, extractRemarkDirectives, normalizeSessionBrowserViewModel, normalizeSessionViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -38,6 +38,15 @@ test('Session UI turns Codex file citations into local file links', () => {
     renderFileCitationsAsMarkdown('文件：:codex-file-citation{path="/tmp/report draft.xlsx" purpose="output"}'),
     '文件：[文件：report draft.xlsx](/tmp/report%20draft.xlsx)',
   );
+});
+
+test('Session UI parses standalone remark directives without matching ordinary CSS', () => {
+  assert.deepEqual(
+    extractRemarkDirectives('完成\n\n::inbox-item{title="上下文同步无持久变更" summary="项目快照保持不变"}'),
+    { markdown: '完成', directives: [{ name: 'inbox-item', attributes: { title: '上下文同步无持久变更', summary: '项目快照保持不变' } }] },
+  );
+  assert.deepEqual(extractRemarkDirectives('.button:hover { color: red; }').directives, []);
+  assert.equal(extractRemarkDirectives('::future-result{title="可读兜底" detail=ready}').directives[0].name, 'future-result');
 });
 
 test('Session UI embeds visualizations in a sandbox and renders image media', async () => {
@@ -87,6 +96,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(styles, /\.cwu-browser-row-action/);
   assert.match(source, /<svg aria-hidden="true" fill="none" viewBox="0 0 24 24">/);
   assert.match(styles, /\.cwu-browser-row-action svg/);
+  assert.match(styles, /\.cwu-remark-card/);
   assert.match(source, /cwu-browser-group-create/);
   assert.match(styles, /\.cwu-browser-group-heading:hover \.cwu-browser-group-create/);
   assert.match(styles, /@media \(hover: hover\) and \(pointer: fine\)/);

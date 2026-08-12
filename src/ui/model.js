@@ -136,6 +136,24 @@ export function renderFileCitationsAsMarkdown(content = '') {
   );
 }
 
+export function extractRemarkDirectives(content = '') {
+  const directives = [];
+  const markdown = String(content).replace(
+    /^[ \t]*::([a-z][a-z0-9-]*)\{([^\n}]*)\}[ \t]*$/gim,
+    (source, name, rawAttributes) => {
+      if (name === 'codex-inline-vis') return source;
+      const attributes = {};
+      for (const match of rawAttributes.matchAll(/([a-zA-Z][a-zA-Z0-9_-]*)=(?:"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'|([^\s]+))/g)) {
+        const value = match[2] ?? match[3] ?? match[4] ?? '';
+        attributes[match[1]] = value.replace(/\\([\\"'])/g, '$1');
+      }
+      directives.push({ name: name.toLowerCase(), attributes });
+      return '';
+    },
+  ).replace(/\n{3,}/g, '\n\n').trim();
+  return { markdown, directives };
+}
+
 function normalizeMedia(value, fallbackPrefix) {
   return Array.isArray(value)
     ? value.map((media, index) => ({
