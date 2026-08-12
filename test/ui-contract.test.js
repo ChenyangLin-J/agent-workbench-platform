@@ -21,6 +21,7 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(source, /function SpreadsheetPreview/);
   assert.match(styles, /\.cwu-document-preview/);
   assert.match(styles, /\.cwu-spreadsheet-scroll table/);
+  assert.match(styles, /\.cwu-spreadsheet-scroll \{ min-width: 0/);
 });
 
 test('Session UI extracts safe inline visualizations and keeps message media', () => {
