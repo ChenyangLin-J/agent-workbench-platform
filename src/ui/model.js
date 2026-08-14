@@ -14,12 +14,14 @@ export function normalizeSessionViewModel(value = {}) {
         accessMode: ['full', 'restricted'].includes(rawExecutionProfile.accessMode)
           ? rawExecutionProfile.accessMode
           : 'restricted',
+        serviceTier: rawExecutionProfile.serviceTier ? String(rawExecutionProfile.serviceTier) : null,
         label: String(rawExecutionProfile.label || ''),
       }
     : {
         model: models.find((model) => model.isDefault)?.id || models[0]?.id || '',
         reasoningEffort: '',
         accessMode: 'restricted',
+        serviceTier: null,
         label: String(rawExecutionProfile || ''),
       };
   const selectedModel = models.find((model) => model.id === executionProfile.model);
@@ -266,6 +268,14 @@ function normalizeModelOptions(value) {
         label: String(model?.displayName || model?.label || model?.model || model?.id || `Model ${index + 1}`),
         isDefault: Boolean(model?.isDefault),
         defaultReasoningEffort: String(model?.defaultReasoningEffort || 'medium'),
+        defaultServiceTier: model?.defaultServiceTier ? String(model.defaultServiceTier) : null,
+        serviceTiers: Array.isArray(model?.serviceTiers)
+          ? model.serviceTiers.map((tier) => ({
+              id: String(tier?.id || tier || ''),
+              label: String(tier?.name || tier?.label || tier?.id || tier || ''),
+              description: String(tier?.description || ''),
+            })).filter((tier) => tier.id)
+          : [],
         reasoningEfforts: Array.isArray(model?.supportedReasoningEfforts) && model.supportedReasoningEfforts.length
           ? model.supportedReasoningEfforts.map((effort) => String(effort?.reasoningEffort || effort)).filter(Boolean)
           : Array.isArray(model?.reasoningEfforts) && model.reasoningEfforts.length

@@ -522,6 +522,7 @@ export function SessionWorkspace({
   const executionEfforts = selectedExecutionModel?.reasoningEfforts?.length
     ? selectedExecutionModel.reasoningEfforts
     : ['low', 'medium', 'high', 'xhigh'];
+  const fastTier = selectedExecutionModel?.serviceTiers.find((tier) => tier.id === 'priority') || null;
   const canSubmit = Boolean((draft.trim() || attachments.length) && !composerDisabled && !uploading && actions.onSubmit);
   const composer = sessionComposerPresentation({ running, submitting, canSteer: enabledFeatures.steer });
   const technicalByTurn = new Map();
@@ -902,6 +903,9 @@ export function SessionWorkspace({
                           updateExecutionProfile({
                             model: event.target.value,
                             reasoningEffort: model?.defaultReasoningEffort || 'medium',
+                            serviceTier: model?.serviceTiers.some((tier) => tier.id === view.executionProfile.serviceTier)
+                              ? view.executionProfile.serviceTier
+                              : model?.defaultServiceTier || null,
                           });
                         }}
                         value={view.executionProfile.model}
@@ -931,6 +935,17 @@ export function SessionWorkspace({
                         {view.accessModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
                       </select>
                     </label>
+                    <button
+                      aria-label={labels.fastMode || 'Fast 模式'}
+                      aria-pressed={view.executionProfile.serviceTier === 'priority'}
+                      className="cwu-execution-fast"
+                      disabled={executionControlsDisabled || !fastTier}
+                      onClick={() => updateExecutionProfile({
+                        serviceTier: view.executionProfile.serviceTier === 'priority' ? null : 'priority',
+                      })}
+                      title={fastTier?.description || labels.fastUnavailable || '当前模型不支持 Fast'}
+                      type="button"
+                    >⚡ Fast</button>
                   </div>
                 ) : <span className="cwu-execution-profile">{view.executionProfile.label}</span>}
               </div>

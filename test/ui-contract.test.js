@@ -119,6 +119,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /actions\.onDraftChange\?\.\(event\.target\.value\)/);
   assert.match(source, /handleAttachmentDrop/);
   assert.match(source, /actions\.onExecutionProfileChange/);
+  assert.match(source, /serviceTier/);
+  assert.match(source, /cwu-execution-fast/);
   assert.match(styles, /\.cwu-execution-controls/);
   assert.match(source, /松开以上传附件/);
   assert.match(styles, /\.cwu-browser-row-action/);
@@ -149,8 +151,12 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
     hasEarlierTurns: true,
     loadedTurnCount: 20,
     queuedTurns: [{ id: 'q1', prompt: '继续', attachments: [{ name: 'a.png' }] }],
-    models: [{ model: 'gpt-test', isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }],
-    executionProfile: { model: 'gpt-test', reasoningEffort: 'high', accessMode: 'full' },
+    models: [{
+      model: 'gpt-test', isDefault: true,
+      supportedReasoningEfforts: [{ reasoningEffort: 'high' }],
+      serviceTiers: [{ id: 'priority', name: 'Fast', description: 'faster' }],
+    }],
+    executionProfile: { model: 'gpt-test', reasoningEffort: 'high', accessMode: 'full', serviceTier: 'priority' },
   });
   assert.equal(session.hasEarlierTurns, true);
   assert.equal(session.isDraft, true);
@@ -163,5 +169,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(session.executionProfile.model, 'gpt-test');
   assert.equal(session.executionProfile.reasoningEffort, 'high');
   assert.equal(session.executionProfile.accessMode, 'full');
+  assert.equal(session.executionProfile.serviceTier, 'priority');
+  assert.equal(session.models[0].serviceTiers[0].label, 'Fast');
   assert.equal(session.accessModes[0].label, '完全访问');
 });

@@ -272,6 +272,10 @@
 .cwu-execution-controls select:hover, .cwu-execution-controls select:focus-visible { background: var(--cwu-soft); color: var(--cwu-text); }
 .cwu-execution-controls select:disabled { cursor: default; opacity: .58; }
 .cwu-execution-controls label:first-child select { max-width: 190px; }
+.cwu-execution-fast { flex: 0 0 auto; border: 0; border-radius: 7px; background: transparent; color: var(--cwu-muted); padding: 5px 6px; font: inherit; font-size: 10px; cursor: pointer; }
+.cwu-execution-fast:hover, .cwu-execution-fast:focus-visible { background: var(--cwu-soft); color: var(--cwu-text); }
+.cwu-execution-fast[aria-pressed="true"] { background: color-mix(in srgb, var(--cwu-accent) 14%, var(--cwu-soft)); color: var(--cwu-accent); font-weight: 650; }
+.cwu-execution-fast:disabled { cursor: default; opacity: .38; }
 .cwu-attach-button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--cwu-border); border-radius: 8px; background: var(--cwu-surface); color: var(--cwu-text); padding: 5px 8px; cursor: pointer; }
 .cwu-attach-button:hover { border-color: var(--cwu-accent); color: var(--cwu-accent); }
 .cwu-attach-button[aria-disabled="true"] { cursor: default; opacity: .45; }
