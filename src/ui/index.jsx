@@ -12,6 +12,7 @@ import {
   extractRemarkDirectives,
   normalizeSessionBrowserViewModel,
   normalizeSessionViewModel,
+  normalizeSideChatPanelViewModel,
   renderFileCitationsAsMarkdown,
   sessionStatusTone,
 } from './model.js';
@@ -21,6 +22,173 @@ import { normalizeAttachmentPolicy } from '../attachments.js';
 import { useSessionUserInput } from '../ui-hooks.js';
 
 export { useSessionUserInput } from '../ui-hooks.js';
+
+export function SideChatPanel({
+  panel,
+  actions = {},
+  labels = {},
+}) {
+  const view = useMemo(() => normalizeSideChatPanelViewModel(panel), [panel]);
+  const selected = view.selected;
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const streamRef = useRef(null);
+  const readOnly = Boolean(selected && !selected.resumable);
+  const running = selected?.status === 'running';
+  const selectedModel = selected?.model || view.models.find((model) => model.isDefault)?.id || view.models[0]?.id || '';
+  const model = view.models.find((candidate) => candidate.id === selectedModel) || null;
+  const reasoningEfforts = model?.reasoningEfforts?.length ? model.reasoningEfforts : ['low', 'medium', 'high', 'xhigh'];
+  const selectedEffort = selected?.reasoningEffort || model?.defaultReasoningEffort || 'medium';
+
+  useEffect(() => {
+    setDraft('');
+    setError('');
+  }, [view.selectedId]);
+
+  useEffect(() => {
+    const stream = streamRef.current;
+    if (stream) stream.scrollTop = stream.scrollHeight;
+  }, [selected?.status, selected?.transcript]);
+
+  async function run(action) {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await action?.();
+    } catch (actionError) {
+      const message = actionError?.message || labels.error || 'Side Chat 操作失败';
+      setError(message);
+      actions.onError?.(actionError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    const prompt = draft.trim();
+    if (!prompt || busy || running || readOnly || !actions.onSubmit) return;
+    await run(async () => {
+      await actions.onSubmit({ sideChatId: selected.id, prompt });
+      setDraft('');
+    });
+  }
+
+  async function updateModel(modelId) {
+    const nextModel = view.models.find((candidate) => candidate.id === modelId);
+    await run(() => actions.onUpdate?.({
+      sideChatId: selected.id,
+      model: modelId,
+      reasoningEffort: nextModel?.defaultReasoningEffort || 'medium',
+    }));
+  }
+
+  return (
+    <section className="cwu-side-chat" aria-label={labels.ariaLabel || 'Side Chats'}>
+      <div className="cwu-side-chat-tabs" role="tablist" aria-label={labels.tabsAriaLabel || 'Side Chats'}>
+        {view.sideChats.map((sideChat) => (
+          <div className="cwu-side-chat-tab-wrap" key={sideChat.id}>
+            <button
+              aria-selected={sideChat.id === view.selectedId}
+              className={sideChat.status === 'expired' ? 'is-expired' : ''}
+              disabled={busy}
+              onClick={() => actions.onSelect?.(sideChat.id)}
+              role="tab"
+              type="button"
+            >{sideChat.title}</button>
+            {actions.onDelete ? (
+              <button
+                aria-label={`${labels.delete || '永久删除'} ${sideChat.title}`}
+                className="cwu-side-chat-delete"
+                disabled={busy || sideChat.status === 'running'}
+                onClick={() => run(() => actions.onDelete(sideChat.id))}
+                type="button"
+              >{labels.delete || '删除'}</button>
+            ) : null}
+          </div>
+        ))}
+        <button
+          aria-label={labels.new || '新建 Side Chat'}
+          className="cwu-side-chat-add"
+          disabled={busy}
+          onClick={() => actions.onSelect?.(null)}
+          type="button"
+        >＋</button>
+      </div>
+
+      {!selected ? (
+        <div className="cwu-side-chat-empty">
+          <strong>{labels.emptyTitle || '新建 Side Chat'}</strong>
+          <p>{labels.emptyBody || '基于主 Session 当前上下文创建独立对话；回答会保留，直到你明确删除。'}</p>
+          <button className="cwu-send" disabled={busy || !actions.onCreate} onClick={() => run(actions.onCreate)} type="button">
+            {busy ? (labels.creating || '创建中…') : (labels.create || '创建 Side Chat')}
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="cwu-side-chat-config">
+            <label>
+              <span>{labels.model || '模型'}</span>
+              <select disabled={busy || running || readOnly || !actions.onUpdate} onChange={(event) => updateModel(event.target.value)} value={selectedModel}>
+                {view.models.length ? view.models.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>{candidate.label}</option>
+                )) : <option value={selectedModel}>{selectedModel || labels.defaultModel || '默认模型'}</option>}
+              </select>
+            </label>
+            <label>
+              <span>{labels.reasoning || '推理'}</span>
+              <select
+                disabled={busy || running || readOnly || !actions.onUpdate}
+                onChange={(event) => run(() => actions.onUpdate({
+                  sideChatId: selected.id,
+                  model: selectedModel,
+                  reasoningEffort: event.target.value,
+                }))}
+                value={selectedEffort}
+              >
+                {reasoningEfforts.map((effort) => <option key={effort} value={effort}>{reasoningEffortLabel(effort)}</option>)}
+              </select>
+            </label>
+            <span>{running ? (labels.running || '回答中') : readOnly ? (labels.retained || '已保留记录') : (labels.independent || '独立 Fork')}</span>
+          </div>
+
+          <div className="cwu-side-chat-stream" ref={streamRef}>
+            <p>{labels.created || '创建于'} {defaultFormatTime(selected.createdAt)} · {labels.detached || '与主 Session 不再同步'}</p>
+            {selected.selectedText ? <blockquote>{selected.selectedText}</blockquote> : null}
+            {selected.transcript.length ? selected.transcript.map((message) => (
+              <article className={`cwu-side-chat-message is-${message.role}`} key={message.id}>{message.content}</article>
+            )) : <div className="cwu-side-chat-placeholder">{labels.promptHint || '输入一个不会写回主 Session 的问题。'}</div>}
+            {readOnly ? <div className="cwu-side-chat-placeholder">{labels.readOnly || '记录已保留；Runtime 失效后不能继续追问，请新建 Side Chat。'}</div> : null}
+          </div>
+
+          {error ? <div className="cwu-side-chat-error" role="alert">{error}</div> : null}
+          {!readOnly ? (
+            <form className="cwu-side-chat-composer" onSubmit={submit}>
+              <textarea
+                aria-label={labels.composerAriaLabel || 'Side Chat 问题'}
+                disabled={busy || running}
+                maxLength={12000}
+                onChange={(event) => setDraft(event.target.value)}
+                placeholder={labels.composerPlaceholder || '在临时上下文中追问…'}
+                rows={3}
+                value={draft}
+              />
+              <div>
+                <span>{selectedModel || labels.defaultModel || '默认模型'} · {selectedEffort}</span>
+                <button className="cwu-send" disabled={!draft.trim() || busy || running || !actions.onSubmit} type="submit">
+                  {running ? (labels.running || '回答中') : busy ? (labels.sending || '发送中…') : (labels.send || '发送')}
+                </button>
+              </div>
+            </form>
+          ) : null}
+        </>
+      )}
+      {error && !selected ? <div className="cwu-side-chat-error" role="alert">{error}</div> : null}
+    </section>
+  );
+}
 
 export function SessionBrowser({
   browser,
@@ -349,6 +517,11 @@ export function SessionWorkspace({
   const running = view.status === 'running';
   const uploading = attachmentUploadState.status === 'uploading';
   const composerDisabled = view.composerDisabled || submitting;
+  const executionControlsDisabled = composerDisabled || running || !actions.onExecutionProfileChange;
+  const selectedExecutionModel = view.models.find((model) => model.id === view.executionProfile.model) || null;
+  const executionEfforts = selectedExecutionModel?.reasoningEfforts?.length
+    ? selectedExecutionModel.reasoningEfforts
+    : ['low', 'medium', 'high', 'xhigh'];
   const canSubmit = Boolean((draft.trim() || attachments.length) && !composerDisabled && !uploading && actions.onSubmit);
   const composer = sessionComposerPresentation({ running, submitting, canSteer: enabledFeatures.steer });
   const technicalByTurn = new Map();
@@ -510,6 +683,12 @@ export function SessionWorkspace({
         return next;
       });
     }
+  }
+
+  function updateExecutionProfile(patch) {
+    if (executionControlsDisabled) return;
+    Promise.resolve(actions.onExecutionProfileChange({ ...view.executionProfile, ...patch }))
+      .catch((error) => actions.onError?.(error));
   }
 
   return (
@@ -711,7 +890,49 @@ export function SessionWorkspace({
                     <span aria-hidden="true">＋</span>附件
                   </label>
                 ) : null}
-                <span className="cwu-execution-profile">{view.executionProfile}</span>
+                {view.models.length ? (
+                  <div className="cwu-execution-controls" aria-label={labels.executionSettings || '执行设置'}>
+                    <label title={labels.model || '模型'}>
+                      <span>{labels.model || '模型'}</span>
+                      <select
+                        aria-label={labels.model || '模型'}
+                        disabled={executionControlsDisabled}
+                        onChange={(event) => {
+                          const model = view.models.find((candidate) => candidate.id === event.target.value);
+                          updateExecutionProfile({
+                            model: event.target.value,
+                            reasoningEffort: model?.defaultReasoningEffort || 'medium',
+                          });
+                        }}
+                        value={view.executionProfile.model}
+                      >
+                        {view.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+                      </select>
+                    </label>
+                    <label title={labels.reasoning || '思考强度'}>
+                      <span>{labels.reasoning || '思考'}</span>
+                      <select
+                        aria-label={labels.reasoning || '思考强度'}
+                        disabled={executionControlsDisabled}
+                        onChange={(event) => updateExecutionProfile({ reasoningEffort: event.target.value })}
+                        value={view.executionProfile.reasoningEffort}
+                      >
+                        {executionEfforts.map((effort) => <option key={effort} value={effort}>{reasoningEffortLabel(effort)}</option>)}
+                      </select>
+                    </label>
+                    <label title={labels.permissions || '权限'}>
+                      <span>{labels.permissions || '权限'}</span>
+                      <select
+                        aria-label={labels.permissions || '权限'}
+                        disabled={executionControlsDisabled}
+                        onChange={(event) => updateExecutionProfile({ accessMode: event.target.value })}
+                        value={view.executionProfile.accessMode}
+                      >
+                        {view.accessModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                ) : <span className="cwu-execution-profile">{view.executionProfile.label}</span>}
               </div>
               <div>
                 {composer.showSecondary ? (
@@ -1270,6 +1491,10 @@ function defaultFormatTime(value) {
   }).format(new Date(value));
 }
 
+function reasoningEffortLabel(effort) {
+  return ({ low: '低', medium: '标准', high: '高', xhigh: '更高', ultra: '极高' })[effort] || effort;
+}
+
 function fileMatchesAccept(file, accept) {
   const rules = String(accept || '').split(',').map((rule) => rule.trim().toLowerCase()).filter(Boolean);
   if (!rules.length) return true;
@@ -1286,5 +1511,6 @@ export {
   groupSessionSummaries,
   normalizeSessionBrowserViewModel,
   normalizeSessionViewModel,
+  normalizeSideChatPanelViewModel,
   sessionStatusTone,
 } from './model.js';

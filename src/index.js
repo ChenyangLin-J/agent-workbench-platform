@@ -26,9 +26,16 @@ export {
 
 export {
   normalizeSessionFeatures,
+  normalizeSideChatMode,
   normalizeSubagentMode,
   normalizeVisibility,
 } from './capabilities.js';
+
+export {
+  SideChatController,
+  normalizeSideChatRecord,
+  normalizeSideChatSnapshot,
+} from './features/side-chat.js';
 
 export { useSessionUserInput } from './ui-hooks.js';
 

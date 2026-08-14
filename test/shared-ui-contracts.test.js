@@ -11,6 +11,7 @@ import {
 } from '../src/attachments.js';
 import {
   normalizeSessionFeatures,
+  normalizeSideChatMode,
   normalizeSubagentMode,
   normalizeVisibility,
 } from '../src/capabilities.js';
@@ -19,18 +20,21 @@ test('Session capabilities preserve booleans and support product UI complexity m
   assert.equal(normalizeSubagentMode(true), 'full');
   assert.equal(normalizeSubagentMode('summary'), 'summary');
   assert.equal(normalizeSubagentMode('unsupported'), 'hidden');
+  assert.equal(normalizeSideChatMode(true), 'full');
   assert.equal(normalizeVisibility(true), 'visible');
   assert.deepEqual(normalizeSessionFeatures({
     attachments: false,
     realtimeV3: true,
     steer: false,
     subagents: 'summary',
+    sideChats: 'full',
     technicalDetails: true,
   }), {
     attachments: 'hidden',
     externalLink: 'visible',
     realtime: 'visible',
     steer: false,
+    sideChats: 'full',
     subagents: 'summary',
     technicalDetails: true,
   });

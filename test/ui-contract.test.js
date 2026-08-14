@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { extractInlineVisualizations, extractRemarkDirectives, normalizeSessionBrowserViewModel, normalizeSessionViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
+import { extractInlineVisualizations, extractRemarkDirectives, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -77,6 +77,30 @@ test('Session UI exposes product extension content without owning product naviga
   assert.doesNotMatch(source, /ArtifactCanvas|project-navigation/);
 });
 
+test('Side Chat React UI owns shared interaction while products supply actions and storage', async () => {
+  const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
+  assert.match(source, /export function SideChatPanel/);
+  assert.match(source, /actions\.onCreate/);
+  assert.match(source, /actions\.onDelete/);
+  assert.match(source, /actions\.onSubmit/);
+  assert.match(source, /actions\.onUpdate/);
+  assert.match(styles, /\.cwu-side-chat-stream/);
+  assert.match(styles, /\.cwu-side-chat-composer/);
+
+  const view = normalizeSideChatPanelViewModel({
+    selectedId: 'side-1',
+    sideChats: [{
+      id: 'side-1', title: 'Side chat', status: 'expired', resumable: false,
+      transcript: [{ id: 'answer', role: 'assistant', text: '保留的答案' }],
+    }],
+    models: [{ model: 'gpt-test', supportedReasoningEfforts: [{ reasoningEffort: 'medium' }] }],
+  });
+  assert.equal(view.selected.resumable, false);
+  assert.equal(view.selected.transcript[0].content, '保留的答案');
+  assert.deepEqual(view.models[0].reasoningEfforts, ['medium']);
+  assert.equal('projectId' in view.selected, false);
+});
+
 test('browser custom elements can be imported during server rendering', async () => {
   await assert.doesNotReject(import('../src/browser/subagent-elements.js'));
 });
@@ -94,6 +118,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /useState\(view\.draft\)/);
   assert.match(source, /actions\.onDraftChange\?\.\(event\.target\.value\)/);
   assert.match(source, /handleAttachmentDrop/);
+  assert.match(source, /actions\.onExecutionProfileChange/);
+  assert.match(styles, /\.cwu-execution-controls/);
   assert.match(source, /松开以上传附件/);
   assert.match(styles, /\.cwu-browser-row-action/);
   assert.match(source, /<svg aria-hidden="true" fill="none" viewBox="0 0 24 24">/);
@@ -123,6 +149,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
     hasEarlierTurns: true,
     loadedTurnCount: 20,
     queuedTurns: [{ id: 'q1', prompt: '继续', attachments: [{ name: 'a.png' }] }],
+    models: [{ model: 'gpt-test', isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }],
+    executionProfile: { model: 'gpt-test', reasoningEffort: 'high', accessMode: 'full' },
   });
   assert.equal(session.hasEarlierTurns, true);
   assert.equal(session.isDraft, true);
@@ -132,4 +160,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(session.messages[0].canFork, true);
   assert.equal(session.loadedTurnCount, 20);
   assert.equal(session.queuedTurns[0].attachments[0].name, 'a.png');
+  assert.equal(session.executionProfile.model, 'gpt-test');
+  assert.equal(session.executionProfile.reasoningEffort, 'high');
+  assert.equal(session.executionProfile.accessMode, 'full');
+  assert.equal(session.accessModes[0].label, '完全访问');
 });

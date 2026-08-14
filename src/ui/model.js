@@ -5,6 +5,27 @@ import {
 } from '../session.js';
 
 export function normalizeSessionViewModel(value = {}) {
+  const models = normalizeModelOptions(value.models);
+  const rawExecutionProfile = value.executionProfile;
+  const executionProfile = typeof rawExecutionProfile === 'object' && rawExecutionProfile
+    ? {
+        model: String(rawExecutionProfile.model || models.find((model) => model.isDefault)?.id || models[0]?.id || ''),
+        reasoningEffort: String(rawExecutionProfile.reasoningEffort || ''),
+        accessMode: ['full', 'restricted'].includes(rawExecutionProfile.accessMode)
+          ? rawExecutionProfile.accessMode
+          : 'restricted',
+        label: String(rawExecutionProfile.label || ''),
+      }
+    : {
+        model: models.find((model) => model.isDefault)?.id || models[0]?.id || '',
+        reasoningEffort: '',
+        accessMode: 'restricted',
+        label: String(rawExecutionProfile || ''),
+      };
+  const selectedModel = models.find((model) => model.id === executionProfile.model);
+  if (!executionProfile.reasoningEffort) {
+    executionProfile.reasoningEffort = selectedModel?.defaultReasoningEffort || 'medium';
+  }
   return {
     sessionId: stringOrNull(value.sessionId),
     isDraft: Boolean(value.isDraft),
@@ -90,7 +111,17 @@ export function normalizeSessionViewModel(value = {}) {
           updatedAt: normalizeTimestamp(agent?.updatedAt),
         })).filter((agent) => agent.id)
       : [],
-    executionProfile: String(value.executionProfile || ''),
+    executionProfile,
+    models,
+    accessModes: Array.isArray(value.accessModes) && value.accessModes.length
+      ? value.accessModes.map((mode) => ({
+          id: ['full', 'restricted'].includes(mode?.id) ? mode.id : String(mode?.id || ''),
+          label: String(mode?.label || mode?.id || ''),
+        })).filter((mode) => mode.id && mode.label)
+      : [
+          { id: 'full', label: '完全访问' },
+          { id: 'restricted', label: '受限访问' },
+        ],
     queuedTurns: Array.isArray(value.queuedTurns)
       ? value.queuedTurns.map((item, index) => ({
           id: String(item?.id || `queued-turn-${index}`),
@@ -198,6 +229,50 @@ export function normalizeSessionBrowserViewModel(value = {}) {
         })).filter((target) => target.id)
       : [],
   };
+}
+
+export function normalizeSideChatPanelViewModel(value = {}) {
+  const sideChats = Array.isArray(value.sideChats)
+    ? value.sideChats.map((sideChat, index) => ({
+        id: String(sideChat?.id || `side-chat-${index}`),
+        title: String(sideChat?.title || `Side chat${index ? ` ${index + 1}` : ''}`),
+        status: ['creating', 'idle', 'running', 'interrupted', 'expired', 'error'].includes(sideChat?.status)
+          ? sideChat.status
+          : 'idle',
+        resumable: sideChat?.resumable !== false && sideChat?.status !== 'expired',
+        selectedText: String(sideChat?.selectedText || ''),
+        model: String(sideChat?.model || ''),
+        reasoningEffort: String(sideChat?.reasoningEffort || ''),
+        transcript: Array.isArray(sideChat?.transcript)
+          ? sideChat.transcript.map((message, messageIndex) => ({
+              id: String(message?.id || `side-chat-${index}-message-${messageIndex}`),
+              role: ['user', 'assistant', 'notice'].includes(message?.role) ? message.role : 'notice',
+              content: String(message?.content ?? message?.text ?? ''),
+            })).filter((message) => message.content)
+          : [],
+        createdAt: normalizeTimestamp(sideChat?.createdAt),
+      }))
+    : [];
+  const selectedId = stringOrNull(value.selectedId);
+  const selected = sideChats.find((sideChat) => sideChat.id === selectedId) || null;
+  const models = normalizeModelOptions(value.models);
+  return { sideChats, selectedId: selected?.id || null, selected, models };
+}
+
+function normalizeModelOptions(value) {
+  return Array.isArray(value)
+    ? value.map((model, index) => ({
+        id: String(model?.model || model?.id || `model-${index}`),
+        label: String(model?.displayName || model?.label || model?.model || model?.id || `Model ${index + 1}`),
+        isDefault: Boolean(model?.isDefault),
+        defaultReasoningEffort: String(model?.defaultReasoningEffort || 'medium'),
+        reasoningEfforts: Array.isArray(model?.supportedReasoningEfforts) && model.supportedReasoningEfforts.length
+          ? model.supportedReasoningEfforts.map((effort) => String(effort?.reasoningEffort || effort)).filter(Boolean)
+          : Array.isArray(model?.reasoningEfforts) && model.reasoningEfforts.length
+            ? model.reasoningEfforts.map(String).filter(Boolean)
+            : ['low', 'medium', 'high', 'xhigh'],
+      }))
+    : [];
 }
 
 export function groupSessionSummaries(sessions, mode = 'context', now = Date.now()) {

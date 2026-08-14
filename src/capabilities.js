@@ -6,6 +6,7 @@ export function normalizeSessionFeatures(features = {}) {
     attachments: normalizeVisibility(features.attachments, 'visible'),
     externalLink: normalizeVisibility(features.externalLink, 'visible'),
     realtime: normalizeVisibility(features.realtime ?? features.realtimeV3, 'hidden'),
+    sideChats: normalizeFeatureMode(features.sideChats),
     steer: features.steer !== false,
     subagents: normalizeSubagentMode(features.subagents),
     technicalDetails: Boolean(features.technicalDetails),
@@ -13,6 +14,14 @@ export function normalizeSessionFeatures(features = {}) {
 }
 
 export function normalizeSubagentMode(value) {
+  return normalizeFeatureMode(value);
+}
+
+export function normalizeSideChatMode(value) {
+  return normalizeFeatureMode(value);
+}
+
+function normalizeFeatureMode(value) {
   if (value === true) return 'full';
   if (value === false || value == null) return 'hidden';
   const mode = String(value).trim().toLowerCase();
@@ -25,4 +34,3 @@ export function normalizeVisibility(value, fallback = 'hidden') {
   const mode = String(value ?? '').trim().toLowerCase();
   return VISIBILITY_MODES.has(mode) ? mode : fallback;
 }
-

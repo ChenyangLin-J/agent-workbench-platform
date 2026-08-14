@@ -4,12 +4,15 @@ Shared, product-neutral building blocks for independent Codex workbench applicat
 
 The package lets multiple products reuse one implementation while keeping their repositories, accounts, data, deployments, and product organization separate.
 
+The current shared boundary and consumer migration order are defined in [`docs/architecture.md`](docs/architecture.md).
+
 ## Included
 
 - Codex App Server connections for stdio and WebSocket transports
 - Provider-neutral Session Kernel with queue, steer, interrupt, request, and replay contracts
 - Session presentation, searchable/archivable Session list, message history paging, queue, image/inline-visualization rendering, Composer, status, and responsive React UI
 - Codex-native Sub Agent discovery, metadata, active-Turn interruption, and thread-tree normalization
+- Product-neutral Side Chat controller, state model, persistence and Runtime adapter contracts, and React panel
 - Shared attachment metadata, limits, App Server inputs, approvals, and Realtime browser contracts
 - Product-configurable Session capabilities: Realtime visible/hidden and Sub Agents hidden/summary/full
 - On-demand shared MCP and Playwright Browser Provider primitives
@@ -51,6 +54,7 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 - `@agent-workbench/platform/subagents`
 - `@agent-workbench/platform/attachments`
 - `@agent-workbench/platform/capabilities`
+- `@agent-workbench/platform/features/side-chat`
 - `@agent-workbench/platform/ui-hooks`
 - `@agent-workbench/platform/runtime`
 - `@agent-workbench/platform/runtime/core`
@@ -61,7 +65,7 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 
 ## UI ownership
 
-`SessionBrowser` and `SessionWorkspace` provide the standard Session search/list/archive interaction, transcript and earlier-message paging, queued turns, requests, Composer, click/drag attachment upload, user-message Edit/Fork actions, status, Sub Agent, and Realtime UI. Products mark eligible messages with `canEdit` / `canFork`, implement `actions.onEditMessage` / `actions.onForkMessage`, and supply grouping labels, archive and paging actions, and their own navigation. They can append product-specific content after a standard message with `extensions.renderAfterMessage`; Core does not know about projects, analysis cards, reports, or artifact canvases.
+`SessionBrowser` and `SessionWorkspace` provide the standard Session search/list/archive interaction, transcript and earlier-message paging, queued turns, requests, Composer, click/drag attachment upload, model/reasoning/access selectors, user-message Edit/Fork actions, status, Sub Agent, and Realtime UI. Products supply the model catalog and implement `actions.onExecutionProfileChange` to apply execution settings through their Runtime adapter. `SideChatPanel` provides the shared Side Chat tabs, retained transcript, configuration and composer while the product supplies persistence and Runtime actions. Products mark eligible messages with `canEdit` / `canFork`, implement `actions.onEditMessage` / `actions.onForkMessage`, and supply grouping labels, archive and paging actions, and their own navigation. They can append product-specific content after a standard message with `extensions.renderAfterMessage`; Core does not know about projects, analysis cards, reports, or artifact canvases.
 
 ## Development
 
