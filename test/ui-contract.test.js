@@ -71,6 +71,7 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /data-message-id=\{message\.id\}/);
   assert.match(source, /normalizeSessionFeatures\(features\)/);
   assert.match(source, /normalizeAttachmentPolicy\(attachmentPolicy\)/);
+  assert.match(source, /const files = \[\.\.\.\(event\.target\.files \|\| \[\]\)\];\s*event\.target\.value = '';\s*await uploadFiles\(files\);/);
   const hooks = await readFile(hooksUrl, 'utf8');
   assert.match(source, /useSessionUserInput/);
   assert.match(hooks, /export function useSessionUserInput/);

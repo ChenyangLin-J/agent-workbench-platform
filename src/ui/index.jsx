@@ -628,7 +628,9 @@ export function SessionWorkspace({
   }
 
   async function uploadAttachments(event) {
-    const files = event.target.files;
+    // FileList is live: clearing the input also empties the same object in Chromium.
+    // Snapshot it first so the upload still receives the files the user selected.
+    const files = [...(event.target.files || [])];
     event.target.value = '';
     await uploadFiles(files);
   }
