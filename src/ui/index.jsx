@@ -887,7 +887,7 @@ export function SessionWorkspace({
                       aria-label="添加图片或附件"
                       disabled={submitting || uploading || attachments.length >= uploadPolicy.maxCount}
                       multiple
-                      onChange={uploadAttachments}
+                      onInput={uploadAttachments}
                       type="file"
                     />
                     <span aria-hidden="true">＋</span>附件

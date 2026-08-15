@@ -1,6 +1,6 @@
 {
   "name": "@agent-workbench/platform",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Shared Codex runtime, Session UI, Sub Agent, Realtime, and browser-provider primitives for independent agent workbench products.",
   "license": "MIT",
   "repository": {
