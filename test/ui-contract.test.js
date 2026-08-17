@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import katex from 'katex';
 import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
 const hooksUrl = new URL('../src/ui-hooks.js', import.meta.url);
+const katexStylesUrl = new URL('../node_modules/katex/dist/katex.css', import.meta.url);
 
 test('Session UI delegates message links and read-only document previews to its host', async () => {
   const [source, styles] = await Promise.all([
@@ -77,6 +79,16 @@ test('Session UI normalizes Codex math delimiters without changing code examples
     '\\]',
     '```',
   ].join('\n'));
+});
+
+test('KaTeX renderer and stylesheet use compatible box layout classes', async () => {
+  const html = katex.renderToString('\\boxed{\\$9,358,595.04}');
+  const styles = await readFile(katexStylesUrl, 'utf8');
+
+  assert.match(html, /class="base"/);
+  assert.match(html, /class="stretchy fbox"/);
+  assert.match(styles, /\.katex \.base/);
+  assert.match(styles, /\.katex \.fbox/);
 });
 
 test('Session UI turns Codex file citations into local file links', () => {

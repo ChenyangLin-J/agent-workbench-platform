@@ -1,6 +1,6 @@
 {
   "name": "@agent-workbench/platform",
-  "version": "0.4.10",
+  "version": "0.4.11",
   "description": "Shared Codex runtime, Session UI, Sub Agent, Realtime, and browser-provider primitives for independent agent workbench products.",
   "license": "MIT",
   "repository": {
@@ -54,7 +54,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "@playwright/mcp": "0.0.79",
-    "katex": "^0.18.4",
+    "katex": "0.16.47",
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
