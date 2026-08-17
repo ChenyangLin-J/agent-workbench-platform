@@ -23,6 +23,8 @@ import { useSessionUserInput } from '../ui-hooks.js';
 
 export { useSessionUserInput } from '../ui-hooks.js';
 
+const SESSION_COMPOSER_TEXT_LIMIT = 12000;
+
 export function SideChatPanel({
   panel,
   actions = {},
@@ -598,6 +600,10 @@ export function SessionWorkspace({
   async function uploadFiles(fileList) {
     const availableSlots = Math.max(0, uploadPolicy.maxCount - attachments.length);
     const candidates = [...(fileList || [])].slice(0, availableSlots);
+    if (!availableSlots && (fileList?.length || 0)) {
+      setAttachmentUploadState({ status: 'error', error: `单次最多 ${uploadPolicy.maxCount} 个附件。` });
+      return;
+    }
     const files = candidates.filter((file) => (
       file.size <= uploadPolicy.maxBytes && fileMatchesAccept(file, uploadPolicy.accept)
     ));
@@ -654,6 +660,24 @@ export function SessionWorkspace({
     setAttachmentDragActive(false);
     if (composerDisabled || uploading || attachments.length >= uploadPolicy.maxCount) return;
     await uploadFiles(event.dataTransfer.files);
+  }
+
+  async function handleComposerPaste(event) {
+    if (!actions.onUploadAttachments || composerDisabled || uploading) return;
+    const files = clipboardAttachmentFiles(event.clipboardData);
+    if (files.length) {
+      event.preventDefault();
+      await uploadFiles(files);
+      return;
+    }
+    const text = event.clipboardData?.getData('text/plain') || '';
+    if (!text || draft.length + text.length <= SESSION_COMPOSER_TEXT_LIMIT) return;
+    event.preventDefault();
+    await uploadFiles([new File(
+      [text],
+      `粘贴文本-${compactLocalTimestamp(new Date())}.txt`,
+      { type: 'text/plain' },
+    )]);
   }
 
   async function openSubagents() {
@@ -858,7 +882,7 @@ export function SessionWorkspace({
             <textarea
               aria-label={labels.composerPlaceholder || '输入需求'}
               disabled={composerDisabled}
-              maxLength={12000}
+              maxLength={SESSION_COMPOSER_TEXT_LIMIT}
               onChange={(event) => {
                 setDraft(event.target.value);
                 actions.onDraftChange?.(event.target.value);
@@ -869,6 +893,7 @@ export function SessionWorkspace({
                   submit(composer.primaryMode);
                 }
               }}
+              onPaste={handleComposerPaste}
               placeholder={labels.composerPlaceholder || '补充需求、反馈问题，或者继续修改…'}
               ref={composerRef}
               rows={3}
@@ -902,9 +927,12 @@ export function SessionWorkspace({
                         disabled={executionControlsDisabled}
                         onChange={(event) => {
                           const model = view.models.find((candidate) => candidate.id === event.target.value);
+                          const supportedEfforts = model?.reasoningEfforts || [];
                           updateExecutionProfile({
                             model: event.target.value,
-                            reasoningEffort: model?.defaultReasoningEffort || 'medium',
+                            reasoningEffort: supportedEfforts.includes(view.executionProfile.reasoningEffort)
+                              ? view.executionProfile.reasoningEffort
+                              : model?.defaultReasoningEffort || 'medium',
                             serviceTier: model?.serviceTiers.some((tier) => tier.id === view.executionProfile.serviceTier)
                               ? view.executionProfile.serviceTier
                               : model?.defaultServiceTier || null,
@@ -1522,6 +1550,27 @@ function fileMatchesAccept(file, accept) {
     if (rule.endsWith('/*')) return mimeType.startsWith(rule.slice(0, -1));
     return mimeType === rule;
   });
+}
+
+function clipboardAttachmentFiles(clipboardData) {
+  const candidates = [...(clipboardData?.files || [])];
+  for (const item of clipboardData?.items || []) {
+    if (item.kind !== 'file') continue;
+    const file = item.getAsFile?.();
+    if (file) candidates.push(file);
+  }
+  const seen = new Set();
+  return candidates.filter((file) => {
+    const signature = [file.name, file.type, file.size, file.lastModified].join(':');
+    if (seen.has(signature)) return false;
+    seen.add(signature);
+    return true;
+  });
+}
+
+function compactLocalTimestamp(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
 export {

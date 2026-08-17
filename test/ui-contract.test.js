@@ -73,6 +73,11 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /normalizeAttachmentPolicy\(attachmentPolicy\)/);
   assert.match(source, /const files = \[\.\.\.\(event\.target\.files \|\| \[\]\)\];\s*event\.target\.value = '';\s*await uploadFiles\(files\);/);
   assert.match(source, /onInput=\{uploadAttachments\}/);
+  assert.match(source, /onPaste=\{handleComposerPaste\}/);
+  assert.match(source, /clipboardAttachmentFiles\(event\.clipboardData\)/);
+  assert.match(source, /draft\.length \+ text\.length <= SESSION_COMPOSER_TEXT_LIMIT/);
+  assert.match(source, /`粘贴文本-\$\{compactLocalTimestamp\(new Date\(\)\)\}\.txt`/);
+  assert.match(source, /supportedEfforts\.includes\(view\.executionProfile\.reasoningEffort\)/);
   const hooks = await readFile(hooksUrl, 'utf8');
   assert.match(source, /useSessionUserInput/);
   assert.match(hooks, /export function useSessionUserInput/);
