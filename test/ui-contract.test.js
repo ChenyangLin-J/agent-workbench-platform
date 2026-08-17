@@ -135,6 +135,9 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /cwu-browser-search/);
   assert.match(source, /const \[searchOpen, setSearchOpen\]/);
   assert.match(source, /actions\.onArchive/);
+  assert.match(source, /actions\.onLoadMore/);
+  assert.match(source, /IntersectionObserver/);
+  assert.match(styles, /\.cwu-browser-load-more/);
   assert.match(source, /cwu-history-separator/);
   assert.match(source, /previousTop \+ \(current\.scrollHeight - previousHeight\)/);
   assert.match(source, /cwu-queued-turns/);
@@ -144,6 +147,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /actions\.onDraftChange\?\.\(event\.target\.value\)/);
   assert.match(source, /handleAttachmentDrop/);
   assert.match(source, /actions\.onExecutionProfileChange/);
+  assert.match(source, /actions\.onLoadTechnicalDetails/);
   assert.match(source, /serviceTier/);
   assert.match(source, /cwu-execution-fast/);
   assert.match(styles, /\.cwu-execution-controls/);
@@ -162,9 +166,13 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
 
   const browser = normalizeSessionBrowserViewModel({
     archived: true,
+    hasMore: true,
+    loadingMore: true,
     sessions: [{ id: 'a', archived: true, canArchive: false }],
   });
   assert.equal(browser.archived, true);
+  assert.equal(browser.hasMore, true);
+  assert.equal(browser.loadingMore, true);
   assert.equal(browser.sessions[0].archived, true);
   assert.equal(browser.sessions[0].canArchive, false);
 
@@ -173,6 +181,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
     draft: '可恢复的输入',
     composerDisabled: true,
     messages: [{ id: 'm1', role: 'user', content: '问题', canEdit: true, canFork: true }],
+    technicalDetailsAvailable: ['turn-1', 'turn-1'],
+    technicalDetailsLoading: true,
     hasEarlierTurns: true,
     loadedTurnCount: 20,
     queuedTurns: [{ id: 'q1', prompt: '继续', attachments: [{ name: 'a.png' }] }],
@@ -188,6 +198,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(session.draft, '可恢复的输入');
   assert.equal(session.composerDisabled, true);
   assert.equal(session.messages[0].canEdit, true);
+  assert.deepEqual(session.technicalDetailsAvailable, ['turn-1']);
+  assert.equal(session.technicalDetailsLoading, true);
   assert.equal(session.messages[0].canFork, true);
   assert.equal(session.loadedTurnCount, 20);
   assert.equal(session.queuedTurns[0].attachments[0].name, 'a.png');

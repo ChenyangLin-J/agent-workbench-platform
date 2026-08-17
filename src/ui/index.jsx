@@ -219,6 +219,8 @@ export function SessionBrowser({
   const [creating, setCreating] = useState(false);
   const [expandedGroupIds, setExpandedGroupIds] = useState(() => new Set());
   const [narrowListOpen, setNarrowListOpen] = useState(false);
+  const loadMoreRef = useRef(null);
+  const loadMoreLockedRef = useRef(false);
   const [isNarrow, setIsNarrow] = useState(() => (
     typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 640px)').matches
   ));
@@ -265,6 +267,21 @@ export function SessionBrowser({
     return () => clearTimeout(timeout);
   }, [undoArchive]);
 
+  useEffect(() => {
+    if (!view.loadingMore) loadMoreLockedRef.current = false;
+  }, [view.loadingMore, view.sessions.length]);
+
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !view.hasMore || view.loadingMore || !actions.onLoadMore) return undefined;
+    if (typeof IntersectionObserver !== 'function') return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) requestMore();
+    }, { root: target.closest('.cwu-browser-groups'), rootMargin: '180px 0px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [actions.onLoadMore, view.hasMore, view.loadingMore, view.sessions.length]);
+
   async function createSession(targetId = createTargetId) {
     if (!targetId || creating || !actions.onCreate) return;
     setCreating(true);
@@ -301,12 +318,24 @@ export function SessionBrowser({
     }
   }
 
+  async function requestMore() {
+    if (!view.hasMore || view.loadingMore || loadMoreLockedRef.current || !actions.onLoadMore) return;
+    loadMoreLockedRef.current = true;
+    try {
+      await actions.onLoadMore();
+    } finally {
+      loadMoreLockedRef.current = false;
+    }
+  }
+
   const formatTime = labels.formatTime || defaultFormatTime;
   return (
     <div className={`cwu-browser ${listCollapsed ? 'is-list-collapsed' : ''}`}>
       <aside className="cwu-browser-list" aria-hidden={listCollapsed} aria-label={labels.listAriaLabel || 'Session 列表'}>
         <header className="cwu-browser-summary">
-          <span>{view.loading ? (labels.loading || '正在读取 Sessions…') : `${view.sessions.length} ${labels.countSuffix || '个 Session'}`}</span>
+          <span>{view.loading && !view.sessions.length
+            ? (labels.loading || '正在读取 Sessions…')
+            : `${view.sessions.length}${view.hasMore ? '+' : ''} ${labels.countSuffix || '个 Session'}`}</span>
           {view.createTargets.length && actions.onCreate ? (
             <div className="cwu-browser-create">
               <select
@@ -373,7 +402,7 @@ export function SessionBrowser({
           </label>
         ) : null}
 
-        <div className="cwu-browser-groups">
+        <div aria-busy={view.loading || view.loadingMore} className="cwu-browser-groups">
           {!view.loading && !groups.length ? (
             <div className="cwu-browser-list-empty">{searchQuery ? (labels.searchEmpty || '没有匹配的 Session。') : (labels.listEmpty || '还没有 Session，可从上方新建。')}</div>
           ) : groups.map((group) => {
@@ -464,6 +493,15 @@ export function SessionBrowser({
             </section>
             );
           })}
+          {view.hasMore ? (
+            <button
+              className="cwu-browser-load-more"
+              disabled={view.loadingMore}
+              onClick={requestMore}
+              ref={loadMoreRef}
+              type="button"
+            >{view.loadingMore ? (labels.loadingMore || '正在继续加载…') : (labels.loadMore || '继续加载')}</button>
+          ) : null}
         </div>
         {undoArchive ? (
           <div className="cwu-browser-undo" role="status">
@@ -530,6 +568,7 @@ export function SessionWorkspace({
   const composer = sessionComposerPresentation({ running, submitting, canSteer: enabledFeatures.steer });
   const technicalByTurn = new Map();
   const lastMessageByTurn = new Map();
+  const technicalDetailsAvailable = new Set(view.technicalDetailsAvailable);
   for (const item of view.technicalItems) {
     const key = item.turnId || 'unassigned';
     const values = technicalByTurn.get(key) || [];
@@ -797,8 +836,15 @@ export function SessionWorkspace({
                 {enabledFeatures.technicalDetails
                   && message.turnId
                   && lastMessageByTurn.get(message.turnId) === message.id
-                  && technicalByTurn.get(message.turnId)?.length ? (
-                    <TechnicalDetails items={technicalByTurn.get(message.turnId)} />
+                  && (technicalByTurn.get(message.turnId)?.length || technicalDetailsAvailable.has(message.turnId)) ? (
+                    <TechnicalDetails
+                      available={technicalDetailsAvailable.has(message.turnId)}
+                      items={technicalByTurn.get(message.turnId) || []}
+                      loading={view.technicalDetailsLoading}
+                      onLoad={actions.onLoadTechnicalDetails
+                        ? () => actions.onLoadTechnicalDetails(message.turnId)
+                        : null}
+                    />
                   ) : null}
               </React.Fragment>
             )) : (
@@ -1417,28 +1463,33 @@ function MediaGallery({ items }) {
   );
 }
 
-function TechnicalDetails({ items }) {
+function TechnicalDetails({ items, available = false, loading = false, onLoad = null }) {
   const [open, setOpen] = useState(false);
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !items.length && available && onLoad && !loading) await onLoad();
+  }
   return (
     <section className="cwu-technical">
       <button
         aria-expanded={open}
         className="cwu-technical-toggle"
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
         type="button"
       >
         <span>本轮执行详情</span>
-        <small>{items.length} 项 · {open ? '收起' : '展开'}</small>
+        <small>{items.length ? `${items.length} 项 · ` : ''}{loading && open ? '读取中…' : open ? '收起' : '展开'}</small>
       </button>
       {open ? (
         <div className="cwu-technical-list">
-          {items.map((item) => (
+          {items.length ? items.map((item) => (
             <details key={item.id} open={item.status === 'inProgress'}>
               <summary><span>{item.title}</span><em>{item.status}</em></summary>
               {item.detail ? <pre>{item.detail}</pre> : null}
               {item.media?.length ? <MediaGallery items={item.media} /> : null}
             </details>
-          ))}
+          )) : <p className="cwu-technical-loading">{loading ? '正在读取执行详情…' : '没有可展示的执行详情。'}</p>}
         </div>
       ) : null}
     </section>

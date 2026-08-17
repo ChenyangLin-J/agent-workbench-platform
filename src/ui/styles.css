@@ -79,6 +79,9 @@
 .cwu-browser-group-more { width: calc(100% - 24px); margin: 2px 12px 5px; border: 0; background: transparent; color: var(--cwu-muted); padding: 5px 0; text-align: left; font: inherit; font-size: 9px; cursor: pointer; }
 .cwu-browser-group-more:hover { color: var(--cwu-accent); }
 .cwu-browser-list-empty { padding: 28px 16px; color: var(--cwu-muted); text-align: center; font-size: 11px; }
+.cwu-browser-load-more { width: calc(100% - 24px); min-height: 32px; margin: 8px 12px 14px; border: 1px solid var(--cwu-border); border-radius: 9px; background: var(--cwu-surface); color: var(--cwu-muted); font: inherit; font-size: 10px; cursor: pointer; }
+.cwu-browser-load-more:hover { border-color: color-mix(in srgb, var(--cwu-accent) 45%, var(--cwu-border)); color: var(--cwu-accent); }
+.cwu-browser-load-more:disabled { cursor: default; opacity: .65; }
 .cwu-browser-undo { position: absolute; z-index: 5; right: 9px; bottom: 9px; left: 9px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--cwu-border); border-radius: 9px; background: var(--cwu-text); color: var(--cwu-surface); padding: 8px 9px 8px 11px; box-shadow: 0 8px 24px rgba(40, 34, 28, .2); font-size: 10px; }
 .cwu-browser-undo span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cwu-browser-undo button { flex: 0 0 auto; border: 0; background: transparent; color: inherit; padding: 2px 4px; font: inherit; font-weight: 650; cursor: pointer; }
@@ -233,6 +236,7 @@
 .cwu-technical-toggle { width: 100%; display: flex; justify-content: space-between; border: 0; background: transparent; color: var(--cwu-muted); padding: 12px 0; cursor: pointer; }
 .cwu-technical-toggle small { font-size: 11px; }
 .cwu-technical-list { max-height: 320px; border: 1px solid var(--cwu-border); border-radius: 10px; overflow-y: auto; overscroll-behavior: contain; background: var(--cwu-surface); }
+.cwu-technical-loading { margin: 0; padding: 14px 12px; color: var(--cwu-muted); font-size: 11px; }
 .cwu-technical-list details + details { border-top: 1px solid var(--cwu-border); }
 .cwu-technical-list summary { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; padding: 10px 12px; font-size: 12px; }
 .cwu-technical-list summary em { color: var(--cwu-muted); font-size: 10px; font-style: normal; }

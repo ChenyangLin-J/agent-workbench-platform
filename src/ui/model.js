@@ -74,6 +74,10 @@ export function normalizeSessionViewModel(value = {}) {
           media: normalizeMedia(item?.media, `technical-${index}`),
         }))
       : [],
+    technicalDetailsAvailable: Array.isArray(value.technicalDetailsAvailable)
+      ? [...new Set(value.technicalDetailsAvailable.map((turnId) => String(turnId || '')).filter(Boolean))]
+      : [],
+    technicalDetailsLoading: Boolean(value.technicalDetailsLoading),
     pendingRequests: Array.isArray(value.pendingRequests)
       ? value.pendingRequests.map((request) => ({
           token: String(request?.token || ''),
@@ -222,6 +226,8 @@ export function normalizeSessionBrowserViewModel(value = {}) {
     selectedSessionId: stringOrNull(value.selectedSessionId),
     groupMode: value.groupMode === 'time' ? 'time' : 'context',
     loading: Boolean(value.loading),
+    loadingMore: Boolean(value.loadingMore),
+    hasMore: Boolean(value.hasMore),
     listCollapsed: Boolean(value.listCollapsed),
     archived: Boolean(value.archived),
     createTargets: Array.isArray(value.createTargets)
