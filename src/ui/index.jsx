@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import rehypeKatex from 'rehype-katex';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import '../browser/realtime-controller.js';
 import '../browser/session-status-element.js';
 import '../browser/session-ui-elements.js';
@@ -10,8 +12,9 @@ import {
   clipboardAttachmentFiles,
   groupSessionMessages,
   groupSessionSummaries,
-  extractInlineVisualizations,
+  extractVisualizationReferences,
   extractRemarkDirectives,
+  normalizeMarkdownMath,
   normalizeSessionBrowserViewModel,
   normalizeSessionViewModel,
   normalizeSideChatPanelViewModel,
@@ -26,6 +29,8 @@ import { useSessionUserInput } from '../ui-hooks.js';
 export { useSessionUserInput } from '../ui-hooks.js';
 
 const SESSION_COMPOSER_TEXT_LIMIT = 12000;
+const MARKDOWN_REMARK_PLUGINS = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]];
+const MARKDOWN_REHYPE_PLUGINS = [[rehypeKatex, { strict: false }]];
 
 export function SideChatPanel({
   panel,
@@ -1252,7 +1257,11 @@ function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink }) {
             <SpreadsheetPreview file={file} />
           ) : file.format === 'markdown' ? (
             <div className="cwu-document-content cwu-message-body">
-              <ReactMarkdown components={markdownLinkComponents(onOpenLink)} remarkPlugins={[remarkGfm]}>{file.content || ''}</ReactMarkdown>
+              <ReactMarkdown
+                components={markdownLinkComponents(onOpenLink)}
+                rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
+                remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+              >{normalizeMarkdownMath(file.content || '')}</ReactMarkdown>
             </div>
           ) : <pre className="cwu-document-code">{file.content || ''}</pre>}
         </div>
@@ -1316,28 +1325,35 @@ function Message({
   const canEdit = isUser && message.canEdit && typeof onEditMessage === 'function';
   const canFork = isUser && message.canFork && typeof onForkMessage === 'function';
   const markdownComponents = markdownLinkComponents(onOpenLink);
-  const inline = extractInlineVisualizations(message.content);
+  const inline = extractVisualizationReferences(message.content);
   const visualizations = typeof visualizationUrl === 'function'
-    ? inline.files.map((file) => ({
-        file,
-        src: visualizationUrl({ file, messageId: message.id, sessionId }),
+    ? inline.references.map((reference) => ({
+        ...reference,
+        src: visualizationUrl({ ...reference, messageId: message.id, sessionId }),
       })).filter((item) => item.src)
     : [];
-  const directiveContent = extractRemarkDirectives(visualizations.length ? inline.markdown : message.content);
+  const directiveContent = extractRemarkDirectives(inline.references.length ? inline.markdown : message.content);
   const renderedContent = renderFileCitationsAsMarkdown(directiveContent.markdown);
+  const markdownContent = isUser ? renderedContent : normalizeMarkdownMath(renderedContent);
   const visibleAttachments = isUser
     ? (message.attachments || []).filter((attachment) => (
         attachment.kind !== 'image' || !message.media?.length
       ))
     : [];
   const defaultContent = isUser
-    ? renderedContent
+    ? markdownContent
     : <>
-        {renderedContent ? <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>{renderedContent}</ReactMarkdown> : null}
-        {!renderedContent && !visualizations.length && !directiveContent.directives.length ? '…' : null}
+        {markdownContent ? (
+          <ReactMarkdown
+            components={markdownComponents}
+            rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
+            remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+          >{markdownContent}</ReactMarkdown>
+        ) : null}
+        {!markdownContent && !visualizations.length && !directiveContent.directives.length ? '…' : null}
       </>;
   const customContent = renderContent?.({
-    content: renderedContent,
+    content: markdownContent,
     defaultContent,
     message,
     session,
@@ -1409,13 +1425,13 @@ function Message({
       ) : null}
       {message.media?.length ? <MediaGallery items={message.media} /> : null}
       {visualizations.map((item) => (
-        <div className="cwu-inline-visualization" key={item.file}>
+        <div className={`cwu-inline-visualization${item.mode === 'wide' ? ' is-wide' : ''}`} key={item.path || item.file}>
           <iframe
             loading="lazy"
             referrerPolicy="no-referrer"
             sandbox="allow-scripts"
             src={item.src}
-            title={item.file}
+            title={item.title || item.file}
           />
           <a href={item.src} rel="noreferrer" target="_blank">在新窗口打开</a>
         </div>

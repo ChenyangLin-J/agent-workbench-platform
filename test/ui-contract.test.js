@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, groupSessionMessages, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -29,8 +29,54 @@ test('Session UI extracts safe inline visualizations and keeps message media', (
   assert.deepEqual(parsed, { markdown: '上文\n\n下文', files: ['session-layout-options.html'] });
   assert.deepEqual(extractInlineVisualizations('::codex-inline-vis{file="../secret.html"}').files, []);
 
+  const current = extractVisualizationReferences('上文\n\nvisualize{"path":"/safe/thread/session-entry.html","mode":"wide","title":"Session 对比"}\n\n下文');
+  assert.deepEqual(current, {
+    markdown: '上文\n\n下文',
+    references: [{
+      file: 'session-entry.html',
+      path: '/safe/thread/session-entry.html',
+      mode: 'wide',
+      title: 'Session 对比',
+    }],
+  });
+
+  const fenced = '```text\n::codex-inline-vis{file="missing.html"}\nvisualize{"path":"/safe/thread/hidden.html"}\n```';
+  assert.deepEqual(extractVisualizationReferences(fenced), { markdown: fenced, references: [] });
+  assert.deepEqual(extractVisualizationReferences('visualize{"path":"../secret.html"}').references, [{
+    file: 'secret.html', path: '../secret.html', mode: null, title: null,
+  }]);
+
   const view = normalizeSessionViewModel({ messages: [{ media: [{ kind: 'image', src: '/media/1', alt: '截图' }] }] });
   assert.equal(view.messages[0].media[0].src, '/media/1');
+});
+
+test('Session UI normalizes Codex math delimiters without changing code examples', () => {
+  const markdown = [
+    '公式：',
+    '\\[',
+    '\\frac{ARR}{上月ARR} \\times 100\\%',
+    '\\]',
+    '行内 \\(x + y\\) 与金额 $483,885。',
+    '`\\(code\\)`',
+    '```text',
+    '\\[',
+    '\\frac{example}{only}',
+    '\\]',
+    '```',
+  ].join('\n');
+  assert.equal(normalizeMarkdownMath(markdown), [
+    '公式：',
+    '$$',
+    '\\frac{ARR}{上月ARR} \\times 100\\%',
+    '$$',
+    '行内 $$x + y$$ 与金额 $483,885。',
+    '`\\(code\\)`',
+    '```text',
+    '\\[',
+    '\\frac{example}{only}',
+    '\\]',
+    '```',
+  ].join('\n'));
 });
 
 test('Session UI turns Codex file citations into local file links', () => {
@@ -65,14 +111,21 @@ test('Session UI parses standalone remark directives without matching ordinary C
   );
   assert.deepEqual(extractRemarkDirectives('.button:hover { color: red; }').directives, []);
   assert.equal(extractRemarkDirectives('::future-result{title="可读兜底" detail=ready}').directives[0].name, 'future-result');
+  const fenced = '```text\n::inbox-item{title="只是示例"}\n```';
+  assert.deepEqual(extractRemarkDirectives(fenced), { markdown: fenced, directives: [] });
 });
 
 test('Session UI embeds visualizations in a sandbox and renders image media', async () => {
   const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
   assert.match(source, /sandbox="allow-scripts"/);
   assert.match(source, /visualizationUrl/);
+  assert.match(source, /remarkMath/);
+  assert.match(source, /rehypeKatex/);
+  assert.match(source, /singleDollarTextMath: false/);
   assert.match(source, /<MediaGallery items=\{message\.media\}/);
   assert.match(styles, /\.cwu-inline-visualization iframe/);
+  assert.match(styles, /katex\/dist\/katex\.min\.css/);
+  assert.match(styles, /\.katex-display/);
   assert.match(styles, /\.cwu-message-media img/);
 });
 

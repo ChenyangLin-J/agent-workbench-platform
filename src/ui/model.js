@@ -175,16 +175,77 @@ export function groupSessionMessages(messages = []) {
   return entries;
 }
 
-export function extractInlineVisualizations(content = '') {
-  const files = [];
-  const markdown = String(content).replace(
-    /^[ \t]*::codex-inline-vis\{file="([a-z0-9](?:[a-z0-9-]{0,126})\.html)"\}[ \t]*$/gim,
-    (_, file) => {
-      files.push(file);
+function mapMarkdownLinesOutsideCode(content, transform) {
+  let fence = null;
+  return String(content).split(/\r?\n/).map((line) => {
+    const fenceMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      if (!fence) {
+        fence = { marker, length: fenceMatch[1].length };
+      } else if (
+        marker === fence.marker
+        && fenceMatch[1].length >= fence.length
+        && /^[ ]{0,3}(?:`{3,}|~{3,})[ \t]*$/.test(line)
+      ) {
+        fence = null;
+      }
+      return line;
+    }
+    if (fence || /^(?: {4}|\t)/.test(line)) return line;
+    return transform(line);
+  }).join('\n');
+}
+
+function safeVisualizationFile(value) {
+  const file = String(value || '').split(/[\\/]/).filter(Boolean).at(-1) || '';
+  return /^[a-z0-9](?:[a-z0-9-]{0,126})\.html$/i.test(file) ? file : null;
+}
+
+export function extractVisualizationReferences(content = '') {
+  const references = [];
+  const markdown = mapMarkdownLinesOutsideCode(content, (line) => {
+    const legacy = line.match(/^[ \t]*::codex-inline-vis\{file="([a-z0-9](?:[a-z0-9-]{0,126})\.html)"\}[ \t]*$/i);
+    if (legacy) {
+      references.push({ file: legacy[1], path: null, mode: null, title: null });
       return '';
-    },
-  ).replace(/\n{3,}/g, '\n\n').trim();
-  return { markdown, files };
+    }
+
+    const current = line.match(/^[ \t]*visualize(\{.*\})[ \t]*$/u);
+    if (!current) return line;
+    try {
+      const value = JSON.parse(current[1]);
+      const file = safeVisualizationFile(value?.path);
+      if (!file) return line;
+      references.push({
+        file,
+        path: String(value.path),
+        mode: value.mode === 'wide' ? 'wide' : null,
+        title: typeof value.title === 'string' && value.title.trim() ? value.title.trim().slice(0, 250) : null,
+      });
+      return '';
+    } catch {
+      return line;
+    }
+  }).replace(/\n{3,}/g, '\n\n').trim();
+  return { markdown, references };
+}
+
+export function extractInlineVisualizations(content = '') {
+  const { markdown, references } = extractVisualizationReferences(content);
+  return { markdown, files: references.map((reference) => reference.file) };
+}
+
+export function normalizeMarkdownMath(content = '') {
+  return mapMarkdownLinesOutsideCode(content, (line) => {
+    if (/^[ \t]*\\\[[ \t]*$/.test(line)) return `${line.match(/^[ \t]*/)[0]}$$`;
+    if (/^[ \t]*\\\][ \t]*$/.test(line)) return `${line.match(/^[ \t]*/)[0]}$$`;
+    return line.split(/(`+[^`]*`+)/g).map((segment) => (
+      segment.startsWith('`')
+        ? segment
+        : segment.replace(/\\\(/g, () => '$$').replace(/\\\)/g, () => '$$')
+    )).join('');
+  });
 }
 
 export function renderFileCitationsAsMarkdown(content = '') {
@@ -201,19 +262,17 @@ export function renderFileCitationsAsMarkdown(content = '') {
 
 export function extractRemarkDirectives(content = '') {
   const directives = [];
-  const markdown = String(content).replace(
-    /^[ \t]*::([a-z][a-z0-9-]*)\{([^\n}]*)\}[ \t]*$/gim,
-    (source, name, rawAttributes) => {
-      if (name === 'codex-inline-vis') return source;
-      const attributes = {};
-      for (const match of rawAttributes.matchAll(/([a-zA-Z][a-zA-Z0-9_-]*)=(?:"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'|([^\s]+))/g)) {
-        const value = match[2] ?? match[3] ?? match[4] ?? '';
-        attributes[match[1]] = value.replace(/\\([\\"'])/g, '$1');
-      }
-      directives.push({ name: name.toLowerCase(), attributes });
-      return '';
-    },
-  ).replace(/\n{3,}/g, '\n\n').trim();
+  const markdown = mapMarkdownLinesOutsideCode(content, (line) => {
+    const directive = line.match(/^[ \t]*::([a-z][a-z0-9-]*)\{([^\n}]*)\}[ \t]*$/i);
+    if (!directive || directive[1].toLowerCase() === 'codex-inline-vis') return line;
+    const attributes = {};
+    for (const match of directive[2].matchAll(/([a-zA-Z][a-zA-Z0-9_-]*)=(?:"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'|([^\s]+))/g)) {
+      const value = match[2] ?? match[3] ?? match[4] ?? '';
+      attributes[match[1]] = value.replace(/\\([\\"'])/g, '$1');
+    }
+    directives.push({ name: directive[1].toLowerCase(), attributes });
+    return '';
+  }).replace(/\n{3,}/g, '\n\n').trim();
   return { markdown, directives };
 }
 

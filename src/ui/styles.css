@@ -1,3 +1,5 @@
+@import "katex/dist/katex.min.css";
+
 :root {
   --cwu-bg: #fbfaf8;
   --cwu-surface: #ffffff;
@@ -192,8 +194,10 @@
 .cwu-message-media { display: flex; flex-wrap: wrap; gap: 8px; max-height: 500px; margin-top: 10px; overflow: auto; }
 .cwu-message-media a { width: min(360px, 100%); display: block; min-width: 0; border: 1px solid var(--cwu-border); border-radius: 12px; overflow: hidden; background: var(--cwu-soft); }
 .cwu-message-media img { display: block; width: 100%; max-height: 240px; object-fit: cover; }
+.cwu-message .katex-display, .cwu-document-content .katex-display { max-width: 100%; margin: 14px 0; padding: 3px 0 7px; overflow-x: auto; overflow-y: hidden; }
 .cwu-inline-visualization { margin-top: 14px; }
 .cwu-inline-visualization iframe { display: block; width: 100%; height: min(620px, 68vh); border: 1px solid var(--cwu-border); border-radius: 12px; background: var(--cwu-surface); }
+.cwu-inline-visualization.is-wide iframe { height: min(760px, 76vh); }
 .cwu-inline-visualization > a { display: inline-block; margin-top: 6px; color: var(--cwu-muted); font-size: 11px; }
 .cwu-document-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; background: rgba(20, 18, 16, .46); padding: 28px; backdrop-filter: blur(3px); }
 .cwu-document-preview { width: min(960px, 100%); height: min(82vh, 900px); min-height: 320px; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid var(--cwu-border); border-radius: 14px; background: var(--cwu-surface); box-shadow: 0 24px 80px rgba(20, 18, 16, .28); }
