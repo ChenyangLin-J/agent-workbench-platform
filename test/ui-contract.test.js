@@ -160,6 +160,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(styles, /\.cwu-browser-group-heading:hover \.cwu-browser-group-create/);
   assert.match(styles, /@media \(hover: hover\) and \(pointer: fine\)/);
   assert.match(styles, /@media \(max-width: 640px\)/);
+  assert.match(styles, /\.cwu-session-main \{ min-width: 0;/);
+  assert.match(styles, /\.cwu-transcript \{ min-width: 0; max-width: 100%;/);
   assert.match(styles, /resize: none/);
   assert.doesNotMatch(styles, /\.cwu-composer-footer \{ align-items: flex-start; flex-direction: column; \}/);
   assert.match(styles, /max-height: 240px/);

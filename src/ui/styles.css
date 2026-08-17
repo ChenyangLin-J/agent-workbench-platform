@@ -136,8 +136,8 @@
 .cwu-status-waiting { color: var(--cwu-waiting); }
 .cwu-status-unread { color: var(--cwu-unread); }
 .cwu-status-error { color: var(--cwu-error); }
-.cwu-session-main { height: calc(100vh - 64px); min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
-.cwu-transcript { min-height: 0; overflow-y: auto; padding: 32px 24px 24px; }
+.cwu-session-main { min-width: 0; height: calc(100vh - 64px); min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+.cwu-transcript { min-width: 0; max-width: 100%; min-height: 0; overflow-y: auto; padding: 32px 24px 24px; }
 .cwu-message-column { width: min(820px, 100%); margin: 0 auto; }
 .cwu-history-separator, .cwu-history-start { width: fit-content; max-width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px; margin: 0 auto 24px; border: 1px solid var(--cwu-border); border-radius: 999px; background: var(--cwu-surface); padding: 3px 9px; color: var(--cwu-muted); font-size: 10px; }
 .cwu-history-separator > span, .cwu-history-start > span { display: none; }
@@ -242,7 +242,7 @@
 .cwu-technical-list summary em { color: var(--cwu-muted); font-size: 10px; font-style: normal; }
 .cwu-technical-list pre { max-height: 260px; margin: 0; overflow: auto; white-space: pre-wrap; background: var(--cwu-soft); padding: 10px 12px; color: var(--cwu-muted); font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cwu-technical-list .cwu-message-media { margin: 10px 12px 12px; }
-.cwu-composer-wrap { position: sticky; z-index: 8; bottom: 0; display: flex; flex-direction: column; pointer-events: none; padding: 0 20px 22px; background: linear-gradient(transparent, var(--cwu-bg) 35%); }
+.cwu-composer-wrap { min-width: 0; position: sticky; z-index: 8; bottom: 0; display: flex; flex-direction: column; pointer-events: none; padding: 0 20px 22px; background: linear-gradient(transparent, var(--cwu-bg) 35%); }
 .cwu-queued-turns { order: -1; width: min(820px, 100%); max-height: min(220px, 30vh); margin: 0 auto 8px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--cwu-accent) 28%, var(--cwu-border)); border-radius: 12px; background: color-mix(in srgb, var(--cwu-surface) 96%, var(--cwu-accent)); box-shadow: 0 8px 24px rgba(40, 34, 28, .1); pointer-events: auto; }
 .cwu-queued-turns > header, .cwu-queued-turns article { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .cwu-queued-turns > header { border-bottom: 1px solid var(--cwu-border); padding: 8px 11px; color: var(--cwu-muted); font-size: 10px; }
