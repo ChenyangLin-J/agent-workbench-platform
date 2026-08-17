@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { extractInlineVisualizations, extractRemarkDirectives, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -38,6 +38,24 @@ test('Session UI turns Codex file citations into local file links', () => {
     renderFileCitationsAsMarkdown('文件：:codex-file-citation{path="/tmp/report draft.xlsx" purpose="output"}'),
     '文件：[文件：report draft.xlsx](/tmp/report%20draft.xlsx)',
   );
+});
+
+test('Session UI does not collect the same pasted image from both clipboard sources', () => {
+  const directImage = { name: 'clipboard.png', type: 'image/png', size: 4, lastModified: 1 };
+  const duplicateItemImage = { name: 'image.png', type: 'image/png', size: 4, lastModified: 2 };
+  assert.deepEqual(clipboardAttachmentFiles({
+    files: [directImage],
+    items: [{ kind: 'file', getAsFile: () => duplicateItemImage }],
+  }), [directImage]);
+
+  const fallbackImage = { name: 'fallback.png', type: 'image/png', size: 5, lastModified: 3 };
+  assert.deepEqual(clipboardAttachmentFiles({
+    files: [],
+    items: [{ kind: 'string' }, { kind: 'file', getAsFile: () => fallbackImage }],
+  }), [fallbackImage]);
+
+  const secondImage = { name: 'second.png', type: 'image/png', size: 6, lastModified: 4 };
+  assert.deepEqual(clipboardAttachmentFiles({ files: [directImage, secondImage] }), [directImage, secondImage]);
 });
 
 test('Session UI parses standalone remark directives without matching ordinary CSS', () => {

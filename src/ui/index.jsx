@@ -7,6 +7,7 @@ import '../browser/session-ui-elements.js';
 import '../browser/subagent-elements.js';
 
 import {
+  clipboardAttachmentFiles,
   groupSessionSummaries,
   extractInlineVisualizations,
   extractRemarkDirectives,
@@ -1552,28 +1553,13 @@ function fileMatchesAccept(file, accept) {
   });
 }
 
-function clipboardAttachmentFiles(clipboardData) {
-  const candidates = [...(clipboardData?.files || [])];
-  for (const item of clipboardData?.items || []) {
-    if (item.kind !== 'file') continue;
-    const file = item.getAsFile?.();
-    if (file) candidates.push(file);
-  }
-  const seen = new Set();
-  return candidates.filter((file) => {
-    const signature = [file.name, file.type, file.size, file.lastModified].join(':');
-    if (seen.has(signature)) return false;
-    seen.add(signature);
-    return true;
-  });
-}
-
 function compactLocalTimestamp(date) {
   const pad = (value) => String(value).padStart(2, '0');
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
 export {
+  clipboardAttachmentFiles,
   groupSessionSummaries,
   normalizeSessionBrowserViewModel,
   normalizeSessionViewModel,

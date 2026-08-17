@@ -301,6 +301,23 @@ export function newlyCompletedSessions(previousCompletionTimes, sessions, now = 
   ));
 }
 
+export function clipboardAttachmentFiles(clipboardData) {
+  const directFiles = [...(clipboardData?.files || [])];
+  const candidates = directFiles.length
+    ? directFiles
+    : [...(clipboardData?.items || [])]
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile?.())
+      .filter(Boolean);
+  const seen = new Set();
+  return candidates.filter((file) => {
+    const signature = [file.name, file.type, file.size, file.lastModified].join(':');
+    if (seen.has(signature)) return false;
+    seen.add(signature);
+    return true;
+  });
+}
+
 function stringOrNull(value) {
   const normalized = value == null ? '' : String(value).trim();
   return normalized || null;
