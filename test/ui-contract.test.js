@@ -182,7 +182,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
     isDraft: true,
     draft: '可恢复的输入',
     composerDisabled: true,
-    messages: [{ id: 'm1', role: 'user', content: '问题', canEdit: true, canFork: true }],
+    messages: [{ id: 'm1', role: 'user', content: '问题', turnStatus: 'completed', canEdit: true, canFork: true }],
     technicalDetailsAvailable: ['turn-1', 'turn-1'],
     technicalDetailsLoading: true,
     hasEarlierTurns: true,
@@ -200,6 +200,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(session.draft, '可恢复的输入');
   assert.equal(session.composerDisabled, true);
   assert.equal(session.messages[0].canEdit, true);
+  assert.equal(session.messages[0].turnStatus, 'completed');
   assert.deepEqual(session.technicalDetailsAvailable, ['turn-1']);
   assert.equal(session.technicalDetailsLoading, true);
   assert.equal(session.messages[0].canFork, true);
@@ -211,4 +212,14 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(session.executionProfile.serviceTier, 'priority');
   assert.equal(session.models[0].serviceTiers[0].label, 'Fast');
   assert.equal(session.accessModes[0].label, '完全访问');
+});
+
+test('completed commentary remains available behind a compact disclosure', async () => {
+  const [source, styles] = await Promise.all([
+    readFile(uiUrl, 'utf8'),
+    readFile(stylesUrl, 'utf8'),
+  ]);
+  assert.match(source, /commentaryCollapsible/);
+  assert.match(source, /cwu-commentary-collapse/);
+  assert.match(styles, /\.cwu-commentary-collapse/);
 });

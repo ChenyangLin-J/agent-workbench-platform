@@ -1293,6 +1293,8 @@ function Message({
 }) {
   const isUser = message.role === 'user';
   const isCommentary = message.phase === 'commentary';
+  const commentaryCollapsible = isCommentary
+    && ['completed', 'failed', 'interrupted', 'cancelled', 'canceled'].includes(message.turnStatus);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(message.content);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -1349,35 +1351,46 @@ function Message({
     }
   }
 
+  const messageContent = editing ? (
+    <div className="cwu-message-editor">
+      <textarea
+        aria-label="编辑消息"
+        autoFocus
+        disabled={savingEdit}
+        onChange={(event) => setEditDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setEditing(false);
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') saveEdit();
+        }}
+        rows={Math.min(8, Math.max(2, editDraft.split('\n').length))}
+        value={editDraft}
+      />
+      <div>
+        <button disabled={savingEdit} onClick={() => setEditing(false)} type="button">取消</button>
+        <button disabled={savingEdit || !editDraft.trim()} onClick={saveEdit} type="button">
+          {savingEdit ? '发送中…' : '发送'}
+        </button>
+      </div>
+    </div>
+  ) : (
+    <div className="cwu-message-body">
+      {customContent === undefined ? defaultContent : customContent}
+      {!isUser ? <RemarkDirectives directives={directiveContent.directives} onOpenLink={onOpenLink} /> : null}
+    </div>
+  );
+
   return (
     <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'} ${editing ? 'is-editing' : ''}`} data-message-id={message.id} phase={message.phase} role={message.role}>
-      {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
-      {editing ? (
-        <div className="cwu-message-editor">
-          <textarea
-            aria-label="编辑消息"
-            autoFocus
-            disabled={savingEdit}
-            onChange={(event) => setEditDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') setEditing(false);
-              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') saveEdit();
-            }}
-            rows={Math.min(8, Math.max(2, editDraft.split('\n').length))}
-            value={editDraft}
-          />
-          <div>
-            <button disabled={savingEdit} onClick={() => setEditing(false)} type="button">取消</button>
-            <button disabled={savingEdit || !editDraft.trim()} onClick={saveEdit} type="button">
-              {savingEdit ? '发送中…' : '发送'}
-            </button>
-          </div>
-        </div>
+      {commentaryCollapsible ? (
+        <details className="cwu-commentary-collapse">
+          <summary><span>{message.label}</span><small /></summary>
+          {messageContent}
+        </details>
       ) : (
-        <div className="cwu-message-body">
-          {customContent === undefined ? defaultContent : customContent}
-          {!isUser ? <RemarkDirectives directives={directiveContent.directives} onOpenLink={onOpenLink} /> : null}
-        </div>
+        <>
+          {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
+          {messageContent}
+        </>
       )}
       {!editing && (canEdit || canFork) ? (
         <div className="cwu-message-actions" aria-label="消息操作">
