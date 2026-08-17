@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, groupSessionMessages, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -214,12 +214,25 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(session.accessModes[0].label, '完全访问');
 });
 
-test('completed commentary remains available behind a compact disclosure', async () => {
+test('completed consecutive commentary is grouped behind one compact disclosure per turn', async () => {
   const [source, styles] = await Promise.all([
     readFile(uiUrl, 'utf8'),
     readFile(stylesUrl, 'utf8'),
   ]);
-  assert.match(source, /commentaryCollapsible/);
-  assert.match(source, /cwu-commentary-collapse/);
-  assert.match(styles, /\.cwu-commentary-collapse/);
+  const messages = [
+    { id: 'c1', turnId: 'turn-1', phase: 'commentary', turnStatus: 'completed' },
+    { id: 'c2', turnId: 'turn-1', phase: 'commentary', turnStatus: 'completed' },
+    { id: 'u1', turnId: 'turn-1', phase: 'answer', turnStatus: 'completed' },
+    { id: 'c3', turnId: 'turn-1', phase: 'commentary', turnStatus: 'completed' },
+    { id: 'c4', turnId: 'turn-2', phase: 'commentary', turnStatus: 'inProgress' },
+  ];
+  const groups = groupSessionMessages(messages);
+  assert.deepEqual(groups.map((entry) => entry.kind), ['commentary-group', 'message', 'commentary-group', 'message']);
+  assert.deepEqual(groups[0].messages.map((message) => message.id), ['c1', 'c2']);
+  assert.deepEqual(groups[2].messages.map((message) => message.id), ['c3']);
+  assert.equal(new Set(groups.map((entry) => entry.id)).size, groups.length);
+  assert.match(source, /cwu-commentary-group/);
+  assert.match(source, /过程 · \{messages\.length\} 条/);
+  assert.match(styles, /\.cwu-commentary-group/);
+  assert.doesNotMatch(source, /cwu-commentary-collapse/);
 });

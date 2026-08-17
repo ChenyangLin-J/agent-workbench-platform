@@ -151,6 +151,30 @@ export function normalizeSessionViewModel(value = {}) {
   };
 }
 
+export function groupSessionMessages(messages = []) {
+  const entries = [];
+  for (const message of messages) {
+    const completedCommentary = message?.phase === 'commentary'
+      && ['completed', 'failed', 'interrupted', 'cancelled', 'canceled'].includes(message?.turnStatus);
+    const previous = entries.at(-1);
+    if (completedCommentary && previous?.kind === 'commentary-group' && previous.turnId === message.turnId) {
+      previous.messages.push(message);
+      continue;
+    }
+    if (completedCommentary) {
+      entries.push({
+        kind: 'commentary-group',
+        id: `commentary-group-${message.turnId || 'unassigned'}-${message.id}`,
+        turnId: message.turnId,
+        messages: [message],
+      });
+      continue;
+    }
+    entries.push({ kind: 'message', id: message.id, message });
+  }
+  return entries;
+}
+
 export function extractInlineVisualizations(content = '') {
   const files = [];
   const markdown = String(content).replace(

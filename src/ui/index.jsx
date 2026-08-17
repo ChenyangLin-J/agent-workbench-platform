@@ -8,6 +8,7 @@ import '../browser/subagent-elements.js';
 
 import {
   clipboardAttachmentFiles,
+  groupSessionMessages,
   groupSessionSummaries,
   extractInlineVisualizations,
   extractRemarkDirectives,
@@ -543,6 +544,7 @@ export function SessionWorkspace({
   labels = {},
 }) {
   const view = useMemo(() => normalizeSessionViewModel(session), [session]);
+  const messageEntries = useMemo(() => groupSessionMessages(view.messages), [view.messages]);
   const enabledFeatures = useMemo(() => normalizeSessionFeatures(features), [features]);
   const uploadPolicy = useMemo(() => normalizeAttachmentPolicy(attachmentPolicy), [attachmentPolicy]);
   const transcriptRef = useRef(null);
@@ -820,34 +822,48 @@ export function SessionWorkspace({
             ) : view.loadedTurnCount ? (
               <div className="cwu-history-start"><span />{labels.historyStart || '已到最早消息'}<span /></div>
             ) : null}
-            {view.messages.length ? view.messages.map((message) => (
-              <React.Fragment key={message.id}>
-                <Message
-                  message={message}
-                  onEditMessage={actions.onEditMessage}
-                  onForkMessage={actions.onForkMessage}
-                  onOpenLink={actions.onOpenLink}
-                  renderContent={extensions.renderMessageContent}
-                  session={view}
-                  sessionId={view.sessionId}
-                  visualizationUrl={actions.visualizationUrl}
-                />
-                {extensions.renderAfterMessage?.({ message, session: view }) || null}
-                {enabledFeatures.technicalDetails
-                  && message.turnId
-                  && lastMessageByTurn.get(message.turnId) === message.id
-                  && (technicalByTurn.get(message.turnId)?.length || technicalDetailsAvailable.has(message.turnId)) ? (
-                    <TechnicalDetails
-                      available={technicalDetailsAvailable.has(message.turnId)}
-                      items={technicalByTurn.get(message.turnId) || []}
-                      loading={view.technicalDetailsLoading}
-                      onLoad={actions.onLoadTechnicalDetails
-                        ? () => actions.onLoadTechnicalDetails(message.turnId)
-                        : null}
-                    />
-                  ) : null}
-              </React.Fragment>
-            )) : (
+            {messageEntries.length ? messageEntries.map((entry) => {
+              const messages = entry.kind === 'commentary-group' ? entry.messages : [entry.message];
+              const trailingMessage = messages.at(-1);
+              const renderedMessages = messages.map((message) => (
+                <React.Fragment key={message.id}>
+                  <Message
+                    message={message}
+                    onEditMessage={actions.onEditMessage}
+                    onForkMessage={actions.onForkMessage}
+                    onOpenLink={actions.onOpenLink}
+                    renderContent={extensions.renderMessageContent}
+                    session={view}
+                    sessionId={view.sessionId}
+                    visualizationUrl={actions.visualizationUrl}
+                  />
+                  {extensions.renderAfterMessage?.({ message, session: view }) || null}
+                </React.Fragment>
+              ));
+              return (
+                <React.Fragment key={entry.id}>
+                  {entry.kind === 'commentary-group' ? (
+                    <details className="cwu-commentary-group">
+                      <summary><span>过程 · {messages.length} 条</span><small /></summary>
+                      <div className="cwu-commentary-group-body">{renderedMessages}</div>
+                    </details>
+                  ) : renderedMessages}
+                  {enabledFeatures.technicalDetails
+                    && trailingMessage.turnId
+                    && lastMessageByTurn.get(trailingMessage.turnId) === trailingMessage.id
+                    && (technicalByTurn.get(trailingMessage.turnId)?.length || technicalDetailsAvailable.has(trailingMessage.turnId)) ? (
+                      <TechnicalDetails
+                        available={technicalDetailsAvailable.has(trailingMessage.turnId)}
+                        items={technicalByTurn.get(trailingMessage.turnId) || []}
+                        loading={view.technicalDetailsLoading}
+                        onLoad={actions.onLoadTechnicalDetails
+                          ? () => actions.onLoadTechnicalDetails(trailingMessage.turnId)
+                          : null}
+                      />
+                    ) : null}
+                </React.Fragment>
+              );
+            }) : (
               <div className="cwu-empty">
                 <h2>{labels.emptyTitle || '开始处理这项工作'}</h2>
                 <p>{labels.emptyBody || '输入需求后，这个 Session 会保留完整过程。'}</p>
@@ -1293,8 +1309,6 @@ function Message({
 }) {
   const isUser = message.role === 'user';
   const isCommentary = message.phase === 'commentary';
-  const commentaryCollapsible = isCommentary
-    && ['completed', 'failed', 'interrupted', 'cancelled', 'canceled'].includes(message.turnStatus);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(message.content);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -1381,17 +1395,8 @@ function Message({
 
   return (
     <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'} ${editing ? 'is-editing' : ''}`} data-message-id={message.id} phase={message.phase} role={message.role}>
-      {commentaryCollapsible ? (
-        <details className="cwu-commentary-collapse">
-          <summary><span>{message.label}</span><small /></summary>
-          {messageContent}
-        </details>
-      ) : (
-        <>
-          {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
-          {messageContent}
-        </>
-      )}
+      {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
+      {messageContent}
       {!editing && (canEdit || canFork) ? (
         <div className="cwu-message-actions" aria-label="消息操作">
           {canEdit ? (
