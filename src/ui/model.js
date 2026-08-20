@@ -408,6 +408,18 @@ export function clipboardAttachmentFiles(clipboardData) {
   });
 }
 
+export function shouldConvertPastedTextToAttachment(draft, text, {
+  attachmentThreshold = 1000,
+  textLimit = 12000,
+} = {}) {
+  const draftLength = String(draft || '').length;
+  const pastedLength = String(text || '').length;
+  return pastedLength > 0 && (
+    pastedLength >= attachmentThreshold
+    || draftLength + pastedLength > textLimit
+  );
+}
+
 function stringOrNull(value) {
   const normalized = value == null ? '' : String(value).trim();
   return normalized || null;

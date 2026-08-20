@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -158,13 +158,20 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /onInput=\{uploadAttachments\}/);
   assert.match(source, /onPaste=\{handleComposerPaste\}/);
   assert.match(source, /clipboardAttachmentFiles\(event\.clipboardData\)/);
-  assert.match(source, /draft\.length \+ text\.length <= SESSION_COMPOSER_TEXT_LIMIT/);
+  assert.match(source, /shouldConvertPastedTextToAttachment\(draft, text/);
   assert.match(source, /`粘贴文本-\$\{compactLocalTimestamp\(new Date\(\)\)\}\.txt`/);
   assert.match(source, /supportedEfforts\.includes\(view\.executionProfile\.reasoningEffort\)/);
   const hooks = await readFile(hooksUrl, 'utf8');
   assert.match(source, /useSessionUserInput/);
   assert.match(hooks, /export function useSessionUserInput/);
   assert.doesNotMatch(source, /ArtifactCanvas|project-navigation/);
+});
+
+test('long pasted text becomes an attachment before the Composer hard limit', () => {
+  assert.equal(shouldConvertPastedTextToAttachment('', 'a'.repeat(999)), false);
+  assert.equal(shouldConvertPastedTextToAttachment('', 'a'.repeat(1000)), true);
+  assert.equal(shouldConvertPastedTextToAttachment('a'.repeat(11500), 'b'.repeat(501)), true);
+  assert.equal(shouldConvertPastedTextToAttachment('', ''), false);
 });
 
 test('Side Chat React UI owns shared interaction while products supply actions and storage', async () => {

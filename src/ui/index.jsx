@@ -20,6 +20,7 @@ import {
   normalizeSideChatPanelViewModel,
   renderFileCitationsAsMarkdown,
   sessionStatusTone,
+  shouldConvertPastedTextToAttachment,
 } from './model.js';
 import { sessionComposerPresentation } from '../session.js';
 import { normalizeSessionFeatures } from '../capabilities.js';
@@ -718,7 +719,9 @@ export function SessionWorkspace({
       return;
     }
     const text = event.clipboardData?.getData('text/plain') || '';
-    if (!text || draft.length + text.length <= SESSION_COMPOSER_TEXT_LIMIT) return;
+    if (!shouldConvertPastedTextToAttachment(draft, text, {
+      textLimit: SESSION_COMPOSER_TEXT_LIMIT,
+    })) return;
     event.preventDefault();
     await uploadFiles([new File(
       [text],
