@@ -5,6 +5,14 @@ const PRESENTATION_GROUPS = [
 ];
 
 export function deriveSessionPresentation(session = {}) {
+  if (session.groupKind && ['attention', 'error', 'ready', 'released', 'running', 'unread'].includes(session.groupKind)) {
+    return {
+      kind: session.groupKind,
+      state: String(session.status || session.groupKind),
+      label: String(session.statusLabel || ''),
+      pendingRequestCount: Number(session.pendingRequestCount || 0),
+    };
+  }
   const pendingRequestCount = Number(
     session.pendingServerRequestCount
       ?? session.pendingRequestCount
@@ -13,23 +21,23 @@ export function deriveSessionPresentation(session = {}) {
   if (pendingRequestCount > 0) {
     return { kind: 'attention', state: 'attention', label: '等你处理', pendingRequestCount };
   }
-  if (session.turnState?.interrupted || session.status === 'interrupted') {
+  if (session.turnState?.interrupted || ['attention', 'interrupted'].includes(session.status)) {
     return { kind: 'attention', state: 'interrupted', label: '需要继续', pendingRequestCount: 0 };
   }
   if (session.status === 'error') {
     return { kind: 'error', state: 'error', label: session.statusLabel || '异常', pendingRequestCount: 0 };
   }
-  if (session.released || session.suspended) {
+  if (session.released || session.suspended || session.status === 'released') {
     if (session.hasUnreadResult || session.status === 'unread') {
       return { kind: 'unread', state: 'unread', label: '新结果', pendingRequestCount: 0 };
     }
     return { kind: 'released', state: 'released', label: '已暂停', pendingRequestCount: 0 };
   }
-  if (session.ready === false || session.status === 'connecting') {
+  if (session.ready === false || ['connecting', 'restoring'].includes(session.status)) {
     return { kind: 'running', state: 'restoring', label: '恢复中', pendingRequestCount: 0 };
   }
-  if (session.turnState?.active || session.turnState?.stopping || session.status === 'running') {
-    const stopping = Boolean(session.turnState?.stopping);
+  if (session.turnState?.active || session.turnState?.stopping || ['running', 'stopping'].includes(session.status)) {
+    const stopping = Boolean(session.turnState?.stopping || session.status === 'stopping');
     return {
       kind: 'running',
       state: stopping ? 'stopping' : 'running',
@@ -131,7 +139,9 @@ export function groupSessionSummaries(sessions = [], mode = 'context', now = Dat
     return PRESENTATION_GROUPS.map((descriptor) => ({
       id: descriptor.id,
       label: descriptor.label,
-      sessions: normalized.filter((session) => descriptor.kinds.includes(deriveSessionPresentation(session).kind)),
+      sessions: normalized.filter((session) => descriptor.kinds.includes(
+        session.groupKind || deriveSessionPresentation(session).kind,
+      )),
     })).filter((group) => group.sessions.length);
   }
 

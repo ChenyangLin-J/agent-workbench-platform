@@ -217,6 +217,11 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /cwu-browser-search/);
   assert.match(source, /const \[searchOpen, setSearchOpen\]/);
   assert.match(source, /actions\.onArchive/);
+  assert.match(source, /export function SessionList/);
+  assert.match(source, /actions\.onFavorite/);
+  assert.match(source, /actions\.onEnd/);
+  assert.match(source, /actions\.onFullTextSearch/);
+  assert.match(source, /extensions\.renderListFilters/);
   assert.match(source, /actions\.onLoadMore/);
   assert.match(source, /IntersectionObserver/);
   assert.match(styles, /\.cwu-browser-load-more/);
@@ -250,15 +255,29 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
 
   const browser = normalizeSessionBrowserViewModel({
     archived: true,
+    groupMode: 'attention',
+    groupOptions: [{ id: 'attention', label: '按状态' }],
     hasMore: true,
     loadingMore: true,
-    sessions: [{ id: 'a', archived: true, canArchive: false }],
+    sessions: [{
+      id: 'a', archived: true, canArchive: false, canEnd: true,
+      canFavorite: true, favorited: true, groupKind: 'running',
+      searchableText: '当前任务', secondaryLabel: '个人 · workspace', status: 'stopping',
+    }],
   });
   assert.equal(browser.archived, true);
   assert.equal(browser.hasMore, true);
   assert.equal(browser.loadingMore, true);
   assert.equal(browser.sessions[0].archived, true);
   assert.equal(browser.sessions[0].canArchive, false);
+  assert.equal(browser.groupMode, 'attention');
+  assert.deepEqual(browser.groupOptions, [{ id: 'attention', label: '按状态' }]);
+  assert.equal(browser.sessions[0].status, 'stopping');
+  assert.equal(browser.sessions[0].groupKind, 'running');
+  assert.equal(browser.sessions[0].favorited, true);
+  assert.equal(browser.sessions[0].canEnd, true);
+  assert.equal(browser.sessions[0].searchableText, '当前任务');
+  assert.equal(browser.sessions[0].secondaryLabel, '个人 · workspace');
 
   const session = normalizeSessionViewModel({
     isDraft: true,

@@ -294,26 +294,54 @@ export function normalizeSessionBrowserViewModel(value = {}) {
         title: String(session?.title || '未命名 Session'),
         contextId: stringOrNull(session?.contextId),
         contextLabel: String(session?.contextLabel || '未分类'),
+        secondaryLabel: String(session?.secondaryLabel || ''),
+        searchableText: String(session?.searchableText || session?.searchText || ''),
         updatedAt: normalizeTimestamp(session?.updatedAt ?? session?.createdAt),
         completedAt: normalizeTimestamp(session?.completedAt),
-        status: ['connecting', 'running', 'waiting', 'unread', 'idle', 'error'].includes(session?.status)
+        status: [
+          'attention', 'connecting', 'error', 'idle', 'interrupted', 'released',
+          'restoring', 'running', 'stopping', 'unread', 'waiting',
+        ].includes(session?.status)
           ? session.status
           : 'idle',
         statusLabel: String(session?.statusLabel || ''),
+        groupKind: ['attention', 'error', 'ready', 'released', 'running', 'unread'].includes(session?.groupKind)
+          ? session.groupKind
+          : null,
         archived: Boolean(session?.archived),
         canArchive: session?.canArchive !== false,
+        canEnd: Boolean(session?.canEnd),
+        favorited: Boolean(session?.favorited),
+        canFavorite: session?.canFavorite !== false,
       }))
     : [];
   sessions.sort((left, right) => right.updatedAt - left.updatedAt || left.title.localeCompare(right.title));
+  const defaultGroupOptions = [
+    { id: 'context', label: '按归属' },
+    { id: 'time', label: '按时间' },
+  ];
+  const groupOptions = Array.isArray(value.groupOptions)
+    ? value.groupOptions.map((option) => {
+        const id = typeof option === 'string' ? option : option?.id;
+        if (!['attention', 'context', 'time'].includes(id)) return null;
+        const defaultLabel = id === 'attention' ? '按状态' : id === 'time' ? '按时间' : '按归属';
+        return { id, label: String(option?.label || defaultLabel) };
+      }).filter(Boolean)
+    : defaultGroupOptions;
+  const requestedGroupMode = ['attention', 'context', 'time'].includes(value.groupMode)
+    ? value.groupMode
+    : 'context';
   return {
     sessions,
     selectedSessionId: stringOrNull(value.selectedSessionId),
-    groupMode: value.groupMode === 'time' ? 'time' : 'context',
+    groupMode: requestedGroupMode,
+    groupOptions,
     loading: Boolean(value.loading),
     loadingMore: Boolean(value.loadingMore),
     hasMore: Boolean(value.hasMore),
     listCollapsed: Boolean(value.listCollapsed),
     archived: Boolean(value.archived),
+    showCreateTargetSelect: value.showCreateTargetSelect !== false,
     createTargets: Array.isArray(value.createTargets)
       ? value.createTargets.map((target, index) => ({
           id: String(target?.id || `target-${index}`),

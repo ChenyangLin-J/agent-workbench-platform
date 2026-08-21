@@ -205,18 +205,22 @@ export function SessionBrowser({
   browser,
   detail = null,
   actions = {},
+  extensions = {},
   labels = {},
+  listOnly = false,
 }) {
   const view = useMemo(() => normalizeSessionBrowserViewModel(browser), [browser]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [archivingIds, setArchivingIds] = useState(() => new Set());
+  const [endingIds, setEndingIds] = useState(() => new Set());
+  const [favoritingIds, setFavoritingIds] = useState(() => new Set());
   const [undoArchive, setUndoArchive] = useState(null);
   const visibleSessions = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase();
     if (!query) return view.sessions;
     return view.sessions.filter((session) => (
-      `${session.title} ${session.contextLabel}`.toLocaleLowerCase().includes(query)
+      `${session.title} ${session.contextLabel} ${session.searchableText}`.toLocaleLowerCase().includes(query)
     ));
   }, [searchQuery, view.sessions]);
   const groups = useMemo(
@@ -253,7 +257,7 @@ export function SessionBrowser({
     if (isNarrow) setNarrowListOpen(false);
   }, [detail?.session?.sessionId, isNarrow]);
 
-  const listCollapsed = isNarrow && detail ? !narrowListOpen : view.listCollapsed;
+  const listCollapsed = listOnly ? false : isNarrow && detail ? !narrowListOpen : view.listCollapsed;
 
   function toggleSessionList() {
     if (isNarrow && detail) {
@@ -326,6 +330,34 @@ export function SessionBrowser({
     }
   }
 
+  async function setFavorited(session, favorited) {
+    if (!actions.onFavorite || favoritingIds.has(session.id)) return;
+    setFavoritingIds((current) => new Set(current).add(session.id));
+    try {
+      await actions.onFavorite(session, favorited);
+    } finally {
+      setFavoritingIds((current) => {
+        const next = new Set(current);
+        next.delete(session.id);
+        return next;
+      });
+    }
+  }
+
+  async function endSession(session) {
+    if (!actions.onEnd || endingIds.has(session.id)) return;
+    setEndingIds((current) => new Set(current).add(session.id));
+    try {
+      await actions.onEnd(session);
+    } finally {
+      setEndingIds((current) => {
+        const next = new Set(current);
+        next.delete(session.id);
+        return next;
+      });
+    }
+  }
+
   async function requestMore() {
     if (!view.hasMore || view.loadingMore || loadMoreLockedRef.current || !actions.onLoadMore) return;
     loadMoreLockedRef.current = true;
@@ -337,23 +369,22 @@ export function SessionBrowser({
   }
 
   const formatTime = labels.formatTime || defaultFormatTime;
-  return (
-    <div className={`cwu-browser ${listCollapsed ? 'is-list-collapsed' : ''}`}>
-      <aside className="cwu-browser-list" aria-hidden={listCollapsed} aria-label={labels.listAriaLabel || 'Session 列表'}>
+  const list = (
+      <aside className={`cwu-browser-list ${listOnly ? 'is-standalone' : ''}`} aria-hidden={listOnly ? undefined : listCollapsed} aria-label={labels.listAriaLabel || 'Session 列表'}>
         <header className="cwu-browser-summary">
           <span>{view.loading && !view.sessions.length
             ? (labels.loading || '正在读取 Sessions…')
             : `${view.sessions.length}${view.hasMore ? '+' : ''} ${labels.countSuffix || '个 Session'}`}</span>
           {view.createTargets.length && actions.onCreate ? (
             <div className="cwu-browser-create">
-              <select
+              {view.showCreateTargetSelect && view.createTargets.length > 1 ? <select
                 aria-label={labels.createTargetAriaLabel || '选择新 Session 的归属'}
                 disabled={creating}
                 onChange={(event) => setCreateTargetId(event.target.value)}
                 value={createTargetId}
               >
                 {view.createTargets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
-              </select>
+              </select> : null}
               <button
                 aria-label={labels.createAriaLabel || '新建 Session'}
                 disabled={!createTargetId || creating}
@@ -363,21 +394,30 @@ export function SessionBrowser({
               >＋</button>
             </div>
           ) : null}
+          {listOnly && actions.onCollapse ? (
+            <button
+              aria-label={labels.collapseList || '收起列表'}
+              className="cwu-browser-collapse"
+              onClick={actions.onCollapse}
+              title={labels.collapseList || '收起列表'}
+              type="button"
+            >‹</button>
+          ) : null}
         </header>
 
         <div className="cwu-browser-toolbar">
-          <div role="group" aria-label={labels.groupAriaLabel || 'Session 展示方式'}>
-            <button
-              className={view.groupMode === 'context' ? 'is-active' : ''}
-              onClick={() => actions.onGroupModeChange?.('context')}
-              type="button"
-            >{labels.contextGroup || '按归属'}</button>
-            <button
-              className={view.groupMode === 'time' ? 'is-active' : ''}
-              onClick={() => actions.onGroupModeChange?.('time')}
-              type="button"
-            >{labels.timeGroup || '按时间'}</button>
-          </div>
+          {view.groupOptions.length > 1 ? (
+            <div role="group" aria-label={labels.groupAriaLabel || 'Session 展示方式'}>
+              {view.groupOptions.map((option) => (
+                <button
+                  className={view.groupMode === option.id ? 'is-active' : ''}
+                  key={option.id}
+                  onClick={() => actions.onGroupModeChange?.(option.id)}
+                  type="button"
+                >{option.label}</button>
+              ))}
+            </div>
+          ) : <span className="cwu-browser-toolbar-label">{view.groupOptions[0]?.label || labels.listLabel || '当前 Session'}</span>}
           <div className="cwu-browser-toolbar-actions">
             <button
               aria-expanded={searchOpen}
@@ -387,9 +427,14 @@ export function SessionBrowser({
               title={labels.searchAriaLabel || '搜索 Sessions'}
               type="button"
             >⌕</button>
+            {actions.onOpenHistory ? (
+              <button onClick={actions.onOpenHistory} title={labels.history || '历史'} type="button">{labels.history || '历史'}</button>
+            ) : null}
             {actions.onRefresh ? <button onClick={actions.onRefresh} type="button">{labels.refresh || '刷新'}</button> : null}
           </div>
         </div>
+
+        {extensions.renderListFilters?.({ browser: view, searchQuery }) || null}
 
         {searchOpen || searchQuery ? (
           <label className="cwu-browser-search">
@@ -407,6 +452,14 @@ export function SessionBrowser({
               onClick={() => { setSearchQuery(''); setSearchOpen(false); }}
               type="button"
             >×</button>
+            {actions.onFullTextSearch ? (
+              <button
+                className="cwu-browser-full-text"
+                disabled={!searchQuery.trim()}
+                onClick={() => actions.onFullTextSearch(searchQuery.trim())}
+                type="button"
+              >{labels.fullTextSearch || '全文'}</button>
+            ) : null}
           </label>
         ) : null}
 
@@ -460,14 +513,40 @@ export function SessionBrowser({
                   <button className="cwu-browser-row-main" onClick={() => actions.onSelect?.(session)} type="button">
                     <span
                       aria-hidden="true"
-                      className={`cwu-browser-row-status cwu-status-${sessionStatusTone(session.status)}`}
+                      className={`cwu-browser-row-status cwu-status-${sessionStatusTone(session)}`}
+                      title={session.statusLabel || undefined}
                     />
                     <span className="cwu-browser-row-copy">
                       <strong>{session.title}</strong>
-                      <small>{unread ? '新结果 · ' : ''}{view.groupMode === 'context' ? formatTime(session.updatedAt) : `${session.contextLabel} · ${formatTime(session.updatedAt)}`}</small>
+                      <small>{unread ? '新结果 · ' : ''}{session.secondaryLabel || (view.groupMode === 'context' ? formatTime(session.updatedAt) : `${session.contextLabel} · ${formatTime(session.updatedAt)}`)}</small>
                     </span>
                   </button>
-                  {actions.onArchive && session.canArchive ? (
+                  {actions.onFavorite && session.canFavorite ? (
+                    <button
+                      aria-label={`${session.favorited ? (labels.unfavorite || '取消置顶') : (labels.favorite || '置顶')}：${session.title}`}
+                      aria-pressed={session.favorited}
+                      className="cwu-browser-row-action cwu-browser-row-favorite"
+                      disabled={favoritingIds.has(session.id)}
+                      onClick={() => setFavorited(session, !session.favorited)}
+                      title={session.favorited ? (labels.unfavorite || '取消置顶') : (labels.favorite || '置顶')}
+                      type="button"
+                    >{favoritingIds.has(session.id) ? '…' : session.favorited ? '★' : '☆'}</button>
+                  ) : null}
+                  {actions.onEnd && session.canEnd ? (
+                    <details className="cwu-browser-row-menu">
+                      <summary aria-label={`${labels.manage || '管理'}：${session.title}`} title={labels.manage || '管理'}>⋮</summary>
+                      <div>
+                        {actions.onArchive && session.canArchive ? (
+                          <button disabled={archivingIds.has(session.id)} onClick={() => setArchived(session, !session.archived)} type="button">
+                            {session.archived ? (labels.restore || '恢复') : (labels.archive || '归档')}
+                          </button>
+                        ) : null}
+                        <button className="is-destructive" disabled={endingIds.has(session.id)} onClick={() => endSession(session)} type="button">
+                          {endingIds.has(session.id) ? (labels.ending || '结束中…') : (labels.end || '结束')}
+                        </button>
+                      </div>
+                    </details>
+                  ) : actions.onArchive && session.canArchive ? (
                     <button
                       aria-label={`${session.archived ? (labels.restore || '恢复') : (labels.archive || '归档')}：${session.title}`}
                       className="cwu-browser-row-action"
@@ -518,6 +597,13 @@ export function SessionBrowser({
           </div>
         ) : null}
       </aside>
+  );
+
+  if (listOnly) return <div className="cwu-session-list-standalone">{list}</div>;
+
+  return (
+    <div className={`cwu-browser ${listCollapsed ? 'is-list-collapsed' : ''}`}>
+      {list}
 
       <button
         aria-expanded={!listCollapsed}
@@ -539,6 +625,10 @@ export function SessionBrowser({
       </section>
     </div>
   );
+}
+
+export function SessionList(props) {
+  return <SessionBrowser {...props} detail={null} listOnly />;
 }
 
 export function SessionWorkspace({

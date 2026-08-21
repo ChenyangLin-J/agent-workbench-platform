@@ -28,6 +28,24 @@ test('Agent sessions group by execution and reading state without projects', () 
   );
 });
 
+test('consumer-provided rich status keeps Agent grouping without exposing runtime fields', () => {
+  const sessions = [
+    { id: 'stopping', groupKind: 'running', status: 'stopping', statusLabel: '停止中' },
+    { id: 'released', groupKind: 'released', status: 'released', statusLabel: '已暂停' },
+    { id: 'attention', groupKind: 'attention', status: 'attention', statusLabel: '待确认' },
+  ];
+  assert.deepEqual(
+    groupSessionSummaries(sessions, 'attention').map((group) => [group.id, group.sessions.map((session) => session.id)]),
+    [
+      ['pending', ['attention']],
+      ['running', ['stopping']],
+      ['ready', ['released']],
+    ],
+  );
+  assert.equal(deriveSessionPresentation(sessions[0]).state, 'stopping');
+  assert.equal(sessionStatusTone(sessions[2]), 'waiting');
+});
+
 test('Personal sessions keep project grouping while using the same presentation semantics', () => {
   const sessions = [
     { id: 'solver-running', contextId: 'solver', contextLabel: 'Solver Engine', updatedAt: 20, status: 'running' },
