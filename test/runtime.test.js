@@ -58,17 +58,31 @@ test('one stateless API serves Agent and Personal transports without sharing acc
   const api = new CodexAppServerApi(async (method, params) => {
     requests.push({ method, params });
     if (method === 'thread/list') return { data: [{ id: 'thread-1' }] };
+    if (method === 'thread/search') return { data: [{ thread: { id: 'thread-search' }, snippet: 'matched text' }] };
+    if (method === 'thread/searchOccurrences') return { data: [{ itemId: 'item-search' }] };
     if (method === 'thread/read') return { thread: { id: params.threadId } };
     return { ok: true };
   });
   assert.equal((await api.listThreads()).data[0].id, 'thread-1');
+  assert.equal((await api.searchThreads('  needle  ', { archived: true })).data[0].thread.id, 'thread-search');
+  assert.equal((await api.searchThreadOccurrences('thread-work', 'detail')).data[0].itemId, 'item-search');
   assert.equal((await api.readThread('thread-work')).id, 'thread-work');
   await api.startRealtime('thread-work', { voice: 'juniper' });
   await api.appendRealtimeAudio('thread-work', 'base64-audio');
   await api.stopRealtime('thread-work');
-  assert.deepEqual(requests.slice(2), [
+  assert.deepEqual(requests.slice(4), [
     { method: 'thread/realtime/start', params: { voice: 'juniper', threadId: 'thread-work' } },
     { method: 'thread/realtime/appendAudio', params: { threadId: 'thread-work', audio: 'base64-audio' } },
     { method: 'thread/realtime/stop', params: { threadId: 'thread-work' } },
   ]);
+  assert.deepEqual(requests.slice(1, 3), [
+    { method: 'thread/search', params: { archived: true, searchTerm: 'needle' } },
+    { method: 'thread/searchOccurrences', params: { threadId: 'thread-work', searchTerm: 'detail' } },
+  ]);
+});
+
+test('thread search rejects empty terms before contacting App Server', async () => {
+  const api = new CodexAppServerApi(() => assert.fail('request should not run'));
+  assert.throws(() => api.searchThreads('   '), /search term is required/i);
+  assert.throws(() => api.searchThreadOccurrences('thread-work', ''), /search term is required/i);
 });

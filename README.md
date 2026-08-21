@@ -8,7 +8,7 @@ The current shared boundary and consumer migration order are defined in [`docs/a
 
 ## Included
 
-- Codex App Server connections for stdio and WebSocket transports
+- Codex App Server connections for stdio and WebSocket transports, including cross-Session search and in-Session occurrence search
 - Provider-neutral Session Kernel with queue, steer, interrupt, request, and replay contracts
 - Session presentation, searchable/archivable Session list, message history paging, queue, image/inline-visualization rendering, Composer, status, and responsive React UI
 - Codex-native Sub Agent discovery, metadata, active-Turn interruption, and thread-tree normalization

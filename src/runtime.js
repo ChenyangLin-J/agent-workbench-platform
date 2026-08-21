@@ -90,6 +90,23 @@ export class CodexAppServerApi {
     return this.request('thread/list', params);
   }
 
+  searchThreads(searchTerm, params = {}) {
+    const normalizedSearchTerm = String(searchTerm || '').trim();
+    if (!normalizedSearchTerm) throw new TypeError('Thread search term is required.');
+    return this.request('thread/search', { ...params, searchTerm: normalizedSearchTerm });
+  }
+
+  searchThreadOccurrences(threadId, searchTerm, params = {}) {
+    requiredId(threadId, 'Thread');
+    const normalizedSearchTerm = String(searchTerm || '').trim();
+    if (!normalizedSearchTerm) throw new TypeError('Thread search term is required.');
+    return this.request('thread/searchOccurrences', {
+      ...params,
+      threadId,
+      searchTerm: normalizedSearchTerm,
+    });
+  }
+
   async readThread(threadId, { includeTurns = false } = {}) {
     requiredId(threadId, 'Thread');
     const result = await this.request('thread/read', { threadId, includeTurns });
