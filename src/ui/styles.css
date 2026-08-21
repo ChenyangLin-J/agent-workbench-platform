@@ -410,6 +410,7 @@
 @media (max-width: 640px) {
   .cwu-browser { min-height: 640px; grid-template-columns: 0 28px minmax(0, 1fr); }
   .cwu-browser-list { position: absolute; z-index: 25; inset: 0 auto 0 0; width: min(330px, calc(100% - 36px)); border-right: 1px solid var(--cwu-border); box-shadow: 12px 0 30px rgba(40, 34, 28, .18); }
+  .cwu-session-list-standalone > .cwu-browser-list { position: static; inset: auto; width: auto; border-right: 0; box-shadow: none; transform: none; visibility: visible; opacity: 1; pointer-events: auto; }
   .cwu-browser.is-list-collapsed .cwu-browser-list { transform: translateX(-100%); }
   .cwu-browser-list-toggle, .cwu-browser.is-list-collapsed .cwu-browser-list-toggle { width: 28px; grid-column: 2; justify-self: center; transform: none; }
   .cwu-browser-detail { grid-column: 3; }

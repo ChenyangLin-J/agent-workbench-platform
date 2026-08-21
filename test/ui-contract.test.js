@@ -225,6 +225,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /actions\.onLoadMore/);
   assert.match(source, /IntersectionObserver/);
   assert.match(styles, /\.cwu-browser-load-more/);
+  assert.match(styles, /\.cwu-session-list-standalone > \.cwu-browser-list \{ position: static;/);
   assert.match(source, /cwu-history-separator/);
   assert.match(source, /previousTop \+ \(current\.scrollHeight - previousHeight\)/);
   assert.match(source, /cwu-queued-turns/);
