@@ -317,8 +317,8 @@ export function SessionBrowser({
     if (!actions.onArchive || archivingIds.has(session.id)) return;
     setArchivingIds((current) => new Set(current).add(session.id));
     try {
-      await actions.onArchive(session, archived);
-      setUndoArchive(archived ? session : null);
+      const result = await actions.onArchive(session, archived);
+      setUndoArchive(result === false ? null : archived ? session : null);
     } catch {
       setUndoArchive(null);
     } finally {

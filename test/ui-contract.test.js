@@ -262,7 +262,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
     sessions: [{
       id: 'a', archived: true, canArchive: false, canEnd: true,
       canFavorite: true, favorited: true, groupKind: 'running',
-      searchableText: '当前任务', secondaryLabel: '个人 · workspace', status: 'stopping',
+      searchableText: '当前任务', secondaryLabel: '个人 · workspace', sortOrder: 2, status: 'stopping',
     }],
   });
   assert.equal(browser.archived, true);
@@ -278,6 +278,15 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(browser.sessions[0].canEnd, true);
   assert.equal(browser.sessions[0].searchableText, '当前任务');
   assert.equal(browser.sessions[0].secondaryLabel, '个人 · workspace');
+  assert.equal(browser.sessions[0].sortOrder, 2);
+
+  const ordered = normalizeSessionBrowserViewModel({
+    sessions: [
+      { id: 'newer', updatedAt: 30, sortOrder: 2 },
+      { id: 'older-priority', updatedAt: 10, sortOrder: 1 },
+    ],
+  });
+  assert.deepEqual(ordered.sessions.map((item) => item.id), ['older-priority', 'newer']);
 
   const session = normalizeSessionViewModel({
     isDraft: true,

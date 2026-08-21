@@ -296,6 +296,7 @@ export function normalizeSessionBrowserViewModel(value = {}) {
         contextLabel: String(session?.contextLabel || '未分类'),
         secondaryLabel: String(session?.secondaryLabel || ''),
         searchableText: String(session?.searchableText || session?.searchText || ''),
+        sortOrder: Number.isFinite(Number(session?.sortOrder)) ? Number(session.sortOrder) : null,
         updatedAt: normalizeTimestamp(session?.updatedAt ?? session?.createdAt),
         completedAt: normalizeTimestamp(session?.completedAt),
         status: [
@@ -315,7 +316,13 @@ export function normalizeSessionBrowserViewModel(value = {}) {
         canFavorite: session?.canFavorite !== false,
       }))
     : [];
-  sessions.sort((left, right) => right.updatedAt - left.updatedAt || left.title.localeCompare(right.title));
+  sessions.sort((left, right) => {
+    if (left.sortOrder != null || right.sortOrder != null) {
+      const orderDelta = (left.sortOrder ?? Number.MAX_SAFE_INTEGER) - (right.sortOrder ?? Number.MAX_SAFE_INTEGER);
+      if (orderDelta) return orderDelta;
+    }
+    return right.updatedAt - left.updatedAt || left.title.localeCompare(right.title);
+  });
   const defaultGroupOptions = [
     { id: 'context', label: '按归属' },
     { id: 'time', label: '按时间' },
