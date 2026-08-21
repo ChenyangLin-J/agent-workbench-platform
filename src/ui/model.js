@@ -420,6 +420,14 @@ export function shouldConvertPastedTextToAttachment(draft, text, {
   );
 }
 
+export function sessionTranscriptAwayFromLatest({
+  scrollHeight = 0,
+  scrollTop = 0,
+  clientHeight = 0,
+} = {}, threshold = 200) {
+  return Number(scrollHeight) - Number(scrollTop) - Number(clientHeight) > threshold;
+}
+
 function stringOrNull(value) {
   const normalized = value == null ? '' : String(value).trim();
   return normalized || null;

@@ -19,6 +19,7 @@ import {
   normalizeSessionViewModel,
   normalizeSideChatPanelViewModel,
   renderFileCitationsAsMarkdown,
+  sessionTranscriptAwayFromLatest,
   sessionStatusTone,
   shouldConvertPastedTextToAttachment,
 } from './model.js';
@@ -556,10 +557,13 @@ export function SessionWorkspace({
   const transcriptRef = useRef(null);
   const composerRef = useRef(null);
   const followLatestRef = useRef(true);
+  const messageActivityRef = useRef({ sessionId: view.sessionId, key: '' });
   const [draft, setDraft] = useState(view.draft);
   const [attachments, setAttachments] = useState([]);
   const [attachmentUploadState, setAttachmentUploadState] = useState({ status: 'idle', error: '' });
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
+  const [awayFromLatest, setAwayFromLatest] = useState(false);
+  const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [deletingQueuedIds, setDeletingQueuedIds] = useState(() => new Set());
@@ -574,6 +578,10 @@ export function SessionWorkspace({
   const fastTier = selectedExecutionModel?.serviceTiers.find((tier) => tier.id === 'priority') || null;
   const canSubmit = Boolean((draft.trim() || attachments.length) && !composerDisabled && !uploading && actions.onSubmit);
   const composer = sessionComposerPresentation({ running, submitting, canSteer: enabledFeatures.steer });
+  const latestMessage = view.messages.at(-1);
+  const latestMessageActivityKey = latestMessage
+    ? `${latestMessage.id}:${latestMessage.content.length}:${latestMessage.content.slice(-32)}`
+    : '';
   const technicalByTurn = new Map();
   const lastMessageByTurn = new Map();
   const technicalDetailsAvailable = new Set(view.technicalDetailsAvailable);
@@ -593,12 +601,26 @@ export function SessionWorkspace({
     setAttachments([]);
     setAttachmentUploadState({ status: 'idle', error: '' });
     setAttachmentDragActive(false);
+    setAwayFromLatest(false);
+    setHasNewMessagesBelow(false);
+    messageActivityRef.current = { sessionId: view.sessionId, key: latestMessageActivityKey };
   }, [view.sessionId]);
 
   useEffect(() => {
+    const previousActivity = messageActivityRef.current;
+    const hasNewActivity = previousActivity.sessionId === view.sessionId
+      && Boolean(previousActivity.key)
+      && previousActivity.key !== latestMessageActivityKey;
+    messageActivityRef.current = { sessionId: view.sessionId, key: latestMessageActivityKey };
     const target = transcriptRef.current;
-    if (target && followLatestRef.current) target.scrollTop = target.scrollHeight;
-  }, [view.sessionId, view.messages, view.status]);
+    if (target && followLatestRef.current) {
+      target.scrollTop = target.scrollHeight;
+      setAwayFromLatest(false);
+      setHasNewMessagesBelow(false);
+    } else if (hasNewActivity) {
+      setHasNewMessagesBelow(true);
+    }
+  }, [view.sessionId, latestMessageActivityKey, view.status]);
 
   useEffect(() => {
     const target = composerRef.current;
@@ -609,6 +631,8 @@ export function SessionWorkspace({
 
   function followLatest() {
     followLatestRef.current = true;
+    setAwayFromLatest(false);
+    setHasNewMessagesBelow(false);
     requestAnimationFrame(() => {
       const target = transcriptRef.current;
       if (target) target.scrollTop = target.scrollHeight;
@@ -617,7 +641,18 @@ export function SessionWorkspace({
 
   function updateFollowState(event) {
     const target = event.currentTarget;
-    followLatestRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 120;
+    const away = sessionTranscriptAwayFromLatest(target);
+    followLatestRef.current = !away;
+    setAwayFromLatest(away);
+    if (!away) setHasNewMessagesBelow(false);
+  }
+
+  function scrollToLatest() {
+    const target = transcriptRef.current;
+    if (!target) return;
+    followLatestRef.current = true;
+    setHasNewMessagesBelow(false);
+    target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
   }
 
   async function submit(mode = 'turn') {
@@ -898,6 +933,19 @@ export function SessionWorkspace({
         </agent-session-stream>
 
         <footer className="cwu-composer-wrap">
+          {awayFromLatest ? (
+            <button
+              aria-label={hasNewMessagesBelow
+                ? (labels.scrollToLatestWithNewMessages || '滚动到最新消息，有新消息')
+                : (labels.scrollToLatest || '滚动到最新消息')}
+              className={`cwu-scroll-latest ${hasNewMessagesBelow ? 'has-new-messages' : ''}`}
+              onClick={scrollToLatest}
+              type="button"
+            >
+              <span aria-hidden="true">↓</span>
+              {hasNewMessagesBelow ? <small>{labels.newMessages || '有新消息'}</small> : null}
+            </button>
+          ) : null}
           {view.queuedTurns.length ? (
             <section aria-label={labels.queuedTitle || '下一轮待发送'} className="cwu-queued-turns">
               <header><strong>{labels.queuedTitle || '下一轮待发送'}</strong><span>{view.queuedTurns.length} 条</span></header>

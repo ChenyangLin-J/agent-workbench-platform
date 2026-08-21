@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -142,7 +142,7 @@ test('Session UI embeds visualizations in a sandbox and renders image media', as
 });
 
 test('Session UI exposes product extension content without owning product navigation or canvas', async () => {
-  const source = await readFile(uiUrl, 'utf8');
+  const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
   assert.match(source, /extensions\.renderAfterMessage/);
   assert.match(source, /extensions\.renderAfterMessages/);
   assert.match(source, /extensions\.renderBeforeMessages/);
@@ -160,6 +160,10 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /clipboardAttachmentFiles\(event\.clipboardData\)/);
   assert.match(source, /shouldConvertPastedTextToAttachment\(draft, text/);
   assert.match(source, /`粘贴文本-\$\{compactLocalTimestamp\(new Date\(\)\)\}\.txt`/);
+  assert.match(source, /className=\{`cwu-scroll-latest/);
+  assert.match(source, /target\.scrollTo\(\{ top: target\.scrollHeight, behavior: 'smooth' \}\)/);
+  assert.match(source, /labels\.newMessages \|\| '有新消息'/);
+  assert.match(styles, /\.cwu-scroll-latest/);
   assert.match(source, /supportedEfforts\.includes\(view\.executionProfile\.reasoningEffort\)/);
   const hooks = await readFile(hooksUrl, 'utf8');
   assert.match(source, /useSessionUserInput/);
@@ -172,6 +176,12 @@ test('long pasted text becomes an attachment before the Composer hard limit', ()
   assert.equal(shouldConvertPastedTextToAttachment('', 'a'.repeat(1000)), true);
   assert.equal(shouldConvertPastedTextToAttachment('a'.repeat(11500), 'b'.repeat(501)), true);
   assert.equal(shouldConvertPastedTextToAttachment('', ''), false);
+});
+
+test('Session transcript only offers the latest-message shortcut away from the bottom', () => {
+  assert.equal(sessionTranscriptAwayFromLatest({ scrollHeight: 1000, scrollTop: 600, clientHeight: 200 }), false);
+  assert.equal(sessionTranscriptAwayFromLatest({ scrollHeight: 1001, scrollTop: 600, clientHeight: 200 }), true);
+  assert.equal(sessionTranscriptAwayFromLatest({ scrollHeight: 400, scrollTop: 0, clientHeight: 600 }), false);
 });
 
 test('Side Chat React UI owns shared interaction while products supply actions and storage', async () => {
