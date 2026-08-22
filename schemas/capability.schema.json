@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workbench.local/schemas/capability.schema.json",
+  "title": "Agent Workbench Capability Manifest",
+  "type": "object",
+  "required": ["id", "kind", "version", "scope", "source"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9.-]+$" },
+    "title": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["skill-source", "mcp-server", "cli-tool", "credential-provider"] },
+    "version": { "type": "string", "minLength": 1 },
+    "scope": { "enum": ["common", "custom"] },
+    "defaultEnabled": { "type": "boolean" },
+    "source": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["runtime", "plugin", "command", "host-binding", "local"] },
+        "command": { "type": "string" },
+        "marketplace": { "type": "string" },
+        "plugin": { "type": "string" },
+        "path": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "installation": {
+      "type": "object",
+      "required": ["strategy"],
+      "properties": {
+        "strategy": { "enum": ["runtime", "plugin", "product-provider", "product-package", "system-package", "authenticate-on-host", "manual"] }
+      },
+      "additionalProperties": true
+    },
+    "components": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "dependencies": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+  },
+  "additionalProperties": true
+}

@@ -32,6 +32,30 @@ export {
 } from './capabilities.js';
 
 export {
+  CAPABILITY_PLUGIN_KINDS,
+  CapabilityPluginRegistry,
+  checkCapabilityPluginHealth,
+  createCapabilityPluginRegistry,
+  normalizeCapabilityPluginManifest,
+  resolveCapabilityPluginProfile,
+} from './plugins.js';
+
+export {
+  CAPABILITY_SCOPES,
+  createCapabilityLock,
+  loadCommonCapabilityCatalog,
+  mergeCapabilityCatalogs,
+  normalizeCapabilityCatalog,
+  resolveCapabilityInstallPlan,
+} from './capability-registry.js';
+
+export {
+  CAPABILITY_INSTALL_OPERATIONS,
+  CapabilityInstaller,
+  createCapabilityInstaller,
+} from './capability-installer.js';
+
+export {
   SideChatController,
   normalizeSideChatRecord,
   normalizeSideChatSnapshot,

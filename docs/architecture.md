@@ -40,21 +40,37 @@
 
 @agent-workbench/platform/ui
   React SessionWorkspace 与 Feature 面板
+
+@agent-workbench/platform/plugins
+  Skill source、MCP server、CLI tool、credential provider 的声明式 registry、profile resolver 与 health contract
+
+agent-workbench-platform/capabilities
+  通用 Capability catalog、schema、依赖关系与安装策略元数据
 ```
 
 Runtime 与 Feature contract 不依赖 DOM。React 是四个 Web 宿主的统一 renderer，不是 Agent Runtime 本身。以后只有出现真实的非 React 消费者时，才评估拆分 npm 包。
+
+### 可插拔能力底座
+
+Platform 的可插拔能力仅表达可用集成，不拥有产品权限、凭据值、进程或网络副作用。`@agent-workbench/platform/plugins` 支持 `skill-source`、`mcp-server`、`cli-tool` 和 `credential-provider` 四类 manifest；每个 manifest 必须带稳定的 `id`、`kind` 与 `version`。`capabilities/registry.json` 保存通用能力，默认全部关闭；消费者仓库用同一 schema 保存 `custom` catalog。两类 catalog 合并时禁止自定义能力用同一 id 静默覆盖通用能力。
+
+产品 Profile 按能力 id 保存启停、宿主绑定与 `credentialRefs`；resolver 自动补全依赖并生成安装计划和无绝对路径的版本 lock。project 归属和凭据存储始终留在消费者。resolver 输出不含 project 数据或密钥值，且拒绝 manifest、config 与 health 结果中的 secret/token/password 等值字段。health checker 仅调用插件自愿提供的 `check({ manifest, config, credentialRefs })`，把结果收敛为 `healthy`、`degraded`、`disabled` 或 `error`，并显式报告 Profile 已声明但 Registry 未安装的插件；Platform 不执行包管理器、登录、CLI 或 MCP 副作用。
 
 ### Platform 拥有
 
 - Codex thread、turn、request 和事件的产品中立语义，以及 Composer 中模型、思考强度和访问模式的统一交互合约。
 - Side Chat、Subagent、附件和审批等 Feature 的状态模型、动作合约、错误语义和 React UI。
 - Feature 能力配置，例如 `sideChats: hidden | summary | full` 与 `subagents: hidden | summary | full`。
+- 通用 Capability schema、catalog、依赖解析、安装计划、两阶段安装动作合约与 lock 格式。
 - project-free 与 project-scoped 两类 fixture 和合约测试。
 
 ### 产品拥有
 
 - 页面导航、项目/业务对象、用户和权限、凭据、部署及数据目录。
 - 产品专属状态与存储位置，以及把这些状态和访问模式映射到 Runtime / Feature contract 的 adapter。
+- 产品 Profile、自定义 Capability catalog、安装执行器、宿主机路径、MCP endpoint 和认证流程。
+
+安装动作采用 plan / execute 两阶段：Platform 校验动作、确认要求和无密钥的公开结果；消费者按 strategy 注入真实 handler。任何需要修改宿主机或安装包的动作必须先返回 `action-required`，消费者取得明确确认后才能调用 execute。交互式认证不通过公共动作传递 token、密码或其他凭据值。
 - Personal 的项目与事项、Solvely 的报告与 SQL、Agent Terminal 的 PTY 与多主机、Superset 的 Dashboard 上下文。
 - 主题、入口位置、产品文案，以及通过 slot 插入的业务内容。
 
@@ -115,7 +131,7 @@ Subagent 与 Side Chat 保持不同数据模型。Platform 继续从 Codex 父�
 - 不把 Personal 与 Solvely 的页面外壳、导航和业务内容合并。
 - 不让浏览器直接连接或启动 Codex App Server；各产品后端仍拥有执行连接与鉴权。
 - 不把产品数据库或权限模型迁入 Platform。
-- 不在本轮同时迁移四个宿主，也不先建设通用插件系统。
+- 不在本轮同时迁移四个宿主；能力插件只提供声明与健康合约，不替代各宿主的执行和授权逻辑。
 - 不复制 DeepSeek Harness 的完整插件框架；只采用 base feature 加宿主 profile 的组合原则。
 
 ## 迁移顺序

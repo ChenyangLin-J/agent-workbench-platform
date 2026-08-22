@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "capabilities": [
+    {
+      "id": "skills.codex-system",
+      "title": "Codex System Skills",
+      "kind": "skill-source",
+      "version": "runtime",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "runtime" },
+      "components": ["openai-docs", "skill-creator"]
+    },
+    {
+      "id": "skills.openai-bundled.visualize",
+      "title": "Visualize",
+      "kind": "skill-source",
+      "version": "1.0.21",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "plugin", "marketplace": "openai-bundled", "plugin": "visualize" },
+      "components": ["visualize:visualize"]
+    },
+    {
+      "id": "mcp.browser",
+      "title": "Browser MCP",
+      "kind": "mcp-server",
+      "version": "1",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "host-binding" },
+      "installation": { "strategy": "product-provider" }
+    },
+    {
+      "id": "cli.codex-runtime",
+      "title": "Codex Runtime",
+      "kind": "cli-tool",
+      "version": "0.147.0",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "command", "command": "codex" },
+      "installation": { "strategy": "product-package" },
+      "dependencies": ["credentials.codex-native"]
+    },
+    {
+      "id": "cli.git",
+      "title": "Git",
+      "kind": "cli-tool",
+      "version": "system",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "command", "command": "git" },
+      "installation": { "strategy": "system-package", "darwin": { "executable": "brew", "args": ["install", "git"] } }
+    },
+    {
+      "id": "cli.ripgrep",
+      "title": "Ripgrep",
+      "kind": "cli-tool",
+      "version": "system",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "command", "command": "rg" },
+      "installation": { "strategy": "system-package", "darwin": { "executable": "brew", "args": ["install", "ripgrep"] } }
+    },
+    {
+      "id": "cli.node",
+      "title": "Node.js",
+      "kind": "cli-tool",
+      "version": "system",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "command", "command": "node" },
+      "installation": { "strategy": "system-package", "darwin": { "executable": "brew", "args": ["install", "node"] } }
+    },
+    {
+      "id": "cli.npm",
+      "title": "npm",
+      "kind": "cli-tool",
+      "version": "system",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "command", "command": "npm" },
+      "installation": { "strategy": "system-package", "darwin": { "executable": "brew", "args": ["install", "node"] } },
+      "dependencies": ["cli.node"]
+    },
+    {
+      "id": "cli.python",
+      "title": "Python",
+      "kind": "cli-tool",
+      "version": "system",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "command", "command": "python3" },
+      "installation": { "strategy": "system-package", "darwin": { "executable": "brew", "args": ["install", "python"] } }
+    },
+    {
+      "id": "cli.lark",
+      "title": "Lark CLI",
+      "kind": "cli-tool",
+      "version": "system",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "command", "command": "lark-cli" },
+      "installation": { "strategy": "system-package", "darwin": { "executable": "npm", "args": ["install", "-g", "@larksuite/cli", "--prefix", "$HOME/.npm-global"] } },
+      "dependencies": ["credentials.lark-cli"]
+    },
+    {
+      "id": "cli.bigquery",
+      "title": "BigQuery CLI",
+      "kind": "cli-tool",
+      "version": "system",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "command", "command": "bq" },
+      "installation": { "strategy": "system-package", "darwin": { "executable": "brew", "args": ["install", "--cask", "google-cloud-sdk"] } },
+      "dependencies": ["credentials.google-adc"]
+    },
+    {
+      "id": "cli.ddit-skills",
+      "title": "DDIT Skills CLI",
+      "kind": "cli-tool",
+      "version": "system",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "command", "command": "ddit-skills" },
+      "installation": { "strategy": "system-package", "darwin": { "executable": "uv", "args": ["tool", "install", "ddit-skills"] } },
+      "dependencies": ["credentials.ddit-skills"]
+    },
+    {
+      "id": "cli.ngrok",
+      "title": "ngrok",
+      "kind": "cli-tool",
+      "version": "system",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "command", "command": "ngrok" },
+      "installation": { "strategy": "system-package", "darwin": { "executable": "brew", "args": ["install", "--cask", "ngrok"] } },
+      "dependencies": ["credentials.ngrok"]
+    },
+    {
+      "id": "credentials.codex-native",
+      "title": "Codex Login",
+      "kind": "credential-provider",
+      "version": "1",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "host-binding" },
+      "installation": { "strategy": "authenticate-on-host", "instructions": ["codex login"] }
+    },
+    {
+      "id": "credentials.lark-cli",
+      "title": "Lark CLI Login",
+      "kind": "credential-provider",
+      "version": "1",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "host-binding" },
+      "installation": { "strategy": "authenticate-on-host", "instructions": ["lark-cli auth login"] }
+    },
+    {
+      "id": "credentials.google-adc",
+      "title": "Google ADC",
+      "kind": "credential-provider",
+      "version": "1",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "host-binding" },
+      "installation": { "strategy": "authenticate-on-host", "instructions": ["gcloud auth application-default login"] }
+    },
+    {
+      "id": "credentials.ddit-skills",
+      "title": "DDIT Skills Login",
+      "kind": "credential-provider",
+      "version": "1",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "host-binding" },
+      "installation": { "strategy": "authenticate-on-host", "instructions": ["ddit-skills login"] }
+    },
+    {
+      "id": "credentials.ngrok",
+      "title": "ngrok Login",
+      "kind": "credential-provider",
+      "version": "1",
+      "scope": "common",
+      "defaultEnabled": false,
+      "source": { "type": "host-binding" },
+      "installation": { "strategy": "authenticate-on-host", "instructions": ["ngrok config add-authtoken <token>"] }
+    }
+  ]
+}

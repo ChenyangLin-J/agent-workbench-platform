@@ -16,10 +16,12 @@ The current shared boundary and consumer migration order are defined in [`docs/a
 - Shared attachment metadata, limits, App Server inputs, approvals, and Realtime browser contracts
 - Product-configurable Session capabilities: Realtime visible/hidden and Sub Agents hidden/summary/full
 - On-demand shared MCP and Playwright Browser Provider primitives
+- Product-neutral capability plugins: skill sources, MCP servers, CLI tools, and credential providers
+- A versioned common Capability Registry, schema, dependency resolver, install plan, and portable lock contract
 
 ## Product boundary
 
-This repository does not contain product navigation, project or task management, credentials, account state, deployment configuration, persistent browser profiles, or product-specific memory and orchestration policies. Consumers provide those through adapters and UI extensions.
+This repository does not contain product navigation, project or task management, credential values, account state, deployment configuration, persistent browser profiles, product-specific Skills, or product-specific memory and orchestration policies. Consumers provide those through adapters, custom Capability catalogs, Profiles, and UI extensions.
 
 ## Install
 
@@ -54,6 +56,9 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 - `@agent-workbench/platform/subagents`
 - `@agent-workbench/platform/attachments`
 - `@agent-workbench/platform/capabilities`
+- `@agent-workbench/platform/plugins`
+- `@agent-workbench/platform/capability-registry`
+- `@agent-workbench/platform/capability-installer`
 - `@agent-workbench/platform/features/side-chat`
 - `@agent-workbench/platform/ui-hooks`
 - `@agent-workbench/platform/runtime`
@@ -66,6 +71,18 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 ## UI ownership
 
 `SessionBrowser` and `SessionWorkspace` provide the standard Session search/list/archive interaction, cursor-driven incremental list loading, transcript and earlier-message paging, lazy technical-detail loading, queued turns, requests, Composer, click/drag/paste attachment upload, model/reasoning/access selectors, model-advertised Fast service tier, user-message Edit/Fork actions, status, Sub Agent, and Realtime UI. `SessionList` exposes the exact same list implementation for products that already own the Session detail surface. The shared list supports consumer-provided context/time/status grouping, rich execution states, favorites, separate end and archive actions, host filter extensions, and product-owned full-text-search/history entry points. Shared transcript rendering supports Codex `\\[...\\]` / `\\(...\\)` math through KaTeX and both the legacy `::codex-inline-vis` directive and current `visualize` content reference; directives inside fenced or indented code remain literal examples. Products resolve visualization paths through `actions.visualizationUrl` and remain responsible for their own allowlist. Agent commentary stays in the transcript while its Turn is running; after the Turn reaches a terminal status, consecutive commentary messages in that Turn share one compact disclosure without mixing command or tool details into the conversation. File selection uses the browser input event and snapshots its live `FileList` before resetting the field, so the current upload is retained and the same file can be selected again. Pasted clipboard files and images become attachments; a text paste of at least 1,000 characters, or one that would exceed the Composer limit, becomes a timestamped UTF-8 TXT attachment while ordinary text paste remains inline. When a reader scrolls more than 200 pixels away from the latest Session content, a floating shortcut appears above the Composer; new content changes it to an unobtrusive “有新消息” pill without taking over the reader's scroll position. Products supply the model catalog and implement `actions.onExecutionProfileChange` to apply execution settings through their Runtime adapter. `SideChatPanel` provides the shared Side Chat tabs, retained transcript, configuration and composer while the product supplies persistence and Runtime actions. Products mark eligible messages with `canEdit` / `canFork`, implement `actions.onEditMessage` / `actions.onForkMessage`, and supply grouping labels, archive and paging actions, and their own navigation. They can append product-specific content after a standard message with `extensions.renderAfterMessage`; Core does not know about projects, analysis cards, reports, or artifact canvases.
+
+## Capability plugins
+
+`@agent-workbench/platform/plugins` provides a process-free registry for four declarative plugin kinds: `skill-source`, `mcp-server`, `cli-tool`, and `credential-provider`. Every plugin manifest has an `id`, `kind`, and `version`. `CapabilityPluginRegistry` supplies `register`, `unregister`, `list`, and `get`; registration rejects duplicate ids.
+
+`resolveCapabilityPluginProfile(base, productOverlay)` merges `plugins` maps by plugin id. An overlay can replace `enabled`, `config`, and `credentialRefs`, so the same base profile works for project-free and project-scoped products without making projects part of Platform. Profiles contain credential references only; credential values and secret-like manifest, config, and health fields are rejected. `checkCapabilityPluginHealth(registry, profile)` runs each enabled optional plugin `check` and returns uniform `healthy`, `degraded`, `disabled`, or `error` results, including an explicit error for a profile entry whose plugin is not registered. The registry never launches tools, resolves credentials, reads product state, or performs network/process work.
+
+The common catalog is stored in `capabilities/registry.json` and validated by `schemas/capability.schema.json`. Every common capability is disabled by default. A consumer merges this catalog with one or more `custom` catalogs using `mergeCapabilityCatalogs`; custom ids cannot shadow common ids. `resolveCapabilityInstallPlan` applies the consumer Profile, closes declared dependencies, and distinguishes `install`, `update`, `ready`, and `disabled` states against an optional prior lock. `createCapabilityLock` emits only stable ids, kinds, scopes, and versions, so it can be committed and moved between hosts without carrying absolute paths or secrets.
+
+`@agent-workbench/platform/capability-installer` adds a product-neutral two-phase action dispatcher. Consumers register handlers by installation strategy; `plan()` is side-effect free and returns `ready`, `action-required`, `manual`, or `unsupported`, while `execute()` refuses confirmation-required work until the consumer supplies explicit confirmation. Public plans and results reject credential-value fields.
+
+Platform never chooses or invokes a package manager by itself. Consumers still own authentication flows, local paths, MCP endpoints, persistence, and every side effect. The same common capability may therefore bind to Personal Browser on one product and Agent Terminal Playwright on another while keeping the stable `mcp.browser` id.
 
 ## Development
 
