@@ -18,6 +18,8 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(source, /documentPreview = null/);
   assert.match(source, /onOpenLink\(href\)/);
   assert.match(source, /components=\{markdownLinkComponents\(onOpenLink\)\}/);
+  assert.match(source, /\^https\?:\\\/\\\//);
+  assert.match(source, /rel="noreferrer" target="_blank"/);
   assert.match(source, /onOpenExternal\(file\)/);
   assert.match(source, /file\.format === 'spreadsheet'/);
   assert.match(source, /function SpreadsheetPreview/);

@@ -1432,16 +1432,21 @@ function RealtimePanel({ enabled, event, initialState, labels, onFallback, onSen
 function markdownLinkComponents(onOpenLink) {
   if (!onOpenLink) return undefined;
   return {
-    a: ({ href = '', children, ...props }) => (
-      <a
-        {...props}
-        href={href}
-        onClick={(event) => {
-          event.preventDefault();
-          onOpenLink(href);
-        }}
-      >{children}</a>
-    ),
+    a: ({ href = '', children, ...props }) => {
+      if (/^https?:\/\//i.test(href)) {
+        return <a {...props} href={href} rel="noreferrer" target="_blank">{children}</a>;
+      }
+      return (
+        <a
+          {...props}
+          href={href}
+          onClick={(event) => {
+            event.preventDefault();
+            onOpenLink(href);
+          }}
+        >{children}</a>
+      );
+    },
   };
 }
 
