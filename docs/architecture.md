@@ -5,7 +5,7 @@
 
 ## 当前问题
 
-`@agent-workbench/platform` 已经共享 Codex App Server、Session Kernel、附件、Subagent 摘要和 React Session UI，但共享单位仍然偏横向：消费者拿到若干 runtime helper 和 UI 组件，再分别拼装完整功能。
+`@agent-workbench/platform` 已经共享 Codex App Server、Session Kernel、附件、Subagent、Side Chat、Capability 原语和 React Session UI。当前重构继续收紧消费者边界：附件消息协议、Capability 状态机/UI、Codex Skill roots 生命周期与 Session 分页语义必须由 Platform 统一，消费者只注入存储、健康检查、宿主副作用与产品上下文。
 
 这会让一个用户能力在不同宿主中形成多套实现。当前最明显的例子是 Side Chat：Personal 自己维护 fork、记录、事件订阅和原生 DOM 面板；Agent Terminal Web 也有独立实现；Solvely 尚未接入。修复其中一套不会自动修复其他宿主。
 
@@ -15,7 +15,7 @@
 
 | 宿主 | 当前技术形态 | Platform 使用情况 | 产品边界 |
 | --- | --- | --- | --- |
-| Personal Workbench | 原生页面外壳 + React `SessionWorkspace` | 固定 `v0.3.14`；使用 Core、Session UI、附件和 Browser Provider | 项目、事项、个人状态、记忆和资产 |
+| Personal Workbench | 原生页面外壳 + React `SessionWorkspace` | 固定 `v0.5.0`；下一步升级 `v0.6.0` 并删除临时通用实现 | 项目、事项、个人状态、记忆和资产 |
 | Solvely Workbench | Next.js + React | 固定 `v0.3.9`；使用 Session UI 和部分附件合约；Subagent 关闭 | 业务导航、报告、SQL、证据及业务 Tools/Skills |
 | Agent Terminal Web | Express + WebSocket + 原生页面，同时支持 PTY Terminal 与 App Server | 尚未使用 Platform；独立实现 App Server、Session 与 Side Chat | 手机优先入口、Terminal、记忆和多执行主机 |
 | Superset Side Agent | 待接入的轻量侧边面板 | 尚未接入 | Dashboard、Chart、筛选条件和 Superset 权限上下文 |
@@ -60,8 +60,9 @@ Platform 的可插拔能力仅表达可用集成，不拥有产品权限、凭�
 
 - Codex thread、turn、request 和事件的产品中立语义，以及 Composer 中模型、思考强度和访问模式的统一交互合约。
 - Side Chat、Subagent、附件和审批等 Feature 的状态模型、动作合约、错误语义和 React UI。
+- 附件 transcript envelope、文本/文件 Runtime input、Codex connection preparation、Skill roots inventory 与执行配置协议映射。
 - Feature 能力配置，例如 `sideChats: hidden | summary | full` 与 `subagents: hidden | summary | full`。
-- 通用 Capability schema、catalog、依赖解析、安装计划、两阶段安装动作合约与 lock 格式。
+- 通用 Capability schema、catalog、依赖解析、安装计划、两阶段安装动作合约、host-backed Manager、React Panel 与 lock 格式。
 - project-free 与 project-scoped 两类 fixture 和合约测试。
 
 ### 产品拥有

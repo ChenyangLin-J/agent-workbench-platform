@@ -15,6 +15,7 @@ import {
   extractVisualizationReferences,
   extractRemarkDirectives,
   normalizeMarkdownMath,
+  normalizeCapabilityManagerViewModel,
   normalizeSessionBrowserViewModel,
   normalizeSessionViewModel,
   normalizeSideChatPanelViewModel,
@@ -33,6 +34,77 @@ export { useSessionUserInput } from '../ui-hooks.js';
 const SESSION_COMPOSER_TEXT_LIMIT = 12000;
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]];
 const MARKDOWN_REHYPE_PLUGINS = [[rehypeKatex, { strict: false }]];
+
+export function CapabilityPanel({ manager, actions = {}, labels = {} }) {
+  const view = useMemo(() => normalizeCapabilityManagerViewModel(manager), [manager]);
+  const [pendingId, setPendingId] = useState(null);
+  const kinds = ['skill-source', 'mcp-server', 'cli-tool', 'credential-provider'];
+
+  async function toggle(item) {
+    if (!actions.onToggle || pendingId) return;
+    setPendingId(item.id);
+    try { await actions.onToggle(item.id, !item.enabled); } finally { setPendingId(null); }
+  }
+
+  async function runAction(item) {
+    if (!actions.onPlan || !actions.onExecute || pendingId) return;
+    setPendingId(item.id);
+    try {
+      const plan = await actions.onPlan(item.id, item.action?.operation || 'install');
+      if (plan?.status !== 'action-required') return;
+      const confirmed = actions.onConfirm
+        ? await actions.onConfirm(plan, item)
+        : globalThis.confirm?.(`${plan.title}\n\n${plan.detail || labels.confirmDetail || 'This action changes the host environment.'}`) === true;
+      if (confirmed) await actions.onExecute(item.id, plan.operation, true);
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  return (
+    <section className="cwu-capability-panel">
+      <header>
+        <div><span>{labels.eyebrow || 'Portable runtime'}</span><h1>{labels.title || 'Capabilities'}</h1></div>
+        {actions.onRefresh ? <button className="cwu-button" onClick={actions.onRefresh} type="button">{labels.refresh || 'Refresh'}</button> : null}
+      </header>
+      <div className="cwu-capability-summary" aria-live="polite">
+        <strong>{view.counts.enabled} {labels.enabled || 'enabled'}</strong>
+        <span>{view.counts.healthy}/{view.counts.enabled} {labels.available || 'available'}</span>
+        <span>{view.counts.common} {labels.common || 'common'}</span>
+        <span>{view.counts.custom} {labels.custom || 'custom'}</span>
+      </div>
+      <div className="cwu-capability-sections">
+        {kinds.map((kind) => {
+          const items = view.capabilities.filter((item) => item.kind === kind);
+          if (!items.length) return null;
+          return (
+            <section className="cwu-capability-group" key={kind}>
+              <header><h2>{items[0].kindLabel}</h2><span>{items.filter((item) => item.enabled).length}/{items.length}</span></header>
+              <div className="cwu-capability-grid">
+                {items.map((item) => (
+                  <article className={`cwu-capability-card ${item.enabled ? 'is-enabled' : ''} ${item.available ? 'is-healthy' : ''}`} key={item.id}>
+                    <div>
+                      <div className="cwu-capability-title"><h3>{item.title}</h3><span>{item.scope}</span></div>
+                      <code>{item.id}{item.version ? ` · ${item.version}` : ''}</code>
+                      <p className="cwu-capability-health"><i />{item.enabled ? item.available ? labels.ready || 'Enabled · available' : labels.needsSetup || 'Enabled · setup required' : labels.disabled || 'Disabled'}</p>
+                      {item.detail ? <p>{item.detail}</p> : null}
+                      {item.requiredBy.length ? <small>{labels.requiredBy || 'Required by'}: {item.requiredBy.join(', ')}</small> : item.dependencies.length ? <small>{labels.dependencies || 'Dependencies'}: {item.dependencies.join(', ')}</small> : null}
+                      {item.action?.instructions.map((instruction) => <code key={instruction}>{instruction}</code>)}
+                    </div>
+                    <div className="cwu-capability-actions">
+                      <button aria-checked={item.enabled} disabled={!actions.onToggle || pendingId === item.id} onClick={() => toggle(item)} role="switch" type="button"><span />{item.enabled ? labels.on || 'On' : labels.off || 'Off'}</button>
+                      {item.enabled && !item.available && item.action?.status === 'action-required' ? <button className="cwu-button" disabled={pendingId === item.id} onClick={() => runAction(item)} type="button">{item.action.title}</button> : null}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 
 export function SideChatPanel({
   panel,
@@ -293,6 +365,11 @@ export function SessionBrowser({
     observer.observe(target);
     return () => observer.disconnect();
   }, [actions.onLoadMore, view.hasMore, view.loadingMore, view.sessions.length]);
+
+  useEffect(() => {
+    if (view.paginationMode !== 'complete' || !view.hasMore || view.loadingMore || !actions.onLoadMore) return;
+    requestMore();
+  }, [actions.onLoadMore, view.hasMore, view.loadingMore, view.paginationMode, view.sessions.length]);
 
   async function createSession(targetId = createTargetId) {
     if (!targetId || creating || !actions.onCreate) return;
@@ -1787,6 +1864,7 @@ function compactLocalTimestamp(date) {
 export {
   clipboardAttachmentFiles,
   groupSessionSummaries,
+  normalizeCapabilityManagerViewModel,
   normalizeSessionBrowserViewModel,
   normalizeSessionViewModel,
   normalizeSideChatPanelViewModel,

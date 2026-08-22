@@ -346,6 +346,9 @@ export function normalizeSessionBrowserViewModel(value = {}) {
     loading: Boolean(value.loading),
     loadingMore: Boolean(value.loadingMore),
     hasMore: Boolean(value.hasMore),
+    paginationMode: ['complete', 'incremental'].includes(value.paginationMode)
+      ? value.paginationMode
+      : requestedGroupMode === 'time' ? 'incremental' : 'complete',
     listCollapsed: Boolean(value.listCollapsed),
     archived: Boolean(value.archived),
     showCreateTargetSelect: value.showCreateTargetSelect !== false,
@@ -356,6 +359,57 @@ export function normalizeSessionBrowserViewModel(value = {}) {
         })).filter((target) => target.id)
       : [],
   };
+}
+
+export function normalizeCapabilityManagerViewModel(value = {}) {
+  const capabilities = Array.isArray(value.capabilities) ? value.capabilities.map((item, index) => ({
+    id: String(item?.id || `capability-${index}`),
+    title: String(item?.title || item?.id || 'Capability'),
+    kind: ['skill-source', 'mcp-server', 'cli-tool', 'credential-provider'].includes(item?.kind)
+      ? item.kind
+      : 'skill-source',
+    kindLabel: String(item?.kindLabel || ({
+      'skill-source': 'Skills', 'mcp-server': 'MCP', 'cli-tool': 'CLI', 'credential-provider': 'Credentials',
+    })[item?.kind] || item?.kind || 'Capabilities'),
+    scope: item?.scope === 'custom' ? 'custom' : 'common',
+    version: String(item?.version || ''),
+    enabled: Boolean(item?.enabled),
+    available: Boolean(item?.available),
+    status: String(item?.status || (item?.enabled ? 'degraded' : 'disabled')),
+    detail: item?.detail == null ? '' : String(item.detail),
+    dependencies: stringList(item?.dependencies),
+    requiredBy: stringList(item?.requiredBy),
+    components: stringList(item?.components),
+    action: normalizeCapabilityAction(item?.action),
+  })) : [];
+  const enabled = capabilities.filter((item) => item.enabled).length;
+  return {
+    profileId: String(value.profileId || 'default'),
+    catalogVersion: Number(value.catalogVersion) || 1,
+    counts: {
+      common: Number(value.counts?.common ?? capabilities.filter((item) => item.scope === 'common').length),
+      custom: Number(value.counts?.custom ?? capabilities.filter((item) => item.scope === 'custom').length),
+      enabled: Number(value.counts?.enabled ?? enabled),
+      healthy: Number(value.counts?.healthy ?? capabilities.filter((item) => item.enabled && item.available).length),
+    },
+    capabilities,
+  };
+}
+
+function normalizeCapabilityAction(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    status: String(value.status || ''),
+    operation: String(value.operation || ''),
+    title: String(value.title || ''),
+    detail: String(value.detail || ''),
+    confirmationRequired: Boolean(value.confirmationRequired),
+    instructions: stringList(value.metadata?.instructions),
+  };
+}
+
+function stringList(value) {
+  return Array.isArray(value) ? [...new Set(value.map(String).filter(Boolean))] : [];
 }
 
 export function normalizeSideChatPanelViewModel(value = {}) {

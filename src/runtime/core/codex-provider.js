@@ -1,17 +1,19 @@
 import { EventEmitter } from 'node:events';
 
 import { normalizeRuntimeCapabilities } from './contracts.js';
+import { createCodexConnectionPreparation } from './codex-skills.js';
 
 const MAX_COMPLETED_TURNS = 100;
 
 export class CodexAppServerProvider {
-  constructor({ connection = null, connectionFor = null } = {}) {
+  constructor({ connection = null, connectionFor = null, prepareConnection = null } = {}) {
     if (!connection && typeof connectionFor !== 'function') {
       throw new TypeError('Codex provider requires connection or connectionFor.');
     }
     this.id = 'codex';
     this.connection = connection;
     this.connectionFor = connectionFor;
+    this.prepareConnection = prepareConnection ? createCodexConnectionPreparation(prepareConnection) : null;
   }
 
   capabilities() {
@@ -30,18 +32,19 @@ export class CodexAppServerProvider {
 
   createSession({ host = null, cwd = null, settings = {} } = {}) {
     const connection = this.connectionFor ? this.connectionFor(host) : this.connection;
-    return new CodexRuntimeSession({ connection, cwd, settings });
+    return new CodexRuntimeSession({ connection, cwd, settings, prepareConnection: this.prepareConnection });
   }
 }
 
 export class CodexRuntimeSession extends EventEmitter {
-  constructor({ connection, cwd = null, settings = {} } = {}) {
+  constructor({ connection, cwd = null, settings = {}, prepareConnection = null } = {}) {
     super();
     if (!connection?.request || !connection?.on) throw new TypeError('Codex connection is required.');
     this.providerId = 'codex';
     this.connection = connection;
     this.cwd = cwd;
     this.settings = structuredClone(settings);
+    this.prepareConnection = prepareConnection;
     this.runtimeSessionId = null;
     this.activeTurnId = null;
     this.completedTurnIds = new Set();
@@ -60,6 +63,7 @@ export class CodexRuntimeSession extends EventEmitter {
     this.#bind();
     try {
       await this.connection.start();
+      await this.prepareConnection?.(this.connection);
       this.started = true;
     } catch (error) {
       this.#unbind();
@@ -308,10 +312,22 @@ export class CodexRuntimeSession extends EventEmitter {
 }
 
 function codexSessionParams(cwd, settings) {
+  const normalized = codexExecutionSettings(settings);
   return {
-    ...(settings || {}),
+    ...normalized,
     ...(cwd ? { cwd } : {}),
   };
+}
+
+export function codexExecutionSettings(settings = {}) {
+  const value = { ...(settings || {}) };
+  if (value.reasoningEffort != null && value.effort == null) value.effort = value.reasoningEffort;
+  if (value.accessMode != null && value.sandbox == null) {
+    value.sandbox = value.accessMode === 'full' ? 'danger-full-access' : 'workspace-write';
+  }
+  delete value.reasoningEffort;
+  delete value.accessMode;
+  return value;
 }
 
 function normalizeInput(input) {

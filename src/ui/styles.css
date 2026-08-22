@@ -365,6 +365,32 @@
 .cwu-side-chat-composer > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--cwu-muted); font-size: 9px; }
 .cwu-side-chat-composer .cwu-send { padding: 5px 8px; font-size: 10px; }
 .cwu-side-chat-error { border-top: 1px solid color-mix(in srgb, var(--cwu-error) 28%, var(--cwu-border)); background: color-mix(in srgb, var(--cwu-error) 8%, var(--cwu-surface)); color: var(--cwu-error); padding: 7px 9px; font-size: 10px; }
+.cwu-capability-panel { display: grid; gap: 22px; color: var(--cwu-text); }
+.cwu-capability-panel > header, .cwu-capability-group > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cwu-capability-panel > header span, .cwu-capability-group > header span { color: var(--cwu-muted); font-size: 11px; }
+.cwu-capability-panel h1, .cwu-capability-panel h2, .cwu-capability-panel h3 { margin: 0; }
+.cwu-capability-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.cwu-capability-summary > * { border: 1px solid var(--cwu-border); border-radius: 999px; background: var(--cwu-surface); padding: 7px 10px; color: var(--cwu-muted); font-size: 11px; }
+.cwu-capability-summary strong { color: var(--cwu-text); }
+.cwu-capability-sections { display: grid; gap: 24px; }
+.cwu-capability-group { display: grid; gap: 10px; }
+.cwu-capability-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+.cwu-capability-card { display: flex; justify-content: space-between; gap: 16px; min-height: 150px; border: 1px solid var(--cwu-border); border-radius: 14px; background: var(--cwu-surface); padding: 16px; }
+.cwu-capability-card.is-enabled { border-color: color-mix(in srgb, var(--cwu-accent) 30%, var(--cwu-border)); }
+.cwu-capability-title { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.cwu-capability-title span { border-radius: 999px; background: var(--cwu-soft); padding: 2px 6px; color: var(--cwu-muted); font-size: 9px; }
+.cwu-capability-card code { display: block; max-width: 100%; margin-top: 5px; color: var(--cwu-muted); font-size: 9px; overflow-x: auto; }
+.cwu-capability-card p, .cwu-capability-card small { display: block; margin: 7px 0 0; color: var(--cwu-muted); font-size: 10px; line-height: 1.45; }
+.cwu-capability-health { display: flex !important; align-items: center; gap: 6px; }
+.cwu-capability-health i { width: 7px; height: 7px; border-radius: 50%; background: #999; }
+.cwu-capability-card.is-enabled.is-healthy .cwu-capability-health i { background: #258b57; }
+.cwu-capability-card.is-enabled:not(.is-healthy) .cwu-capability-health i { background: #bf7a18; }
+.cwu-capability-actions { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: 10px; }
+.cwu-capability-actions [role="switch"] { display: flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--cwu-muted); cursor: pointer; font: inherit; font-size: 10px; }
+.cwu-capability-actions [role="switch"] span { position: relative; width: 34px; height: 20px; border-radius: 999px; background: #999; }
+.cwu-capability-actions [role="switch"] span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: white; transition: transform .15s ease; }
+.cwu-capability-actions [role="switch"][aria-checked="true"] span { background: var(--cwu-accent); }
+.cwu-capability-actions [role="switch"][aria-checked="true"] span::after { transform: translateX(14px); }
 .cwu-side-chat-empty { display: grid; grid-row: 2 / -1; place-items: center; align-content: center; gap: 8px; min-height: 260px; padding: 28px 18px; color: var(--cwu-muted); text-align: center; }
 .cwu-side-chat-empty strong { color: var(--cwu-text); }
 .cwu-side-chat-empty p { max-width: 280px; margin: 0; font-size: 11px; line-height: 1.5; }

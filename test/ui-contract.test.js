@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -24,6 +24,23 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(styles, /\.cwu-document-preview/);
   assert.match(styles, /\.cwu-spreadsheet-scroll table/);
   assert.match(styles, /\.cwu-spreadsheet-scroll \{ min-width: 0/);
+});
+
+test('Capability UI normalizes common and custom host state without credential values', async () => {
+  const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
+  const view = normalizeCapabilityManagerViewModel({
+    profileId: 'personal',
+    capabilities: [{
+      id: 'cli.node', title: 'Node.js', kind: 'cli-tool', scope: 'common', version: '1', enabled: true,
+      available: true, status: 'healthy', dependencies: ['credentials.node'], requiredBy: [],
+    }],
+  });
+  assert.deepEqual(view.counts, { common: 1, custom: 0, enabled: 1, healthy: 1 });
+  assert.equal(view.capabilities[0].kindLabel, 'CLI');
+  assert.match(source, /export function CapabilityPanel/);
+  assert.match(source, /actions\.onPlan/);
+  assert.match(source, /actions\.onExecute/);
+  assert.match(styles, /\.cwu-capability-panel/);
 });
 
 test('Session UI extracts safe inline visualizations and keeps message media', () => {
@@ -269,6 +286,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(browser.archived, true);
   assert.equal(browser.hasMore, true);
   assert.equal(browser.loadingMore, true);
+  assert.equal(browser.paginationMode, 'complete');
   assert.equal(browser.sessions[0].archived, true);
   assert.equal(browser.sessions[0].canArchive, false);
   assert.equal(browser.groupMode, 'attention');

@@ -1,6 +1,10 @@
 export const APP_SERVER_FEATURES = Object.freeze(['realtime_conversation']);
 
-import { sessionAttachmentKind } from './attachments.js';
+import {
+  MAX_INLINE_TEXT_ATTACHMENT_BYTES,
+  createAttachmentEnvelopeInput,
+  sessionAttachmentKind,
+} from './attachments.js';
 
 export {
   CodexSubagentService,
@@ -66,6 +70,37 @@ export function appServerAttachmentInput({ mimeType = '', name = '', path = '' }
   }
   if (kind === 'image') return { type: 'localImage', path: normalizedPath };
   return { type: 'mention', name: normalizedName || 'attachment', path: normalizedPath };
+}
+
+export function appServerAttachmentInputs({
+  mimeType = '',
+  name = '',
+  path = '',
+  size = 0,
+  textContent = null,
+  maxInlineTextBytes = MAX_INLINE_TEXT_ATTACHMENT_BYTES,
+} = {}) {
+  const input = appServerAttachmentInput({ mimeType, name, path });
+  if (input.type !== 'mention') return [input];
+  const normalizedName = String(name || 'attachment').trim() || 'attachment';
+  if (String(mimeType || '').toLowerCase() === 'text/plain' && textContent != null) {
+    const byteLength = Number(size) || new TextEncoder().encode(String(textContent)).byteLength;
+    if (byteLength > maxInlineTextBytes) {
+      throw Object.assign(new RangeError(`Text attachment exceeds ${maxInlineTextBytes} bytes.`), {
+        code: 'TEXT_ATTACHMENT_TOO_LARGE',
+        maxBytes: maxInlineTextBytes,
+      });
+    }
+    return [createAttachmentEnvelopeInput({ name: normalizedName, kind: 'text', content: textContent })];
+  }
+  return [
+    createAttachmentEnvelopeInput({
+      name: normalizedName,
+      kind: 'file',
+      content: `Read the attached local file @${normalizedName} and use its contents for this request.`,
+    }),
+    input,
+  ];
 }
 
 export class CodexAppServerApi {

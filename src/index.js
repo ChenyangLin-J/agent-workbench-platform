@@ -10,16 +10,21 @@ export {
   APP_SERVER_REQUEST_METHODS,
   CodexAppServerApi,
   appServerAttachmentInput,
+  appServerAttachmentInputs,
   appServerLaunchArgs,
   appServerRequestMethod,
   appServerRuntimeCapabilities,
 } from './runtime.js';
 
 export {
+  MAX_INLINE_TEXT_ATTACHMENT_BYTES,
   MAX_SESSION_ATTACHMENTS,
   MAX_SESSION_ATTACHMENT_BYTES,
+  createAttachmentEnvelopeInput,
   normalizeAttachmentPolicy,
   normalizeSessionAttachment,
+  parseAttachmentEnvelopes,
+  sessionItemAttachmentPresentation,
   sessionAttachmentKind,
   validateSessionAttachment,
 } from './attachments.js';
@@ -54,6 +59,11 @@ export {
   CapabilityInstaller,
   createCapabilityInstaller,
 } from './capability-installer.js';
+
+export {
+  CapabilityManager,
+  createCapabilityManager,
+} from './capability-manager.js';
 
 export {
   SideChatController,

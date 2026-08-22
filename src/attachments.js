@@ -1,5 +1,9 @@
 export const MAX_SESSION_ATTACHMENTS = 5;
 export const MAX_SESSION_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+export const MAX_INLINE_TEXT_ATTACHMENT_BYTES = 512 * 1024;
+
+const ATTACHMENT_ENVELOPE_TAG = 'agent-workbench-attachment';
+const ATTACHMENT_ENVELOPE_TAGS = '(?:agent-workbench|personal-workbench)-attachment';
 
 export function sessionAttachmentKind({ mimeType = '', name = '', path = '' } = {}) {
   const normalizedMime = String(mimeType || '').trim().toLowerCase();
@@ -42,6 +46,38 @@ export function validateSessionAttachment(value = {}, policy = {}) {
   return { ok: true, attachment };
 }
 
+export function createAttachmentEnvelopeInput({ name = 'attachment', kind = 'file', content = '' } = {}) {
+  const normalizedKind = kind === 'text' ? 'text' : 'file';
+  const encodedName = encodeURIComponent(String(name || 'attachment'));
+  return {
+    type: 'text',
+    text: `<${ATTACHMENT_ENVELOPE_TAG} name="${encodedName}" kind="${normalizedKind}">\n${String(content || '')}\n</${ATTACHMENT_ENVELOPE_TAG}>`,
+  };
+}
+
+export function parseAttachmentEnvelopes(value = '', { fallbackId = 'attachment' } = {}) {
+  const attachments = [];
+  const text = String(value || '').replace(attachmentEnvelopePattern(), (_match, encodedName, kind) => {
+    attachments.push({
+      id: `${fallbackId}-${attachments.length}`,
+      name: decodeAttachmentName(encodedName),
+      kind: 'file',
+      sourceKind: kind === 'text' ? 'text' : 'file',
+    });
+    return '\n';
+  }).replace(/^\s+|\s+$/g, '').replace(/\n{3,}/g, '\n\n');
+  return { text, attachments };
+}
+
+export function sessionItemAttachmentPresentation(item = {}) {
+  const content = typeof item.text === 'string'
+    ? item.text
+    : Array.isArray(item.content)
+      ? item.content.map((part) => part?.text || part?.inputText || '').filter(Boolean).join('\n')
+      : '';
+  return parseAttachmentEnvelopes(content, { fallbackId: String(item.id || 'message') });
+}
+
 function inputTypeForKind(kind) {
   if (kind === 'image') return 'localImage';
   if (kind === 'audio') return 'localAudio';
@@ -64,3 +100,14 @@ function positiveInteger(value, fallback) {
   return Number.isInteger(number) && number > 0 ? number : fallback;
 }
 
+function attachmentEnvelopePattern() {
+  return new RegExp(`\\n?<${ATTACHMENT_ENVELOPE_TAGS} name="([^"]*)" kind="(text|file)">[\\s\\S]*?<\\/${ATTACHMENT_ENVELOPE_TAGS}>\\n?`, 'g');
+}
+
+function decodeAttachmentName(value) {
+  try {
+    return decodeURIComponent(String(value || '')) || 'attachment';
+  } catch {
+    return 'attachment';
+  }
+}

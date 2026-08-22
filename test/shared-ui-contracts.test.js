@@ -4,8 +4,11 @@ import test from 'node:test';
 import {
   MAX_SESSION_ATTACHMENTS,
   MAX_SESSION_ATTACHMENT_BYTES,
+  createAttachmentEnvelopeInput,
   normalizeAttachmentPolicy,
   normalizeSessionAttachment,
+  parseAttachmentEnvelopes,
+  sessionItemAttachmentPresentation,
   sessionAttachmentKind,
   validateSessionAttachment,
 } from '../src/attachments.js';
@@ -61,4 +64,22 @@ test('attachment contract normalizes UI metadata without taking over product sto
     },
     reason: 'too_large', maxBytes: 100,
   });
+});
+
+test('attachment envelopes preserve Agent input while projecting transcript attachment cards', () => {
+  const input = createAttachmentEnvelopeInput({ name: '粘贴文本.txt', kind: 'text', content: '唯一测试内容' });
+  const parsed = parseAttachmentEnvelopes(`请总结\n${input.text}`, { fallbackId: 'message' });
+  assert.equal(parsed.text, '请总结');
+  assert.deepEqual(parsed.attachments, [{
+    id: 'message-0',
+    name: '粘贴文本.txt',
+    kind: 'file',
+    sourceKind: 'text',
+  }]);
+  const legacy = sessionItemAttachmentPresentation({
+    id: 'legacy',
+    content: [{ type: 'text', text: '<personal-workbench-attachment name="old.txt" kind="file">legacy</personal-workbench-attachment>' }],
+  });
+  assert.equal(legacy.text, '');
+  assert.equal(legacy.attachments[0].name, 'old.txt');
 });
