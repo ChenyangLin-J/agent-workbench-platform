@@ -1100,19 +1100,6 @@ export function SessionWorkspace({
         </agent-session-stream>
 
         <footer className="cwu-composer-wrap">
-          {awayFromLatest ? (
-            <button
-              aria-label={hasNewMessagesBelow
-                ? (labels.scrollToLatestWithNewMessages || '滚动到最新消息，有新消息')
-                : (labels.scrollToLatest || '滚动到最新消息')}
-              className={`cwu-scroll-latest ${hasNewMessagesBelow ? 'has-new-messages' : ''}`}
-              onClick={scrollToLatest}
-              type="button"
-            >
-              <span aria-hidden="true">↓</span>
-              {hasNewMessagesBelow ? <small>{labels.newMessages || '有新消息'}</small> : null}
-            </button>
-          ) : null}
           {view.queuedTurns.length ? (
             <section aria-label={labels.queuedTitle || '下一轮待发送'} className="cwu-queued-turns">
               <header><strong>{labels.queuedTitle || '下一轮待发送'}</strong><span>{view.queuedTurns.length} 条</span></header>
@@ -1266,6 +1253,20 @@ export function SessionWorkspace({
                 ) : <span className="cwu-execution-profile">{view.executionProfile.label}</span>}
               </div>
               <div>
+                {awayFromLatest ? (
+                  <button
+                    aria-label={hasNewMessagesBelow
+                      ? (labels.scrollToLatestWithNewMessages || '滚动到最新消息，有新消息')
+                      : (labels.scrollToLatest || '滚动到最新消息')}
+                    className={`cwu-scroll-latest ${hasNewMessagesBelow ? 'has-new-messages' : ''}`}
+                    onClick={scrollToLatest}
+                    title={hasNewMessagesBelow ? (labels.newMessages || '有新消息') : (labels.scrollToLatest || '滚动到最新消息')}
+                    type="button"
+                  >
+                    <span aria-hidden="true">↓</span>
+                    {hasNewMessagesBelow ? <small>{labels.newMessages || '有新消息'}</small> : null}
+                  </button>
+                ) : null}
                 {composer.showSecondary ? (
                   <button className="cwu-button" disabled={!canSubmit} onClick={() => submit(composer.secondaryMode)} type="button">
                     {composer.secondaryLabel}
