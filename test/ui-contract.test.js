@@ -183,9 +183,8 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /target\.scrollTo\(\{ top: target\.scrollHeight, behavior: 'smooth' \}\)/);
   assert.match(source, /labels\.newMessages \|\| '有新消息'/);
   assert.match(styles, /\.cwu-scroll-latest/);
-  assert.match(source, /cwu-composer-footer[\s\S]*cwu-scroll-latest/);
-  assert.match(styles, /\.cwu-scroll-latest \{[^}]*flex: 0 0 auto/);
-  assert.doesNotMatch(styles, /\.cwu-scroll-latest \{[^}]*position: (?:absolute|fixed|sticky)/);
+  assert.match(styles, /\.cwu-scroll-latest \{[^}]*align-self: center/);
+  assert.match(styles, /\.cwu-scroll-latest \{[^}]*margin: 0 auto 8px/);
   assert.match(source, /supportedEfforts\.includes\(view\.executionProfile\.reasoningEffort\)/);
   const hooks = await readFile(hooksUrl, 'utf8');
   assert.match(source, /useSessionUserInput/);

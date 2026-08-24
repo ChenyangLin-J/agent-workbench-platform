@@ -275,7 +275,7 @@
 .cwu-technical-list pre { max-height: 260px; margin: 0; overflow: auto; white-space: pre-wrap; background: var(--cwu-soft); padding: 10px 12px; color: var(--cwu-muted); font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cwu-technical-list .cwu-message-media { margin: 10px 12px 12px; }
 .cwu-composer-wrap { min-width: 0; position: sticky; z-index: 8; bottom: 0; display: flex; flex-direction: column; pointer-events: none; padding: 0 20px 22px; background: linear-gradient(transparent, var(--cwu-bg) 35%); }
-.cwu-scroll-latest { flex: 0 0 auto; min-width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--cwu-border); border-radius: 9px; background: var(--cwu-surface); color: var(--cwu-text); padding: 0 9px; font: inherit; cursor: pointer; }
+.cwu-scroll-latest { order: -2; align-self: center; min-width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin: 0 auto 8px; border: 1px solid var(--cwu-border); border-radius: 999px; background: color-mix(in srgb, var(--cwu-surface) 96%, transparent); color: var(--cwu-text); padding: 0 11px; box-shadow: 0 6px 20px rgba(40, 34, 28, .16); font: inherit; cursor: pointer; pointer-events: auto; backdrop-filter: blur(8px); }
 .cwu-scroll-latest:hover, .cwu-scroll-latest:focus-visible { border-color: color-mix(in srgb, var(--cwu-accent) 55%, var(--cwu-border)); color: var(--cwu-accent); outline: 0; }
 .cwu-scroll-latest span { font-size: 17px; line-height: 1; }
 .cwu-scroll-latest small { font-size: 10px; font-weight: 650; white-space: nowrap; }
