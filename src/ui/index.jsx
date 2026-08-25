@@ -38,7 +38,15 @@ const MARKDOWN_REHYPE_PLUGINS = [[rehypeKatex, { strict: false }]];
 export function CapabilityPanel({ manager, actions = {}, labels = {} }) {
   const view = useMemo(() => normalizeCapabilityManagerViewModel(manager), [manager]);
   const [pendingId, setPendingId] = useState(null);
+  const [componentPreview, setComponentPreview] = useState(null);
   const kinds = ['skill-source', 'mcp-server', 'cli-tool', 'credential-provider'];
+
+  useEffect(() => {
+    if (!componentPreview) return undefined;
+    const closeOnEscape = (event) => { if (event.key === 'Escape') setComponentPreview(null); };
+    globalThis.addEventListener?.('keydown', closeOnEscape);
+    return () => globalThis.removeEventListener?.('keydown', closeOnEscape);
+  }, [componentPreview]);
 
   async function toggle(item) {
     if (!actions.onToggle || pendingId) return;
@@ -58,6 +66,17 @@ export function CapabilityPanel({ manager, actions = {}, labels = {} }) {
       if (confirmed) await actions.onExecute(item.id, plan.operation, true);
     } finally {
       setPendingId(null);
+    }
+  }
+
+  async function inspectComponent(item, component) {
+    if (!actions.onInspectComponent) return;
+    setComponentPreview({ title: component, loading: true, content: '' });
+    try {
+      const preview = await actions.onInspectComponent(item.id, component);
+      setComponentPreview({ title: preview?.title || component, loading: false, content: String(preview?.content || '') });
+    } catch (error) {
+      setComponentPreview({ title: component, loading: false, error: error?.message || String(error), content: '' });
     }
   }
 
@@ -89,6 +108,14 @@ export function CapabilityPanel({ manager, actions = {}, labels = {} }) {
                       <p className="cwu-capability-health"><i />{item.enabled ? item.available ? labels.ready || 'Enabled · available' : labels.needsSetup || 'Enabled · setup required' : labels.disabled || 'Disabled'}</p>
                       {item.detail ? <p>{item.detail}</p> : null}
                       {item.requiredBy.length ? <small>{labels.requiredBy || 'Required by'}: {item.requiredBy.join(', ')}</small> : item.dependencies.length ? <small>{labels.dependencies || 'Dependencies'}: {item.dependencies.join(', ')}</small> : null}
+                      {item.kind === 'skill-source' && item.components.length ? (
+                        <details className="cwu-capability-components">
+                          <summary>{labels.components || 'View Skills'} ({item.components.length})</summary>
+                          <div>{item.components.map((component) => (
+                            <button disabled={!actions.onInspectComponent} key={component} onClick={() => inspectComponent(item, component)} type="button">{component}</button>
+                          ))}</div>
+                        </details>
+                      ) : null}
                       {item.action?.instructions.map((instruction) => <code key={instruction}>{instruction}</code>)}
                     </div>
                     <div className="cwu-capability-actions">
@@ -102,6 +129,21 @@ export function CapabilityPanel({ manager, actions = {}, labels = {} }) {
           );
         })}
       </div>
+      {componentPreview ? (
+        <div className="cwu-capability-preview-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setComponentPreview(null); }}>
+          <section aria-modal="true" className="cwu-capability-preview" role="dialog">
+            <header>
+              <div><span>SKILL.md</span><h2>{componentPreview.title}</h2></div>
+              <button aria-label={labels.closePreview || 'Close'} onClick={() => setComponentPreview(null)} type="button">×</button>
+            </header>
+            <div className="cwu-capability-preview-content">
+              {componentPreview.loading ? <p>{labels.loadingPreview || 'Loading…'}</p> : null}
+              {componentPreview.error ? <p role="alert">{componentPreview.error}</p> : null}
+              {!componentPreview.loading && !componentPreview.error ? <ReactMarkdown remarkPlugins={MARKDOWN_REMARK_PLUGINS}>{componentPreview.content}</ReactMarkdown> : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }

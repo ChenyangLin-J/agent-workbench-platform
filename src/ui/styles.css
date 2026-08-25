@@ -391,6 +391,19 @@
 .cwu-capability-actions [role="switch"] span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: white; transition: transform .15s ease; }
 .cwu-capability-actions [role="switch"][aria-checked="true"] span { background: var(--cwu-accent); }
 .cwu-capability-actions [role="switch"][aria-checked="true"] span::after { transform: translateX(14px); }
+.cwu-capability-components { margin-top: 10px; }
+.cwu-capability-components summary { width: fit-content; color: var(--cwu-accent); cursor: pointer; font-size: 10px; }
+.cwu-capability-components > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cwu-capability-components button { border: 1px solid var(--cwu-border); border-radius: 999px; background: var(--cwu-soft); padding: 4px 8px; color: var(--cwu-text); cursor: pointer; font: inherit; font-size: 9px; }
+.cwu-capability-components button:disabled { cursor: default; opacity: .5; }
+.cwu-capability-preview-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; background: rgba(20, 18, 16, .36); padding: 32px; }
+.cwu-capability-preview { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(860px, 100%); max-height: min(780px, calc(100vh - 64px)); border: 1px solid var(--cwu-border); border-radius: 18px; background: var(--cwu-surface); box-shadow: 0 20px 70px rgba(20, 18, 16, .24); overflow: hidden; }
+.cwu-capability-preview > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--cwu-border); padding: 16px 20px; }
+.cwu-capability-preview > header span { color: var(--cwu-muted); font-size: 10px; }
+.cwu-capability-preview > header button { border: 0; background: transparent; color: var(--cwu-muted); cursor: pointer; font-size: 24px; line-height: 1; }
+.cwu-capability-preview-content { min-height: 180px; overflow: auto; padding: 22px 26px 32px; color: var(--cwu-text); font-size: 13px; line-height: 1.65; }
+.cwu-capability-preview-content pre { overflow: auto; border-radius: 10px; background: var(--cwu-soft); padding: 12px; }
+.cwu-capability-preview-content code { font-size: .9em; }
 .cwu-side-chat-empty { display: grid; grid-row: 2 / -1; place-items: center; align-content: center; gap: 8px; min-height: 260px; padding: 28px 18px; color: var(--cwu-muted); text-align: center; }
 .cwu-side-chat-empty strong { color: var(--cwu-text); }
 .cwu-side-chat-empty p { max-width: 280px; margin: 0; font-size: 11px; line-height: 1.5; }

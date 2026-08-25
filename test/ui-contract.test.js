@@ -34,15 +34,18 @@ test('Capability UI normalizes common and custom host state without credential v
     profileId: 'personal',
     capabilities: [{
       id: 'cli.node', title: 'Node.js', kind: 'cli-tool', scope: 'common', version: '1', enabled: true,
-      available: true, status: 'healthy', dependencies: ['credentials.node'], requiredBy: [],
+      available: true, status: 'healthy', dependencies: ['credentials.node'], requiredBy: [], components: ['one'],
     }],
   });
   assert.deepEqual(view.counts, { common: 1, custom: 0, enabled: 1, healthy: 1 });
   assert.equal(view.capabilities[0].kindLabel, 'CLI');
+  assert.deepEqual(view.capabilities[0].components, ['one']);
   assert.match(source, /export function CapabilityPanel/);
+  assert.match(source, /actions\.onInspectComponent/);
   assert.match(source, /actions\.onPlan/);
   assert.match(source, /actions\.onExecute/);
   assert.match(styles, /\.cwu-capability-panel/);
+  assert.match(styles, /\.cwu-capability-preview/);
 });
 
 test('Session UI extracts safe inline visualizations and keeps message media', () => {
