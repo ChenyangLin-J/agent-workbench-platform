@@ -1,30 +1,28 @@
 # Agent Workbench 共享架构
 
 文档类型：重构 spec  
-状态：当前完整版；定义公共 Agent 能力与各产品外壳的边界，以及从现有实现迁移到四个宿主的顺序。
+状态：当前完整版；定义公共 Agent 能力、活动消费者与冻结参考实现的边界和迁移顺序。
 
 ## 当前问题
 
-`@agent-workbench/platform` 已经共享 Codex App Server、Session Kernel、附件、Subagent、Side Chat、Capability 原语和 React Session UI。当前重构继续收紧消费者边界：附件消息协议、Capability 状态机/UI、Codex Skill roots 生命周期与 Session 分页语义必须由 Platform 统一，消费者只注入存储、健康检查、宿主副作用与产品上下文。
+`@agent-workbench/platform` 已经共享 Codex App Server、Session Kernel、附件、Subagent、Side Chat、Capability 原语、Skill 内容预览和 React Session UI。Personal 是当前 canary；下一阶段的核心问题是让 Agent Terminal Web 与后续 Superset Side Agent 通过同一公共合约接入，而不是复制 Personal adapter 或运行目录。
 
-这会让一个用户能力在不同宿主中形成多套实现。当前最明显的例子是 Side Chat：Personal 自己维护 fork、记录、事件订阅和原生 DOM 面板；Agent Terminal Web 也有独立实现；Solvely 尚未接入。修复其中一套不会自动修复其他宿主。
-
-共享的目标不是让四个产品长得一样，而是让同一项 Agent 能力只实现一次，并允许每个产品保留自己的导航、数据、权限、视觉与业务内容。
+共享的目标不是让各产品长得一样，而是让同一项 Agent 能力只实现一次，并允许每个产品保留自己的导航、数据、权限、视觉与业务内容。Solvely Workbench 已冻结，只作为现有边界参考，不再进入当前升级计划。
 
 ## 已确认的现状
 
 | 宿主 | 当前技术形态 | Platform 使用情况 | 产品边界 |
 | --- | --- | --- | --- |
-| Personal Workbench | 原生页面外壳 + React `SessionWorkspace` | 固定 `v0.6.4` | 项目、事项、个人状态、记忆和资产 |
-| Solvely Workbench | Next.js + React | 固定 `v0.3.9`；使用 Session UI 和部分附件合约；Subagent 关闭 | 业务导航、报告、SQL、证据及业务 Tools/Skills |
+| Personal Workbench | 原生页面外壳 + React `SessionWorkspace` | 固定 `v0.6.5`；当前 canary | 项目、事项、个人状态、记忆和资产 |
+| Solvely Workbench | Next.js + React | 冻结在 `v0.3.9`；不再升级 | 业务导航、报告、SQL、证据及业务 Tools/Skills |
 | Agent Terminal Web | Express + WebSocket + 原生页面，同时支持 PTY Terminal 与 App Server | 尚未使用 Platform；独立实现 App Server、Session 与 Side Chat | 手机优先入口、Terminal、记忆和多执行主机 |
 | Superset Side Agent | 待接入的轻量侧边面板 | 尚未接入 | Dashboard、Chart、筛选条件和 Superset 权限上下文 |
 
 代码证据：
 
-- Platform 的 `SessionWorkspace` 已经拥有 transcript、Composer、审批、附件和 Subagent 摘要，但没有 Side Chat Feature。
-- Personal 的 Side Chat API 位于 `src/server.mjs`，对应页面状态与渲染位于 `public/app.js`；Subagent 详情链路也由 Personal 自己实现。
-- Solvely 在 `web/lib/core-session-config.js` 中将 `subagents` 配置为 `hidden`，其 `SessionWorkspace` 只传入通用 Session 与业务扩展内容。
+- Platform 的 `SessionWorkspace`、`SideChatPanel`、Subagent 详情和 `CapabilityPanel` 已提供共享 React UI 与公共动作合约。
+- Personal 通过自己的 API、持久化、Runtime 与健康检查 adapter 使用这些公共能力，不读取 Platform 同级源码。
+- Solvely 的现有配置与 Canvas 只保留为冻结边界参考，不作为当前验收宿主。
 - Agent Terminal Web 的公开仓库没有 `@agent-workbench/platform` 依赖，并在自己的 `server.js` 与 `public/app.js` 中维护 Side Chat。
 
 ## 目标边界
@@ -113,7 +111,7 @@ Subagent 与 Side Chat 保持不同数据模型。Platform 继续从 Codex 父�
 
 产品只决定是否显示、入口位置和当前 Session 的业务归属，不复制 Subagent 解析与链路渲染。
 
-## 四个宿主的装配
+## 宿主装配
 
 | Feature | Personal | Solvely | Agent Terminal | Superset |
 | --- | --- | --- | --- | --- |
@@ -125,23 +123,24 @@ Subagent 与 Side Chat 保持不同数据模型。Platform 继续从 Codex 父�
 | Browser/Realtime | Personal 配置 | 产品配置 | 产品配置 | hidden |
 | 产品扩展 | 项目/事项 | 报告/SQL/证据 | Terminal/记忆/多主机 | Chart/筛选条件 |
 
-这里的 `full`、`lightweight` 和 `hidden` 是宿主 profile，不产生不同 Feature 实现。
+这里的 `full`、`lightweight` 和 `hidden` 是宿主 profile，不产生不同 Feature 实现。Solvely 列仅记录冻结状态，不表示后续会继续迁移。
 
 ## 不改什么
 
 - 不把 Personal 与 Solvely 的页面外壳、导航和业务内容合并。
 - 不让浏览器直接连接或启动 Codex App Server；各产品后端仍拥有执行连接与鉴权。
 - 不把产品数据库或权限模型迁入 Platform。
-- 不在本轮同时迁移四个宿主；能力插件只提供声明与健康合约，不替代各宿主的执行和授权逻辑。
+- 不在本轮迁移冻结的 Solvely；能力插件只提供声明与健康合约，不替代各宿主的执行和授权逻辑。
 - 不复制 DeepSeek Harness 的完整插件框架；只采用 base feature 加宿主 profile 的组合原则。
 
 ## 迁移顺序
 
-1. **公共合约**：在 Platform 增加 Side Chat Feature、Subagent 详情合约、能力配置与 project-free/project-scoped fixture；作为新的 minor compatibility boundary 发布。
-2. **Personal 验证**：保持现有 API 和数据不变，先用 adapter 接入共享 controller/View Model/React 面板，再删除被替代的前端状态和渲染代码。
-3. **Solvely 验证**：升级到同一 minor，保持业务 Canvas 与扩展 slot，不默认打开新能力；通过配置逐项启用 Side Chat/Subagent。
-4. **Agent Terminal 迁移**：前端迁到 React 后接入相同 Feature；PTY、移动布局、记忆和多主机继续归产品所有。
-5. **Superset 接入**：使用 lightweight profile 和独立后端 adapter，只暴露当前 Dashboard 所需能力。
+1. **公共合约（已完成）**：Platform 已发布 Side Chat Feature、Subagent 详情、能力配置、Skill 内容预览与 project-free/project-scoped fixture。
+2. **Personal canary（已接入，持续验证）**：现有 API 和数据保持在产品仓库，通过 adapter 使用共享 controller/View Model/React 面板；真实使用问题先在 Personal 验收，再判断是否属于公共层。
+3. **Agent Terminal 迁移**：前端迁到 React 后接入相同 Feature；PTY、移动布局、记忆和多主机继续归产品所有。
+4. **Superset 接入**：使用 lightweight profile 和独立后端 adapter，只暴露当前 Dashboard 所需能力。
+
+Solvely Workbench 保持冻结版本，不属于当前迁移步骤。
 
 每一步都必须在当前宿主通过后才能删除其旧实现；不得先做一次跨仓库批量替换。
 
@@ -150,7 +149,7 @@ Subagent 与 Side Chat 保持不同数据模型。Platform 继续从 Codex 父�
 - Platform 单测同时覆盖 project-free 与 project-scoped Session。
 - 同一组 Side Chat 合约测试必须能运行在内存 store 与至少一个真实产品 adapter 上。
 - 刷新、切换 Session、服务重启、Runtime 丢失和显式删除分别验证，不能只测正常问答。
-- Personal 与 Solvely 的浏览器验收确认共享 Feature 行为一致，同时确认产品导航与扩展内容没有变化。
+- Personal 先作为真实 canary 完成浏览器验收；Agent Terminal Web 接入时复用同一组合约测试，并确认 PTY、移动布局和多主机能力没有变化。
 - 每个消费者固定明确的 Platform 版本；升级证据记录测试命令、关键输出和浏览器截图。
 
 ## 风险
