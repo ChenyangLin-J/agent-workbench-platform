@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  absolutePlaywrightArtifactLinks,
   createPlaywrightMcpProxy,
   PLAYWRIGHT_MCP_TOOLS,
   SharedOnDemandMcpBackend,
@@ -82,6 +83,18 @@ test("shared Playwright tool discovery remains manifest-only", () => {
   assert.ok(PLAYWRIGHT_MCP_TOOLS.length > 0);
   assert.ok(PLAYWRIGHT_MCP_TOOLS.some((tool) => tool.name === "browser_navigate"));
   assert.ok(PLAYWRIGHT_MCP_TOOLS.some((tool) => tool.name === "browser_snapshot"));
+});
+
+test("Playwright artifact links use the configured absolute output directory", () => {
+  const result = absolutePlaywrightArtifactLinks({
+    content: [
+      { type: "text", text: "- [Screenshot](./capture%20one.png)" },
+      { type: "image", data: "abc", mimeType: "image/png" },
+    ],
+  }, "/tmp/paw browser-output");
+
+  assert.equal(result.content[0].text, "- [Screenshot](/tmp/paw%20browser-output/capture%20one.png)");
+  assert.equal(result.content[1].type, "image");
 });
 
 async function waitFor(predicate, timeoutMs = 500) {

@@ -36,11 +36,14 @@ test('Session UI delegates message links and read-only document previews to its 
 
 test('Session UI only offers host reveal actions for local file targets', () => {
   assert.equal(isLocalFileHref('/tmp/report.md'), true);
+  assert.equal(isLocalFileHref('./capture.png'), true);
+  assert.equal(isLocalFileHref('../capture.png'), true);
   assert.equal(isLocalFileHref('C:\\reports\\report.md'), true);
   assert.equal(isLocalFileHref('file:///tmp/report.md'), true);
   assert.equal(isLocalFileHref('//example.com/report.md'), false);
   assert.equal(isLocalFileHref('https://example.com/report.md'), false);
   assert.equal(isLocalFileHref('codex://threads/one'), false);
+  assert.equal(localFileBrowserHref('./capture.png'), './capture.png');
   assert.equal(localFileBrowserHref('/Users/mac/report.md'), 'file:///Users/mac/report.md');
   assert.equal(localFileBrowserHref('C:\\reports\\report.md'), 'file:///C:/reports/report.md');
   assert.equal(localFileBrowserHref('file:///tmp/report.md'), 'file:///tmp/report.md');

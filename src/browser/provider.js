@@ -1,5 +1,6 @@
 export { ensureMacChrome, isCdpReady } from "./mac-chrome-handoff.js";
 export {
+  absolutePlaywrightArtifactLinks,
   createPlaywrightMcpProxy,
   createPlaywrightProviderConnection,
   PLAYWRIGHT_MCP_TOOLS,

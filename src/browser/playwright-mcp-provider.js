@@ -80,8 +80,9 @@ export async function createPlaywrightProviderConnection({
 } = {}) {
   if (typeof ensureBrowser !== "function") throw new TypeError("ensureBrowser must be a function.");
   if (!cdpEndpoint || !outputDir) throw new TypeError("cdpEndpoint and outputDir are required.");
+  const resolvedOutputDir = path.resolve(outputDir);
   await ensureBrowser();
-  await mkdir(outputDir, { recursive: true, mode: 0o700 });
+  await mkdir(resolvedOutputDir, { recursive: true, mode: 0o700 });
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [
@@ -89,19 +90,24 @@ export async function createPlaywrightProviderConnection({
       "--cdp-endpoint",
       cdpEndpoint,
       "--output-dir",
-      outputDir,
+      resolvedOutputDir,
       "--output-max-size",
       DEFAULT_OUTPUT_MAX_SIZE,
       "--codegen",
       "none",
     ],
+    cwd: resolvedOutputDir,
     stderr: "pipe",
   });
   transport.stderr?.on("data", () => {});
   const client = new Client({ name: clientName, version: serverVersion });
   try {
     await client.connect(transport);
-    return { client, pid: transport.pid };
+    return {
+      client,
+      pid: transport.pid,
+      redact: (result) => absolutePlaywrightArtifactLinks(result, resolvedOutputDir),
+    };
   } catch (error) {
     await transport.close().catch(() => {});
     logger(`${providerIdFromClient(clientName)}-provider-start-failed`, {
@@ -109,6 +115,45 @@ export async function createPlaywrightProviderConnection({
     });
     throw error;
   }
+}
+
+export function absolutePlaywrightArtifactLinks(value, outputDir) {
+  if (typeof value === "string") return absolutePlaywrightArtifactText(value, outputDir);
+  if (!value || typeof value !== "object") return value;
+  return {
+    ...value,
+    content: Array.isArray(value.content)
+      ? value.content.map((item) => item?.type === "text"
+        ? { ...item, text: absolutePlaywrightArtifactText(item.text, outputDir) }
+        : item)
+      : value.content,
+  };
+}
+
+function absolutePlaywrightArtifactText(value, outputDir) {
+  const root = path.resolve(outputDir);
+  return String(value ?? "").replace(/\]\(\.\/([^)\r\n]+)\)/g, (match, relativeName) => {
+    const absolutePath = path.resolve(root, decodeSafe(relativeName));
+    if (!isPathWithin(root, absolutePath)) return match;
+    return `](${encodeLocalPath(absolutePath)})`;
+  });
+}
+
+function decodeSafe(value) {
+  try {
+    return decodeURI(value);
+  } catch {
+    return value;
+  }
+}
+
+function encodeLocalPath(value) {
+  return value.split(path.sep).map((segment) => encodeURIComponent(segment)).join("/");
+}
+
+function isPathWithin(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
 }
 
 function providerIdFromClient(clientName) {

@@ -39,6 +39,7 @@ richTextTurndown.remove(['script', 'style', 'noscript', 'template', 'svg', 'ifra
 export function isLocalFileHref(value) {
   const href = String(value ?? '').trim();
   return (href.startsWith('/') && !href.startsWith('//'))
+    || /^\.\.?[\\/]/.test(href)
     || /^[a-z]:[\\/]/i.test(href)
     || /^file:\/\//i.test(href);
 }
@@ -46,6 +47,7 @@ export function isLocalFileHref(value) {
 export function localFileBrowserHref(value) {
   const href = String(value ?? '').trim();
   if (!isLocalFileHref(href) || /^file:\/\//i.test(href)) return href;
+  if (/^\.\.?[\\/]/.test(href)) return href;
   if (/^[a-z]:[\\/]/i.test(href)) return `file:///${href.replace(/\\/g, '/')}`;
   return `file://${href}`;
 }
