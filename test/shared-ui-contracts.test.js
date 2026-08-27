@@ -82,4 +82,21 @@ test('attachment envelopes preserve Agent input while projecting transcript atta
   });
   assert.equal(legacy.text, '');
   assert.equal(legacy.attachments[0].name, 'old.txt');
+
+  const rich = createAttachmentEnvelopeInput({
+    id: 'attachment-123',
+    name: '粘贴内容.md',
+    kind: 'text',
+    mimeType: 'text/markdown',
+    size: 42,
+    content: '## 标题',
+  });
+  assert.deepEqual(parseAttachmentEnvelopes(rich.text).attachments, [{
+    id: 'attachment-123',
+    name: '粘贴内容.md',
+    kind: 'file',
+    sourceKind: 'text',
+    mimeType: 'text/markdown',
+    size: 42,
+  }]);
 });

@@ -71,6 +71,20 @@ test('App Server attachment inputs inline text and pair generic files with a tra
     mimeType: 'text/plain', name: 'large.txt', path: '/tmp/large.txt', textContent: 'too large', size: 9,
     maxInlineTextBytes: 4,
   }), { code: 'TEXT_ATTACHMENT_TOO_LARGE' });
+
+  const markdownInputs = appServerAttachmentInputs({
+    id: 'markdown-id', mimeType: 'text/markdown', name: 'rich.md', path: '/tmp/rich.md', textContent: '## 标题', size: 9,
+  });
+  assert.equal(markdownInputs.length, 1);
+  assert.match(markdownInputs[0].text, /id="markdown-id"/);
+  assert.match(markdownInputs[0].text, /mime="text%2Fmarkdown"/);
+
+  const imageInputs = appServerAttachmentInputs({
+    id: 'image-id', mimeType: 'image/png', name: 'chart.png', path: '/tmp/chart.png', size: 12,
+  });
+  assert.equal(imageInputs.length, 2);
+  assert.match(imageInputs[0].text, /kind="image"/);
+  assert.deepEqual(imageInputs[1], { type: 'localImage', path: '/tmp/chart.png' });
 });
 
 test('one stateless API serves Agent and Personal transports without sharing account state', async () => {

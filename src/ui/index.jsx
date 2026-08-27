@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import rehypeKatex from 'rehype-katex';
 import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import '../browser/realtime-controller.js';
@@ -21,6 +22,7 @@ import {
   normalizeSessionViewModel,
   normalizeSideChatPanelViewModel,
   renderFileCitationsAsMarkdown,
+  richClipboardText,
   sessionTranscriptAwayFromLatest,
   sessionStatusTone,
   shouldConvertPastedTextToAttachment,
@@ -34,6 +36,7 @@ export { useSessionUserInput } from '../ui-hooks.js';
 
 const SESSION_COMPOSER_TEXT_LIMIT = 12000;
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]];
+const USER_MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const MARKDOWN_REHYPE_PLUGINS = [[rehypeKatex, { strict: false }]];
 
 export function CapabilityPanel({ manager, actions = {}, labels = {} }) {
@@ -963,15 +966,32 @@ export function SessionWorkspace({
       await uploadFiles(files);
       return;
     }
-    const text = event.clipboardData?.getData('text/plain') || '';
+    const plainText = event.clipboardData?.getData('text/plain') || '';
+    const richHtml = event.clipboardData?.getData('text/html') || '';
+    const text = richClipboardText(richHtml, plainText);
     if (!shouldConvertPastedTextToAttachment(draft, text, {
       textLimit: SESSION_COMPOSER_TEXT_LIMIT,
-    })) return;
+    })) {
+      if (!richHtml.trim() || !text) return;
+      event.preventDefault();
+      const target = event.currentTarget;
+      const value = target.value || draft;
+      const start = Number.isInteger(target.selectionStart) ? target.selectionStart : value.length;
+      const end = Number.isInteger(target.selectionEnd) ? target.selectionEnd : start;
+      const nextDraft = `${value.slice(0, start)}${text}${value.slice(end)}`;
+      setDraft(nextDraft);
+      actions.onDraftChange?.(nextDraft);
+      requestAnimationFrame(() => {
+        target.focus();
+        target.setSelectionRange(start + text.length, start + text.length);
+      });
+      return;
+    }
     event.preventDefault();
     await uploadFiles([new File(
       [text],
-      `粘贴文本-${compactLocalTimestamp(new Date())}.txt`,
-      { type: 'text/plain' },
+      `粘贴${richHtml.trim() ? '内容' : '文本'}-${compactLocalTimestamp(new Date())}.${richHtml.trim() ? 'md' : 'txt'}`,
+      { type: richHtml.trim() ? 'text/markdown' : 'text/plain' },
     )]);
   }
 
@@ -1086,6 +1106,7 @@ export function SessionWorkspace({
                     message={message}
                     onEditMessage={actions.onEditMessage}
                     onForkMessage={actions.onForkMessage}
+                    onOpenAttachment={actions.onOpenAttachment}
                     onOpenLink={actions.onOpenLink}
                     onRevealLink={actions.onRevealLink}
                     revealLabel={labels.revealFile}
@@ -1542,14 +1563,19 @@ function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink, onRevealLi
     >
       <section className="cwu-document-preview">
         <header>
-          <div><span>本地文件 · 只读</span><h2>{file.name}</h2></div>
+          <div><span>{file.attachmentId ? 'Session 附件 · 只读' : '本地文件 · 只读'}</span><h2>{file.name}</h2></div>
           <div>
+            {file.downloadUrl ? <a className="cwu-button" download={file.name} href={file.downloadUrl}>下载</a> : null}
             {onOpenExternal ? <button className="cwu-button" onClick={() => onOpenExternal(file)} type="button">外部打开</button> : null}
             <button aria-label="关闭文件预览" className="cwu-document-close" onClick={onClose} type="button">×</button>
           </div>
         </header>
         <div className="cwu-document-body">
-          {file.format === 'spreadsheet' ? (
+          {file.format === 'image' ? (
+            <div className="cwu-document-image"><img alt={file.name} src={file.src} /></div>
+          ) : file.format === 'pdf' ? (
+            <iframe className="cwu-document-pdf" src={file.src} title={file.name} />
+          ) : file.format === 'spreadsheet' ? (
             <SpreadsheetPreview file={file} />
           ) : file.format === 'markdown' ? (
             <div className="cwu-document-content cwu-message-body">
@@ -1606,6 +1632,7 @@ function Message({
   message,
   onEditMessage,
   onForkMessage,
+  onOpenAttachment,
   onOpenLink,
   onRevealLink,
   revealLabel,
@@ -1638,18 +1665,16 @@ function Message({
         attachment.kind !== 'image' || !message.media?.length
       ))
     : [];
-  const defaultContent = isUser
-    ? markdownContent
-    : <>
-        {markdownContent ? (
-          <ReactMarkdown
-            components={markdownComponents}
-            rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
-            remarkPlugins={MARKDOWN_REMARK_PLUGINS}
-          >{markdownContent}</ReactMarkdown>
-        ) : null}
-        {!markdownContent && !visualizations.length && !directiveContent.directives.length ? '…' : null}
-      </>;
+  const defaultContent = <>
+    {markdownContent ? (
+      <ReactMarkdown
+        components={markdownComponents}
+        rehypePlugins={isUser ? [] : MARKDOWN_REHYPE_PLUGINS}
+        remarkPlugins={isUser ? USER_MARKDOWN_REMARK_PLUGINS : MARKDOWN_REMARK_PLUGINS}
+      >{markdownContent}</ReactMarkdown>
+    ) : null}
+    {!markdownContent && !visualizations.length && !directiveContent.directives.length ? '…' : null}
+  </>;
   const customContent = renderContent?.({
     content: markdownContent,
     defaultContent,
@@ -1721,7 +1746,7 @@ function Message({
           ) : null}
         </div>
       ) : null}
-      {message.media?.length ? <MediaGallery items={message.media} /> : null}
+      {message.media?.length ? <MediaGallery items={message.media} onOpenAttachment={onOpenAttachment} /> : null}
       {visualizations.map((item) => (
         <div className={`cwu-inline-visualization${item.mode === 'wide' ? ' is-wide' : ''}`} key={item.path || item.file}>
           <iframe
@@ -1737,10 +1762,17 @@ function Message({
       {visibleAttachments.length ? (
         <div className="cwu-message-attachments" aria-label="本轮附件">
           {visibleAttachments.map((attachment) => (
-            <span key={attachment.id} title={attachment.name}>
+            <button
+              className="cwu-message-attachment"
+              disabled={!onOpenAttachment}
+              key={attachment.id}
+              onClick={() => onOpenAttachment?.(attachment, message)}
+              title={onOpenAttachment ? `打开 ${attachment.name}` : attachment.name}
+              type="button"
+            >
               <i aria-hidden="true">{attachment.kind === 'image' ? '▧' : attachment.kind === 'audio' ? '♪' : '▤'}</i>
-              {attachment.name}
-            </span>
+              <span>{attachment.name}</span>
+            </button>
           ))}
         </div>
       ) : null}
@@ -1783,10 +1815,24 @@ function RemarkDirectives({ directives, onOpenLink }) {
   </div>;
 }
 
-function MediaGallery({ items }) {
+function MediaGallery({ items, onOpenAttachment = null }) {
   return (
     <div className="cwu-message-media" aria-label="消息图片">
-      {items.map((item) => (
+      {items.map((item) => onOpenAttachment ? (
+        <button
+          aria-label={`查看图片：${item.name}`}
+          key={item.id}
+          onClick={() => onOpenAttachment({
+            id: item.attachmentId || item.id,
+            name: item.name,
+            kind: 'image',
+            mimeType: item.mimeType,
+            size: item.size,
+            previewUrl: item.src,
+          })}
+          type="button"
+        ><img alt={item.alt} loading="lazy" src={item.src} /></button>
+      ) : (
         <a href={item.src} key={item.id} rel="noreferrer" target="_blank">
           <img alt={item.alt} loading="lazy" src={item.src} />
         </a>

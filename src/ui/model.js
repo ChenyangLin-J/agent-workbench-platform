@@ -3,6 +3,21 @@ import {
   sessionMessagePresentation,
   sessionStatusTone as sharedSessionStatusTone,
 } from '../session.js';
+import TurndownService from 'turndown';
+import { gfm as turndownGfm } from 'turndown-plugin-gfm';
+
+const richTextTurndown = new TurndownService({
+  bulletListMarker: '-',
+  codeBlockStyle: 'fenced',
+  emDelimiter: '*',
+  headingStyle: 'atx',
+  strongDelimiter: '**',
+});
+richTextTurndown.use(turndownGfm);
+richTextTurndown.addRule('styledStrong', {
+  filter: (node) => node.nodeName === 'SPAN' && /(?:bold|[6-9]00)/i.test(node.style?.fontWeight || ''),
+  replacement: (content) => content.trim() ? `**${content}**` : content,
+});
 
 export function isLocalFileHref(value) {
   const href = String(value ?? '').trim();
@@ -60,6 +75,10 @@ export function normalizeSessionViewModel(value = {}) {
                 id: String(attachment?.id || `attachment-${index}-${attachmentIndex}`),
                 name: String(attachment?.name || '附件'),
                 kind: ['image', 'audio', 'file'].includes(attachment?.kind) ? attachment.kind : 'file',
+                mimeType: String(attachment?.mimeType || 'application/octet-stream').toLowerCase(),
+                size: Number.isFinite(Number(attachment?.size)) ? Number(attachment.size) : 0,
+                sourceKind: String(attachment?.sourceKind || ''),
+                previewUrl: attachment?.previewUrl ? String(attachment.previewUrl) : '',
               }))
             : [],
           media: normalizeMedia(message?.media, `message-${index}`),
@@ -290,6 +309,10 @@ function normalizeMedia(value, fallbackPrefix) {
         kind: media?.kind === 'image' ? 'image' : 'file',
         src: String(media?.src || ''),
         alt: String(media?.alt || media?.name || '图片'),
+        name: String(media?.name || media?.alt || '图片'),
+        attachmentId: media?.attachmentId ? String(media.attachmentId) : '',
+        mimeType: String(media?.mimeType || 'image/*').toLowerCase(),
+        size: Number.isFinite(Number(media?.size)) ? Number(media.size) : 0,
       })).filter((media) => media.kind === 'image' && media.src)
     : [];
 }
@@ -514,6 +537,16 @@ export function shouldConvertPastedTextToAttachment(draft, text, {
     pastedLength >= attachmentThreshold
     || draftLength + pastedLength > textLimit
   );
+}
+
+export function richClipboardText(html = '', plainText = '') {
+  const source = String(html || '').trim();
+  if (!source) return String(plainText || '');
+  try {
+    return richTextTurndown.turndown(source).trim() || String(plainText || '');
+  } catch {
+    return String(plainText || '');
+  }
 }
 
 export function sessionTranscriptAwayFromLatest({

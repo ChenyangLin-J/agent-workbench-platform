@@ -73,6 +73,7 @@ export function appServerAttachmentInput({ mimeType = '', name = '', path = '' }
 }
 
 export function appServerAttachmentInputs({
+  id = '',
   mimeType = '',
   name = '',
   path = '',
@@ -81,9 +82,10 @@ export function appServerAttachmentInputs({
   maxInlineTextBytes = MAX_INLINE_TEXT_ATTACHMENT_BYTES,
 } = {}) {
   const input = appServerAttachmentInput({ mimeType, name, path });
-  if (input.type !== 'mention') return [input];
   const normalizedName = String(name || 'attachment').trim() || 'attachment';
-  if (String(mimeType || '').toLowerCase() === 'text/plain' && textContent != null) {
+  const normalizedMimeType = String(mimeType || '').toLowerCase();
+  const kind = sessionAttachmentKind({ mimeType: normalizedMimeType, name: normalizedName, path });
+  if (['text/plain', 'text/markdown', 'text/x-markdown'].includes(normalizedMimeType) && textContent != null) {
     const byteLength = Number(size) || new TextEncoder().encode(String(textContent)).byteLength;
     if (byteLength > maxInlineTextBytes) {
       throw Object.assign(new RangeError(`Text attachment exceeds ${maxInlineTextBytes} bytes.`), {
@@ -91,14 +93,27 @@ export function appServerAttachmentInputs({
         maxBytes: maxInlineTextBytes,
       });
     }
-    return [createAttachmentEnvelopeInput({ name: normalizedName, kind: 'text', content: textContent })];
-  }
-  return [
-    createAttachmentEnvelopeInput({
+    return [createAttachmentEnvelopeInput({
+      id,
       name: normalizedName,
-      kind: 'file',
-      content: `Read the attached local file @${normalizedName} and use its contents for this request.`,
-    }),
+      kind: 'text',
+      mimeType: normalizedMimeType,
+      size: byteLength,
+      content: textContent,
+    })];
+  }
+  const envelope = createAttachmentEnvelopeInput({
+    id,
+    name: normalizedName,
+    kind,
+    mimeType: normalizedMimeType,
+    size,
+    content: input.type === 'mention'
+      ? `Read the attached local file @${normalizedName} and use its contents for this request.`
+      : `Attached ${kind}: ${normalizedName}`,
+  });
+  return [
+    envelope,
     input,
   ];
 }

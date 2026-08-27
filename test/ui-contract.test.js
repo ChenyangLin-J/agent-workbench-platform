@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isLocalFileHref, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isLocalFileHref, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -195,8 +195,13 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /onInput=\{uploadAttachments\}/);
   assert.match(source, /onPaste=\{handleComposerPaste\}/);
   assert.match(source, /clipboardAttachmentFiles\(event\.clipboardData\)/);
+  assert.match(source, /richClipboardText\(richHtml, plainText\)/);
   assert.match(source, /shouldConvertPastedTextToAttachment\(draft, text/);
-  assert.match(source, /`粘贴文本-\$\{compactLocalTimestamp\(new Date\(\)\)\}\.txt`/);
+  assert.match(source, /richHtml\.trim\(\) \? 'md' : 'txt'/);
+  assert.match(source, /onOpenAttachment=\{actions\.onOpenAttachment\}/);
+  assert.match(source, /className="cwu-message-attachment"/);
+  assert.match(source, /className="cwu-document-image"/);
+  assert.match(source, /className="cwu-document-pdf"/);
   assert.match(source, /className=\{`cwu-scroll-latest/);
   assert.match(source, /target\.scrollTo\(\{ top: target\.scrollHeight, behavior: 'smooth' \}\)/);
   assert.match(source, /labels\.newMessages \|\| '有新消息'/);
@@ -215,6 +220,17 @@ test('long pasted text becomes an attachment before the Composer hard limit', ()
   assert.equal(shouldConvertPastedTextToAttachment('', 'a'.repeat(1000)), true);
   assert.equal(shouldConvertPastedTextToAttachment('a'.repeat(11500), 'b'.repeat(501)), true);
   assert.equal(shouldConvertPastedTextToAttachment('', ''), false);
+});
+
+test('rich clipboard HTML becomes safe Markdown while preserving structure', () => {
+  const markdown = richClipboardText(
+    '<h2>结论</h2><p><strong>重点</strong></p><ul><li>第一项</li></ul><table><tr><th>指标</th></tr><tr><td>42</td></tr></table>',
+    '结论 重点 第一项 指标 42',
+  );
+  assert.match(markdown, /^## 结论/m);
+  assert.match(markdown, /\*\*重点\*\*/);
+  assert.match(markdown, /-\s+第一项/);
+  assert.match(markdown, /\| 指标 \|/);
 });
 
 test('Session transcript only offers the latest-message shortcut away from the bottom', () => {

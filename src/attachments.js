@@ -46,24 +46,47 @@ export function validateSessionAttachment(value = {}, policy = {}) {
   return { ok: true, attachment };
 }
 
-export function createAttachmentEnvelopeInput({ name = 'attachment', kind = 'file', content = '' } = {}) {
-  const normalizedKind = kind === 'text' ? 'text' : 'file';
-  const encodedName = encodeURIComponent(String(name || 'attachment'));
+export function createAttachmentEnvelopeInput({
+  id = '',
+  name = 'attachment',
+  kind = 'file',
+  mimeType = '',
+  size = 0,
+  content = '',
+} = {}) {
+  const normalizedKind = ['text', 'file', 'image', 'audio'].includes(kind) ? kind : 'file';
+  const attributes = [
+    id ? `id="${encodeURIComponent(String(id))}"` : '',
+    `name="${encodeURIComponent(String(name || 'attachment'))}"`,
+    `kind="${normalizedKind}"`,
+    mimeType ? `mime="${encodeURIComponent(String(mimeType).toLowerCase())}"` : '',
+    Number(size) > 0 ? `size="${Math.floor(Number(size))}"` : '',
+  ].filter(Boolean).join(' ');
   return {
     type: 'text',
-    text: `<${ATTACHMENT_ENVELOPE_TAG} name="${encodedName}" kind="${normalizedKind}">\n${String(content || '')}\n</${ATTACHMENT_ENVELOPE_TAG}>`,
+    text: `<${ATTACHMENT_ENVELOPE_TAG} ${attributes}>\n${String(content || '')}\n</${ATTACHMENT_ENVELOPE_TAG}>`,
   };
 }
 
 export function parseAttachmentEnvelopes(value = '', { fallbackId = 'attachment' } = {}) {
   const attachments = [];
-  const text = String(value || '').replace(attachmentEnvelopePattern(), (_match, encodedName, kind) => {
-    attachments.push({
-      id: `${fallbackId}-${attachments.length}`,
+  const text = String(value || '').replace(attachmentEnvelopePattern(), (_match, rawAttributes) => {
+    const sourceKind = envelopeAttribute(rawAttributes, 'kind');
+    const encodedId = envelopeAttribute(rawAttributes, 'id');
+    const encodedMimeType = envelopeAttribute(rawAttributes, 'mime');
+    const encodedName = envelopeAttribute(rawAttributes, 'name');
+    const encodedSize = envelopeAttribute(rawAttributes, 'size');
+    const attachment = {
+      id: decodeAttachmentAttribute(encodedId) || `${fallbackId}-${attachments.length}`,
       name: decodeAttachmentName(encodedName),
-      kind: 'file',
-      sourceKind: kind === 'text' ? 'text' : 'file',
-    });
+      kind: ['image', 'audio'].includes(sourceKind) ? sourceKind : 'file',
+      sourceKind: ['text', 'file', 'image', 'audio'].includes(sourceKind) ? sourceKind : 'file',
+    };
+    const mimeType = decodeAttachmentAttribute(encodedMimeType);
+    const size = Number(encodedSize);
+    if (mimeType) attachment.mimeType = mimeType.toLowerCase();
+    if (Number.isFinite(size) && size > 0) attachment.size = size;
+    attachments.push(attachment);
     return '\n';
   }).replace(/^\s+|\s+$/g, '').replace(/\n{3,}/g, '\n\n');
   return { text, attachments };
@@ -101,13 +124,21 @@ function positiveInteger(value, fallback) {
 }
 
 function attachmentEnvelopePattern() {
-  return new RegExp(`\\n?<${ATTACHMENT_ENVELOPE_TAGS} name="([^"]*)" kind="(text|file)">[\\s\\S]*?<\\/${ATTACHMENT_ENVELOPE_TAGS}>\\n?`, 'g');
+  return new RegExp(`\\n?<${ATTACHMENT_ENVELOPE_TAGS}\\b([^>]*)>[\\s\\S]*?<\\/${ATTACHMENT_ENVELOPE_TAGS}>\\n?`, 'g');
+}
+
+function envelopeAttribute(attributes, name) {
+  return String(attributes || '').match(new RegExp(`(?:^|\\s)${name}="([^"]*)"`))?.[1] || '';
+}
+
+function decodeAttachmentAttribute(value) {
+  try {
+    return decodeURIComponent(String(value || ''));
+  } catch {
+    return '';
+  }
 }
 
 function decodeAttachmentName(value) {
-  try {
-    return decodeURIComponent(String(value || '')) || 'attachment';
-  } catch {
-    return 'attachment';
-  }
+  return decodeAttachmentAttribute(value) || 'attachment';
 }
