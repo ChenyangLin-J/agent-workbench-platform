@@ -29,6 +29,8 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(styles, /\.cwu-spreadsheet-scroll table/);
   assert.match(styles, /\.cwu-spreadsheet-scroll \{ min-width: 0/);
   assert.match(styles, /\.cwu-local-file-link:hover \.cwu-local-file-reveal/);
+  assert.match(styles, /\.cwu-local-file-link \{ position: relative; display: inline-block/);
+  assert.match(styles, /\.cwu-local-file-reveal \{ position: absolute;/);
   assert.match(styles, /@media \(hover: none\)/);
 });
 
