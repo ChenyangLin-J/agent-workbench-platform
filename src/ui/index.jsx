@@ -14,6 +14,7 @@ import {
   groupSessionMessages,
   groupSessionSummaries,
   isLocalFileHref,
+  localFileBrowserHref,
   extractVisualizationReferences,
   extractRemarkDirectives,
   normalizeMarkdownMath,
@@ -1513,17 +1514,18 @@ function markdownLinkComponents(onOpenLink, onRevealLink, revealLabel = '在文�
       if (/^https?:\/\//i.test(href)) {
         return <a {...props} href={href} rel="noreferrer" target="_blank">{children}</a>;
       }
+      const localFile = isLocalFileHref(href);
       const link = (
         <a
           {...props}
-          href={href}
+          href={localFile ? localFileBrowserHref(href) : href}
           onClick={(event) => {
             event.preventDefault();
             onOpenLink(href);
           }}
         >{children}</a>
       );
-      if (!onRevealLink || !isLocalFileHref(href)) return link;
+      if (!onRevealLink || !localFile) return link;
       return (
         <span className="cwu-local-file-link">
           {link}

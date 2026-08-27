@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isLocalFileHref, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isLocalFileHref, localFileBrowserHref, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -41,6 +41,10 @@ test('Session UI only offers host reveal actions for local file targets', () => 
   assert.equal(isLocalFileHref('//example.com/report.md'), false);
   assert.equal(isLocalFileHref('https://example.com/report.md'), false);
   assert.equal(isLocalFileHref('codex://threads/one'), false);
+  assert.equal(localFileBrowserHref('/Users/mac/report.md'), 'file:///Users/mac/report.md');
+  assert.equal(localFileBrowserHref('C:\\reports\\report.md'), 'file:///C:/reports/report.md');
+  assert.equal(localFileBrowserHref('file:///tmp/report.md'), 'file:///tmp/report.md');
+  assert.equal(localFileBrowserHref('https://example.com/report.md'), 'https://example.com/report.md');
 });
 
 test('Capability UI normalizes common and custom host state without credential values', async () => {

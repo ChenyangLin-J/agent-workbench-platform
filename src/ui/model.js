@@ -26,6 +26,13 @@ export function isLocalFileHref(value) {
     || /^file:\/\//i.test(href);
 }
 
+export function localFileBrowserHref(value) {
+  const href = String(value ?? '').trim();
+  if (!isLocalFileHref(href) || /^file:\/\//i.test(href)) return href;
+  if (/^[a-z]:[\\/]/i.test(href)) return `file:///${href.replace(/\\/g, '/')}`;
+  return `file://${href}`;
+}
+
 export function normalizeSessionViewModel(value = {}) {
   const models = normalizeModelOptions(value.models);
   const rawExecutionProfile = value.executionProfile;
