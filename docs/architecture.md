@@ -13,7 +13,7 @@
 
 | 宿主 | 当前技术形态 | Platform 使用情况 | 产品边界 |
 | --- | --- | --- | --- |
-| Personal Workbench | 原生页面外壳 + React `SessionWorkspace` | 固定 `v0.6.5`；当前 canary | 项目、事项、个人状态、记忆和资产 |
+| Personal Workbench | 原生页面外壳 + React `SessionWorkspace` | 固定 `v0.6.6`；当前 canary | 项目、事项、个人状态、记忆和资产 |
 | Solvely Workbench | Next.js + React | 冻结在 `v0.3.9`；不再升级 | 业务导航、报告、SQL、证据及业务 Tools/Skills |
 | Agent Terminal Web | Express + WebSocket + 原生页面，同时支持 PTY Terminal 与 App Server | 尚未使用 Platform；独立实现 App Server、Session 与 Side Chat | 手机优先入口、Terminal、记忆和多执行主机 |
 | Superset Side Agent | 待接入的轻量侧边面板 | 尚未接入 | Dashboard、Chart、筛选条件和 Superset 权限上下文 |

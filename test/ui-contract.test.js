@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isLocalFileHref, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -17,7 +17,9 @@ test('Session UI delegates message links and read-only document previews to its 
 
   assert.match(source, /documentPreview = null/);
   assert.match(source, /onOpenLink\(href\)/);
-  assert.match(source, /components=\{markdownLinkComponents\(onOpenLink\)\}/);
+  assert.match(source, /onRevealLink\(href\)/);
+  assert.match(source, /className="cwu-local-file-reveal"/);
+  assert.match(source, /components=\{markdownLinkComponents\(onOpenLink, onRevealLink, revealLabel\)\}/);
   assert.match(source, /\^https\?:\\\/\\\//);
   assert.match(source, /rel="noreferrer" target="_blank"/);
   assert.match(source, /onOpenExternal\(file\)/);
@@ -26,6 +28,17 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(styles, /\.cwu-document-preview/);
   assert.match(styles, /\.cwu-spreadsheet-scroll table/);
   assert.match(styles, /\.cwu-spreadsheet-scroll \{ min-width: 0/);
+  assert.match(styles, /\.cwu-local-file-link:hover \.cwu-local-file-reveal/);
+  assert.match(styles, /@media \(hover: none\)/);
+});
+
+test('Session UI only offers host reveal actions for local file targets', () => {
+  assert.equal(isLocalFileHref('/tmp/report.md'), true);
+  assert.equal(isLocalFileHref('C:\\reports\\report.md'), true);
+  assert.equal(isLocalFileHref('file:///tmp/report.md'), true);
+  assert.equal(isLocalFileHref('//example.com/report.md'), false);
+  assert.equal(isLocalFileHref('https://example.com/report.md'), false);
+  assert.equal(isLocalFileHref('codex://threads/one'), false);
 });
 
 test('Capability UI normalizes common and custom host state without credential values', async () => {

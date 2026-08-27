@@ -188,6 +188,14 @@
 .cwu-message-body code { font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cwu-message-body table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .cwu-message-body th, .cwu-message-body td { border: 1px solid var(--cwu-border); padding: 7px 9px; text-align: left; }
+.cwu-local-file-link { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; vertical-align: baseline; }
+.cwu-local-file-reveal { width: 22px; height: 22px; flex: 0 0 22px; display: grid; place-items: center; opacity: 0; pointer-events: none; border: 0; border-radius: 6px; background: transparent; color: var(--cwu-muted); padding: 3px; cursor: pointer; transition: opacity .12s ease, background .12s ease, color .12s ease; }
+.cwu-local-file-reveal svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.cwu-local-file-link:hover .cwu-local-file-reveal, .cwu-local-file-link:focus-within .cwu-local-file-reveal { opacity: 1; pointer-events: auto; }
+.cwu-local-file-reveal:hover, .cwu-local-file-reveal:focus-visible { background: var(--cwu-soft); color: var(--cwu-text); outline: none; }
+@media (hover: none) {
+  .cwu-local-file-reveal { display: none; }
+}
 .cwu-remark-directives { display: grid; gap: 8px; margin-top: 12px; }
 .cwu-remark-card { display: grid; gap: 4px; border: 1px solid var(--cwu-border); border-radius: 11px; background: var(--cwu-soft); padding: 12px 14px; }
 .cwu-remark-card.is-inbox { border-left: 3px solid var(--cwu-accent); }

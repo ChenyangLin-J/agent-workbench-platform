@@ -12,6 +12,7 @@ import {
   clipboardAttachmentFiles,
   groupSessionMessages,
   groupSessionSummaries,
+  isLocalFileHref,
   extractVisualizationReferences,
   extractRemarkDirectives,
   normalizeMarkdownMath,
@@ -1020,6 +1021,8 @@ export function SessionWorkspace({
           onClose={actions.onCloseDocument}
           onOpenExternal={actions.onOpenDocumentExternal}
           onOpenLink={actions.onOpenLink}
+          onRevealLink={actions.onRevealLink}
+          revealLabel={labels.revealFile}
         />
       ) : null}
       <header className="cwu-session-header">
@@ -1084,6 +1087,8 @@ export function SessionWorkspace({
                     onEditMessage={actions.onEditMessage}
                     onForkMessage={actions.onForkMessage}
                     onOpenLink={actions.onOpenLink}
+                    onRevealLink={actions.onRevealLink}
+                    revealLabel={labels.revealFile}
                     renderContent={extensions.renderMessageContent}
                     session={view}
                     sessionId={view.sessionId}
@@ -1471,14 +1476,23 @@ function RealtimePanel({ enabled, event, initialState, labels, onFallback, onSen
   );
 }
 
-function markdownLinkComponents(onOpenLink) {
+function RevealFolderIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" viewBox="0 0 20 20">
+      <path d="M2.75 5.25h5l1.45 1.5h8.05v8H2.75z" />
+      <path d="M2.75 6.75v-2h4.6l1.4 1.5" />
+    </svg>
+  );
+}
+
+function markdownLinkComponents(onOpenLink, onRevealLink, revealLabel = '在文件夹中显示') {
   if (!onOpenLink) return undefined;
   return {
     a: ({ href = '', children, ...props }) => {
       if (/^https?:\/\//i.test(href)) {
         return <a {...props} href={href} rel="noreferrer" target="_blank">{children}</a>;
       }
-      return (
+      const link = (
         <a
           {...props}
           href={href}
@@ -1488,11 +1502,28 @@ function markdownLinkComponents(onOpenLink) {
           }}
         >{children}</a>
       );
+      if (!onRevealLink || !isLocalFileHref(href)) return link;
+      return (
+        <span className="cwu-local-file-link">
+          {link}
+          <button
+            aria-label={revealLabel}
+            className="cwu-local-file-reveal"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onRevealLink(href);
+            }}
+            title={revealLabel}
+            type="button"
+          ><RevealFolderIcon /></button>
+        </span>
+      );
     },
   };
 }
 
-function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink }) {
+function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink, onRevealLink, revealLabel }) {
   useEffect(() => {
     function handleKeyDown(event) {
       if (event.key === 'Escape') onClose?.();
@@ -1523,7 +1554,7 @@ function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink }) {
           ) : file.format === 'markdown' ? (
             <div className="cwu-document-content cwu-message-body">
               <ReactMarkdown
-                components={markdownLinkComponents(onOpenLink)}
+                components={markdownLinkComponents(onOpenLink, onRevealLink, revealLabel)}
                 rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
                 remarkPlugins={MARKDOWN_REMARK_PLUGINS}
               >{normalizeMarkdownMath(file.content || '')}</ReactMarkdown>
@@ -1576,6 +1607,8 @@ function Message({
   onEditMessage,
   onForkMessage,
   onOpenLink,
+  onRevealLink,
+  revealLabel,
   renderContent,
   session,
   sessionId,
@@ -1589,7 +1622,7 @@ function Message({
   const [forking, setForking] = useState(false);
   const canEdit = isUser && message.canEdit && typeof onEditMessage === 'function';
   const canFork = isUser && message.canFork && typeof onForkMessage === 'function';
-  const markdownComponents = markdownLinkComponents(onOpenLink);
+  const markdownComponents = markdownLinkComponents(onOpenLink, onRevealLink, revealLabel);
   const inline = extractVisualizationReferences(message.content);
   const visualizations = typeof visualizationUrl === 'function'
     ? inline.references.map((reference) => ({

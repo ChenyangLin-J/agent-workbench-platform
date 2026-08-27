@@ -4,6 +4,13 @@ import {
   sessionStatusTone as sharedSessionStatusTone,
 } from '../session.js';
 
+export function isLocalFileHref(value) {
+  const href = String(value ?? '').trim();
+  return (href.startsWith('/') && !href.startsWith('//'))
+    || /^[a-z]:[\\/]/i.test(href)
+    || /^file:\/\//i.test(href);
+}
+
 export function normalizeSessionViewModel(value = {}) {
   const models = normalizeModelOptions(value.models);
   const rawExecutionProfile = value.executionProfile;
