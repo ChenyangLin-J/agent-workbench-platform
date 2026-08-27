@@ -18,6 +18,23 @@ richTextTurndown.addRule('styledStrong', {
   filter: (node) => node.nodeName === 'SPAN' && /(?:bold|[6-9]00)/i.test(node.style?.fontWeight || ''),
   replacement: (content) => content.trim() ? `**${content}**` : content,
 });
+richTextTurndown.addRule('bodyOnlyTable', {
+  filter: (node) => node.nodeName === 'TABLE'
+    && (!node.rows?.[0] || [...node.rows[0].cells].some((cell) => cell.nodeName !== 'TH')),
+  replacement: (content) => {
+    const visibleRows = String(content || '').replace(/\n{2,}/g, '\n').trim();
+    return visibleRows ? `\n\n${visibleRows}\n\n` : '';
+  },
+});
+richTextTurndown.addRule('hiddenClipboardContent', {
+  filter: (node) => node.nodeType === 1 && (
+    node.hasAttribute?.('hidden')
+    || node.getAttribute?.('aria-hidden') === 'true'
+    || /(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(node.getAttribute?.('style') || '')
+  ),
+  replacement: () => '',
+});
+richTextTurndown.remove(['script', 'style', 'noscript', 'template', 'svg', 'iframe', 'object']);
 
 export function isLocalFileHref(value) {
   const href = String(value ?? '').trim();

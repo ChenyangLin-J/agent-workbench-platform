@@ -237,6 +237,19 @@ test('rich clipboard HTML becomes safe Markdown while preserving structure', () 
   assert.match(markdown, /\| 指标 \|/);
 });
 
+test('rich clipboard cleanup never keeps styled body-only table elements', () => {
+  const markdown = richClipboardText(
+    '<table _ngcontent-demo="" class="copied-table" style="color:red"><tbody><tr><td class="title">Name</td><td style="padding:7px"><span>skills.ddit.ai</span></td></tr><tr><td>Host</td><td><span>jumpserver.ddit.ai</span><span aria-hidden="true">hidden-control</span></td></tr></tbody></table>',
+    'Name skills.ddit.ai Host jumpserver.ddit.ai',
+  );
+  assert.doesNotMatch(markdown, /<\/?(?:table|tbody|tr|td|span)\b/i);
+  assert.doesNotMatch(markdown, /(?:style|class|_ngcontent|aria-hidden)=/i);
+  assert.doesNotMatch(markdown, /hidden-control/);
+  assert.match(markdown, /Name\s*\|\s*skills\.ddit\.ai/);
+  assert.match(markdown, /Host\s*\|\s*jumpserver\.ddit\.ai/);
+  assert.equal(shouldConvertPastedTextToAttachment('', markdown), false);
+});
+
 test('Session transcript only offers the latest-message shortcut away from the bottom', () => {
   assert.equal(sessionTranscriptAwayFromLatest({ scrollHeight: 1000, scrollTop: 600, clientHeight: 200 }), false);
   assert.equal(sessionTranscriptAwayFromLatest({ scrollHeight: 1001, scrollTop: 600, clientHeight: 200 }), true);
