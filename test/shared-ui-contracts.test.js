@@ -64,6 +64,12 @@ test('attachment contract normalizes UI metadata without taking over product sto
     },
     reason: 'too_large', maxBytes: 100,
   });
+  assert.deepEqual(normalizeSessionAttachment({
+    id: 'upload-1', name: 'report.md', status: 'error', progress: 130, error: '网络中断',
+  }), {
+    id: 'upload-1', name: 'report.md', mimeType: 'application/octet-stream', size: 0,
+    kind: 'file', inputType: 'mention', status: 'error', progress: 100, error: '网络中断',
+  });
 });
 
 test('attachment envelopes preserve Agent input while projecting transcript attachment cards', () => {

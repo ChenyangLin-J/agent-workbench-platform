@@ -14,8 +14,10 @@ import {
   documentPreviewPresentation,
   groupSessionMessages,
   groupSessionSummaries,
+  isDocumentResourceHref,
   isLocalFileHref,
   localFileBrowserHref,
+  markdownHeadingId,
   extractVisualizationReferences,
   extractRemarkDirectives,
   normalizeMarkdownMath,
@@ -24,6 +26,7 @@ import {
   normalizeSessionViewModel,
   normalizeSideChatPanelViewModel,
   renderFileCitationsAsMarkdown,
+  resolveDocumentResourceHref,
   richClipboardText,
   sessionTranscriptAwayFromLatest,
   sessionStatusTone,
@@ -31,7 +34,7 @@ import {
 } from './model.js';
 import { sessionComposerPresentation } from '../session.js';
 import { normalizeSessionFeatures } from '../capabilities.js';
-import { normalizeAttachmentPolicy } from '../attachments.js';
+import { normalizeAttachmentPolicy, normalizeSessionAttachment } from '../attachments.js';
 import { useSessionUserInput } from '../ui-hooks.js';
 
 export { useSessionUserInput } from '../ui-hooks.js';
@@ -40,6 +43,8 @@ const SESSION_COMPOSER_TEXT_LIMIT = 12000;
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]];
 const USER_MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const MARKDOWN_REHYPE_PLUGINS = [[rehypeKatex, { strict: false }]];
+const DOCUMENT_MARKDOWN_REHYPE_PLUGINS = [rehypeDocumentHeadingIds, ...MARKDOWN_REHYPE_PLUGINS];
+let temporaryAttachmentSequence = 0;
 
 export function CapabilityPanel({ manager, actions = {}, labels = {} }) {
   const view = useMemo(() => normalizeCapabilityManagerViewModel(manager), [manager]);
@@ -784,7 +789,8 @@ export function SessionWorkspace({
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [deletingQueuedIds, setDeletingQueuedIds] = useState(() => new Set());
   const running = view.status === 'running';
-  const uploading = attachmentUploadState.status === 'uploading';
+  const uploading = attachments.some((attachment) => attachment.status === 'uploading');
+  const readyAttachments = attachments.filter((attachment) => attachment.status !== 'error' && attachment.status !== 'uploading');
   const composerDisabled = view.composerDisabled || submitting;
   const executionControlsDisabled = composerDisabled || running || !actions.onExecutionProfileChange;
   const selectedExecutionModel = view.models.find((model) => model.id === view.executionProfile.model) || null;
@@ -792,7 +798,7 @@ export function SessionWorkspace({
     ? selectedExecutionModel.reasoningEfforts
     : ['low', 'medium', 'high', 'xhigh'];
   const fastTier = selectedExecutionModel?.serviceTiers.find((tier) => tier.id === 'priority') || null;
-  const canSubmit = Boolean((draft.trim() || attachments.length) && !composerDisabled && !uploading && actions.onSubmit);
+  const canSubmit = Boolean((draft.trim() || readyAttachments.length) && !composerDisabled && !uploading && actions.onSubmit);
   const composer = sessionComposerPresentation({ running, submitting, canSteer: enabledFeatures.steer });
   const latestMessage = view.messages.at(-1);
   const latestMessageActivityKey = latestMessage
@@ -898,14 +904,14 @@ export function SessionWorkspace({
 
   async function submit(mode = 'turn') {
     const prompt = draft.trim();
-    if ((!prompt && !attachments.length) || submitting || uploading || !actions.onSubmit) return;
+    if ((!prompt && !readyAttachments.length) || submitting || uploading || !actions.onSubmit) return;
     const submittedDraft = draft;
-    const submittedAttachments = attachments;
+    const submittedAttachments = readyAttachments;
     submitFollowRef.current = true;
     followLatest();
     setSubmitting(true);
     setDraft('');
-    setAttachments([]);
+    setAttachments((current) => current.filter((attachment) => attachment.status === 'error'));
     setAttachmentUploadState({ status: 'idle', error: '' });
     try {
       await actions.onSubmit({
@@ -915,7 +921,7 @@ export function SessionWorkspace({
       });
     } catch (error) {
       setDraft(submittedDraft);
-      setAttachments(submittedAttachments);
+      setAttachments((current) => [...submittedAttachments, ...current].slice(0, uploadPolicy.maxCount));
       throw error;
     } finally {
       setSubmitting(false);
@@ -939,23 +945,102 @@ export function SessionWorkspace({
       }
       return;
     }
-    setAttachmentUploadState({ status: 'uploading', error: '' });
-    const uploaded = [];
+    setAttachmentUploadState({ status: 'idle', error: '' });
     const errors = candidates.length > files.length
       ? ['部分附件不符合格式或大小限制。']
       : [];
-    for (const file of files) {
+    const pending = files.map((file) => ({
+      ...normalizeSessionAttachment({
+        id: temporaryAttachmentId(),
+        name: file.name,
+        mimeType: file.type,
+        size: file.size,
+        status: 'uploading',
+        progress: 0,
+      }),
+      file,
+    }));
+    setAttachments((current) => [...current, ...pending].slice(0, uploadPolicy.maxCount));
+    for (const placeholder of pending) {
       try {
-        uploaded.push(...((await actions.onUploadAttachments([file])) || []));
+        const uploaded = (await actions.onUploadAttachments([placeholder.file], {
+          onProgress: (progress) => {
+            const nextProgress = attachmentProgressPercent(progress);
+            setAttachments((current) => current.map((attachment) => (
+              attachment.id === placeholder.id
+                ? { ...attachment, progress: nextProgress }
+                : attachment
+            )));
+          },
+        })) || [];
+        if (!uploaded.length) throw new Error(`${placeholder.name} 上传后没有返回附件`);
+        setAttachments((current) => current.flatMap((attachment) => (
+          attachment.id === placeholder.id
+            ? uploaded.map((item, index) => ({
+                ...item,
+                id: String(item?.id || `${placeholder.id}-${index}`),
+                name: String(item?.name || placeholder.name),
+                mimeType: String(item?.mimeType || placeholder.mimeType),
+                size: Number.isFinite(Number(item?.size)) ? Number(item.size) : placeholder.size,
+                kind: item?.kind || placeholder.kind,
+                status: 'ready',
+                progress: 100,
+              }))
+            : [attachment]
+        )).slice(0, uploadPolicy.maxCount));
       } catch (error) {
-        errors.push(error?.message || `${file.name} 上传失败`);
+        const message = error?.message || `${placeholder.name} 上传失败`;
+        errors.push(message);
+        setAttachments((current) => current.map((attachment) => (
+          attachment.id === placeholder.id
+            ? { ...attachment, status: 'error', error: message, progress: 0 }
+            : attachment
+        )));
       }
     }
-    if (uploaded.length) setAttachments((current) => [...current, ...uploaded].slice(0, uploadPolicy.maxCount));
     setAttachmentUploadState({
       status: errors.length ? 'error' : 'idle',
       error: errors[0] || '',
     });
+  }
+
+  async function retryAttachment(attachment) {
+    if (!attachment.file || attachment.status !== 'error') return;
+    setAttachmentUploadState({ status: 'idle', error: '' });
+    setAttachments((current) => current.map((item) => (
+      item.id === attachment.id ? { ...item, status: 'uploading', error: '', progress: 0 } : item
+    )));
+    try {
+      const uploaded = (await actions.onUploadAttachments([attachment.file], {
+        onProgress: (progress) => {
+          const nextProgress = attachmentProgressPercent(progress);
+          setAttachments((current) => current.map((item) => (
+            item.id === attachment.id ? { ...item, progress: nextProgress } : item
+          )));
+        },
+      })) || [];
+      if (!uploaded.length) throw new Error(`${attachment.name} 上传后没有返回附件`);
+      setAttachments((current) => current.flatMap((item) => (
+        item.id === attachment.id
+          ? uploaded.map((uploadedItem, index) => ({
+              ...uploadedItem,
+              id: String(uploadedItem?.id || `${attachment.id}-${index}`),
+              name: String(uploadedItem?.name || attachment.name),
+              mimeType: String(uploadedItem?.mimeType || attachment.mimeType),
+              size: Number.isFinite(Number(uploadedItem?.size)) ? Number(uploadedItem.size) : attachment.size,
+              kind: uploadedItem?.kind || attachment.kind,
+              status: 'ready',
+              progress: 100,
+            }))
+          : [item]
+      )));
+    } catch (error) {
+      const message = error?.message || `${attachment.name} 上传失败`;
+      setAttachmentUploadState({ status: 'error', error: message });
+      setAttachments((current) => current.map((item) => (
+        item.id === attachment.id ? { ...item, status: 'error', error: message, progress: 0 } : item
+      )));
+    }
   }
 
   async function uploadAttachments(event) {
@@ -1066,11 +1151,15 @@ export function SessionWorkspace({
     <div className="cwu-session-shell" data-status={view.status}>
       {documentPreview ? (
         <DocumentPreview
+          documentResourceUrl={actions.documentResourceUrl}
           file={documentPreview}
           onClose={actions.onCloseDocument}
+          onEdit={actions.onEditDocument}
           onOpenExternal={actions.onOpenDocumentExternal}
           onOpenLink={actions.onOpenLink}
+          onReveal={actions.onRevealDocument}
           onRevealLink={actions.onRevealLink}
+          onSave={actions.onSaveDocument}
           revealLabel={labels.revealFile}
         />
       ) : null}
@@ -1169,9 +1258,11 @@ export function SessionWorkspace({
                         available={technicalDetailsAvailable.has(trailingMessage.turnId)}
                         items={technicalByTurn.get(trailingMessage.turnId) || []}
                         loading={view.technicalDetailsLoading}
+                        onOpenArtifact={actions.onOpenArtifact}
                         onLoad={actions.onLoadTechnicalDetails
                           ? () => actions.onLoadTechnicalDetails(trailingMessage.turnId)
                           : null}
+                        onRevealArtifact={actions.onRevealArtifact}
                       />
                     ) : null}
                 </React.Fragment>
@@ -1196,7 +1287,11 @@ export function SessionWorkspace({
             ))}
 
             {enabledFeatures.technicalDetails && technicalByTurn.get('unassigned')?.length ? (
-              <TechnicalDetails items={technicalByTurn.get('unassigned')} />
+              <TechnicalDetails
+                items={technicalByTurn.get('unassigned')}
+                onOpenArtifact={actions.onOpenArtifact}
+                onRevealArtifact={actions.onRevealArtifact}
+              />
             ) : null}
             {extensions.renderAfterMessages?.({ session: view }) || null}
           </div>
@@ -1251,20 +1346,42 @@ export function SessionWorkspace({
           ) : null}
           <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); submit(composer.primaryMode); }}>
             {extensions.renderComposerOverlay?.({ draft, session: view, setDraft }) || null}
-            {attachments.length || uploading || attachmentUploadState.error ? (
+            {attachments.length || attachmentUploadState.error ? (
               <div className="cwu-attachments" aria-live="polite">
                 {attachments.map((attachment) => (
-                  <span className="cwu-attachment" key={attachment.id}>
-                    <span title={attachment.name}>{attachment.name}</span>
-                    <button
-                      aria-label={`移除 ${attachment.name}`}
-                      disabled={submitting}
-                      onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
-                      type="button"
-                    >×</button>
-                  </span>
+                  <article className={`cwu-attachment is-${attachment.status || 'ready'}`} key={attachment.id}>
+                    <i aria-hidden="true">{attachment.kind === 'image' ? '▧' : attachment.kind === 'audio' ? '♪' : '▤'}</i>
+                    <div>
+                      <strong title={attachment.name}>{attachment.name}</strong>
+                      <small>
+                        {attachment.status === 'uploading'
+                          ? `上传中 ${Math.round(attachment.progress || 0)}%`
+                          : attachment.status === 'error'
+                            ? (attachment.error || '上传失败')
+                            : `${formatAttachmentSize(attachment.size)} · 已就绪`}
+                      </small>
+                      {attachment.status === 'uploading' ? (
+                        <span className="cwu-attachment-progress"><i style={{ width: `${attachment.progress || 0}%` }} /></span>
+                      ) : null}
+                    </div>
+                    <div className="cwu-attachment-actions">
+                      {attachment.status === 'error' && attachment.file ? (
+                        <button
+                          aria-label={`重试上传 ${attachment.name}`}
+                          disabled={submitting || uploading}
+                          onClick={() => retryAttachment(attachment)}
+                          type="button"
+                        >重试</button>
+                      ) : null}
+                      <button
+                        aria-label={`移除 ${attachment.name}`}
+                        disabled={submitting}
+                        onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                        type="button"
+                      >×</button>
+                    </div>
+                  </article>
                 ))}
-                {uploading ? <span className="cwu-upload-status">上传中…</span> : null}
                 {attachmentUploadState.error ? <span className="cwu-upload-error">{attachmentUploadState.error}</span> : null}
               </div>
             ) : null}
@@ -1580,48 +1697,230 @@ function markdownLinkComponents(onOpenLink, onRevealLink, revealLabel = '在文�
   };
 }
 
-function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink, onRevealLink, revealLabel }) {
+function documentMarkdownComponents({ documentResourceUrl, file, onOpenLink, onRevealLink, revealLabel = '在文件夹中显示' }) {
+  return {
+    a: ({ href = '', children, ...props }) => {
+      if (href.startsWith('#')) {
+        return <a {...props} href={href} onClick={(event) => scrollDocumentAnchor(event, href)}>{children}</a>;
+      }
+      if (/^https?:\/\//i.test(href)) {
+        return <a {...props} href={href} rel="noreferrer" target="_blank">{children}</a>;
+      }
+      const localFile = isDocumentResourceHref(href);
+      const link = (
+        <a
+          {...props}
+          href={localFile ? localFileBrowserHref(href) : href}
+          onClick={(event) => {
+            if (!onOpenLink) return;
+            event.preventDefault();
+            onOpenLink(href, file);
+          }}
+        >{children}</a>
+      );
+      if (!onRevealLink || !localFile) return link;
+      return (
+        <span className="cwu-local-file-link">
+          {link}
+          <button
+            aria-label={revealLabel}
+            className="cwu-local-file-reveal"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onRevealLink(href, file);
+            }}
+            title={revealLabel}
+            type="button"
+          ><RevealFolderIcon /></button>
+        </span>
+      );
+    },
+    img: ({ src = '', alt = '', ...props }) => (
+      <img
+        {...props}
+        alt={alt}
+        loading="lazy"
+        src={resolveDocumentResourceHref(file, src, documentResourceUrl)}
+      />
+    ),
+  };
+}
+
+function scrollDocumentAnchor(event, href) {
+  event.preventDefault();
+  let id = String(href || '').replace(/^#/, '');
+  try { id = decodeURIComponent(id); } catch {}
+  const preview = event.currentTarget.closest('.cwu-document-preview');
+  const target = [...(preview?.querySelectorAll('[id]') || [])].find((element) => element.id === id);
+  target?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
+function rehypeDocumentHeadingIds() {
+  return (tree) => {
+    const seen = new Map();
+    walkMarkdownTree(tree, (node) => {
+      if (node?.type !== 'element' || !/^h[1-6]$/.test(node.tagName || '')) return;
+      const base = markdownHeadingId(markdownNodeText(node));
+      const count = seen.get(base) || 0;
+      seen.set(base, count + 1);
+      node.properties = { ...(node.properties || {}), id: count ? `${base}-${count}` : base };
+    });
+  };
+}
+
+function walkMarkdownTree(node, visit) {
+  visit(node);
+  for (const child of node?.children || []) walkMarkdownTree(child, visit);
+}
+
+function markdownNodeText(node) {
+  if (node?.type === 'text') return String(node.value || '');
+  return (node?.children || []).map(markdownNodeText).join('');
+}
+
+function DocumentPreview({
+  documentResourceUrl,
+  file,
+  onClose,
+  onEdit,
+  onOpenExternal,
+  onOpenLink,
+  onReveal,
+  onRevealLink,
+  onSave,
+  revealLabel,
+}) {
+  const preview = useMemo(() => documentPreviewPresentation(file), [file]);
+  const hasRenderedPreview = ['html', 'markdown'].includes(file.format);
+  const hasSource = hasRenderedPreview || preview.code || ['text', 'sql'].includes(file.format);
+  const canEditInline = Boolean(onSave && file.path && !file.attachmentId && file.format === 'markdown');
+  const [activeTab, setActiveTab] = useState(hasRenderedPreview ? 'preview' : 'source');
+  const [editing, setEditing] = useState(false);
+  const [editorContent, setEditorContent] = useState(String(file.content || ''));
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const dirty = editing && editorContent !== String(file.content || '');
+
+  useEffect(() => {
+    setActiveTab(hasRenderedPreview ? 'preview' : 'source');
+    setEditing(false);
+    setEditorContent(String(file.content || ''));
+    setSaving(false);
+    setSaveError('');
+  }, [file.attachmentId, file.name, file.path, file.version, hasRenderedPreview]);
+
+  function confirmDiscard() {
+    return !dirty || globalThis.confirm?.('文件还有未保存的修改，确定放弃吗？') !== false;
+  }
+
+  function closePreview() {
+    if (saving || !confirmDiscard()) return;
+    onClose?.();
+  }
+
+  function cancelEditing() {
+    if (saving || !confirmDiscard()) return;
+    setEditorContent(String(file.content || ''));
+    setSaveError('');
+    setEditing(false);
+  }
+
+  async function saveDocument() {
+    if (!onSave || !dirty || saving) return;
+    setSaving(true);
+    setSaveError('');
+    try {
+      const result = await onSave({ file, content: editorContent, version: file.version || null });
+      const savedFile = result?.file || result || { ...file, content: editorContent };
+      setEditorContent(String(savedFile.content ?? editorContent));
+      setEditing(false);
+    } catch (error) {
+      setSaveError(error?.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   useEffect(() => {
     function handleKeyDown(event) {
-      if (event.key === 'Escape') onClose?.();
+      if (event.key !== 'Escape') return;
+      if (editing) cancelEditing();
+      else closePreview();
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [dirty, editing, file.content, onClose, saving]);
 
   return (
     <div
       aria-label={`文件预览：${file.name}`}
       aria-modal="true"
       className="cwu-document-backdrop"
-      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.(); }}
+      onMouseDown={(event) => { if (event.target === event.currentTarget) closePreview(); }}
       role="dialog"
     >
       <section className="cwu-document-preview">
         <header>
-          <div><span>{file.attachmentId ? 'Session 附件 · 只读' : '本地文件 · 只读'}</span><h2>{file.name}</h2></div>
+          <div><span>{editing ? '本地 Markdown · 编辑中' : file.attachmentId ? 'Session 附件 · 只读' : '本地文件 · 只读'}</span><h2>{file.name}</h2></div>
           <div>
-            {file.downloadUrl ? <a className="cwu-button" download={file.name} href={file.downloadUrl}>下载</a> : null}
-            {onOpenExternal ? <button className="cwu-button" onClick={() => onOpenExternal(file)} type="button">外部打开</button> : null}
-            <button aria-label="关闭文件预览" className="cwu-document-close" onClick={onClose} type="button">×</button>
+            {editing ? (
+              <>
+                <button className="cwu-button" disabled={saving} onClick={cancelEditing} type="button">取消</button>
+                <button className="cwu-button is-primary" disabled={!dirty || saving} onClick={saveDocument} type="button">{saving ? '保存中…' : '保存'}</button>
+              </>
+            ) : (
+              <>
+                {file.downloadUrl ? <a className="cwu-button" download={file.name} href={file.downloadUrl}>下载</a> : null}
+                {onReveal && (file.path || file.attachmentId) ? <button className="cwu-button" onClick={() => onReveal(file)} type="button">文件夹</button> : null}
+                {canEditInline ? <button className="cwu-button" onClick={() => setEditing(true)} type="button">编辑</button> : onEdit && file.path && !file.attachmentId ? <button className="cwu-button" onClick={() => onEdit(file)} type="button">编辑</button> : null}
+                {onOpenExternal ? <button className="cwu-button" onClick={() => onOpenExternal(file)} type="button">外部打开</button> : null}
+              </>
+            )}
+            <button aria-label="关闭文件预览" className="cwu-document-close" onClick={closePreview} type="button">×</button>
           </div>
         </header>
+        {!editing && hasRenderedPreview && hasSource ? (
+          <nav aria-label="文件查看方式" className="cwu-document-tabs">
+            <button aria-pressed={activeTab === 'preview'} onClick={() => setActiveTab('preview')} type="button">预览</button>
+            <button aria-pressed={activeTab === 'source'} onClick={() => setActiveTab('source')} type="button">源码</button>
+          </nav>
+        ) : editing ? <div className="cwu-document-editor-bar"><span>{dirty ? '有未保存的修改' : '尚未修改'}</span>{saveError ? <strong role="alert">{saveError}</strong> : null}</div> : null}
         <div className="cwu-document-body">
-          {file.format === 'image' ? (
+          {editing ? (
+            <textarea
+              aria-label={`编辑 ${file.name}`}
+              autoFocus
+              className="cwu-document-editor"
+              onChange={(event) => { setEditorContent(event.target.value); setSaveError(''); }}
+              spellCheck={false}
+              value={editorContent}
+            />
+          ) : file.format === 'image' ? (
             <div className="cwu-document-image"><img alt={file.name} src={file.src} /></div>
           ) : file.format === 'pdf' ? (
             <iframe className="cwu-document-pdf" src={file.src} title={file.name} />
+          ) : file.format === 'audio' ? (
+            <div className="cwu-document-audio"><audio controls src={file.src} /></div>
           ) : file.format === 'spreadsheet' ? (
             <SpreadsheetPreview file={file} />
-          ) : file.format === 'markdown' ? (
+          ) : file.format === 'html' && activeTab === 'preview' ? (
+            <iframe
+              className="cwu-document-html"
+              referrerPolicy="no-referrer"
+              sandbox="allow-scripts"
+              srcDoc={sandboxedHtmlSource(file.content || '')}
+              title={file.name}
+            />
+          ) : file.format === 'markdown' && activeTab === 'preview' ? (
             <div className="cwu-document-content cwu-message-body">
               <ReactMarkdown
-                components={markdownLinkComponents(onOpenLink, onRevealLink, revealLabel)}
-                rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
+                components={documentMarkdownComponents({ documentResourceUrl, file, onOpenLink, onRevealLink, revealLabel })}
+                rehypePlugins={DOCUMENT_MARKDOWN_REHYPE_PLUGINS}
                 remarkPlugins={MARKDOWN_REMARK_PLUGINS}
               >{normalizeMarkdownMath(file.content || '')}</ReactMarkdown>
             </div>
-          ) : documentPreviewPresentation(file).code ? (
+          ) : preview.code || activeTab === 'source' ? (
             <DocumentCodePreview file={file} />
           ) : <pre className="cwu-document-text">{file.content || ''}</pre>}
         </div>
@@ -1913,7 +2212,14 @@ function MediaGallery({ items, onOpenAttachment = null }) {
   );
 }
 
-function TechnicalDetails({ items, available = false, loading = false, onLoad = null }) {
+function TechnicalDetails({
+  items,
+  available = false,
+  loading = false,
+  onLoad = null,
+  onOpenArtifact = null,
+  onRevealArtifact = null,
+}) {
   const [open, setOpen] = useState(false);
   async function toggle() {
     const next = !open;
@@ -1938,12 +2244,69 @@ function TechnicalDetails({ items, available = false, loading = false, onLoad = 
               <summary><span>{item.title}</span><em>{item.status}</em></summary>
               {item.detail ? <pre>{item.detail}</pre> : null}
               {item.media?.length ? <MediaGallery items={item.media} /> : null}
+              {item.artifacts?.length ? (
+                <div className="cwu-technical-artifacts" aria-label="文件产物">
+                  {item.artifacts.map((artifact) => (
+                    <article key={artifact.id}>
+                      <button
+                        disabled={!onOpenArtifact}
+                        onClick={() => onOpenArtifact?.(artifact, item)}
+                        title={onOpenArtifact ? `打开 ${artifact.name}` : artifact.name}
+                        type="button"
+                      >
+                        <i aria-hidden="true">{artifact.kind === 'image' ? '▧' : artifact.kind === 'audio' ? '♪' : '▤'}</i>
+                        <span><strong>{artifact.name}</strong><small>{artifact.status || '文件产物'}</small></span>
+                      </button>
+                      {onRevealArtifact ? (
+                        <button
+                          aria-label={`在文件夹中显示 ${artifact.name}`}
+                          className="cwu-artifact-reveal"
+                          onClick={() => onRevealArtifact(artifact, item)}
+                          title="在文件夹中显示"
+                          type="button"
+                        ><RevealFolderIcon /></button>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              ) : null}
             </details>
           )) : <p className="cwu-technical-loading">{loading ? '正在读取执行详情…' : '没有可展示的执行详情。'}</p>}
         </div>
       ) : null}
     </section>
   );
+}
+
+function temporaryAttachmentId() {
+  temporaryAttachmentSequence += 1;
+  return `upload-${Date.now()}-${temporaryAttachmentSequence}`;
+}
+
+function attachmentProgressPercent(value) {
+  const direct = typeof value === 'number' ? value : Number(value?.percent);
+  if (Number.isFinite(direct)) return Math.min(100, Math.max(0, direct));
+  const loaded = Number(value?.loaded);
+  const total = Number(value?.total);
+  return Number.isFinite(loaded) && Number.isFinite(total) && total > 0
+    ? Math.min(100, Math.max(0, (loaded / total) * 100))
+    : 0;
+}
+
+function formatAttachmentSize(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size <= 0) return '大小未知';
+  if (size < 1024) return `${Math.round(size)} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+function sandboxedHtmlSource(content) {
+  const source = String(content || '');
+  const policy = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data: blob:; media-src data: blob:; font-src data:; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'">';
+  if (/<head(?:\s[^>]*)?>/i.test(source)) return source.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${policy}`);
+  if (/<html(?:\s[^>]*)?>/i.test(source)) return source.replace(/<html(?:\s[^>]*)?>/i, (html) => `${html}<head>${policy}</head>`);
+  return `<!doctype html><html><head>${policy}</head><body>${source}</body></html>`;
 }
 
 function RuntimeProgress({ plan }) {

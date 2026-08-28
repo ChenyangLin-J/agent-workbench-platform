@@ -8,11 +8,11 @@ Make Agent Terminal Web consume the current shared Session surfaces while retain
 
 ## Current baseline
 
-As of 2026-08-28:
+As of 2026-08-28, before consumer adoption of the pending `v0.7.0` release:
 
-- Platform `v0.6.12` contains the shared Session workspace, mobile behavior, attachments, Side Chat, Subagent and Browser primitives needed for the migration.
+- Platform `v0.7.0` adds shared attachment upload lifecycle, technical artifact actions, richer file previews, host-resolved Markdown resources and versioned inline Markdown editing.
 - Personal pins `v0.6.12` and is the full-product canary.
-- Agent Terminal pins `v0.6.12`. Its remote `main` uses the shared `SessionList`; local commit `2d26eec` adds an opt-in `SessionWorkspace` canary behind `?platformSession=1` while retaining the existing App Server UI as fallback. PTY Sessions are not part of the canary.
+- Agent Terminal pins `v0.6.12`. Its remote `main` uses the shared `SessionList`; local commit `2d26eec` adds an opt-in `SessionWorkspace` canary behind `?platformSession=1` while retaining the existing App Server UI as fallback. A local, uncommitted adapter validates the `v0.7.0` document actions before published-tag adoption. PTY Sessions are not part of the canary.
 - Solvely Workbench is frozen and is not part of this migration.
 
 Re-check both repositories before implementation; these version statements are migration state, not permanent facts.

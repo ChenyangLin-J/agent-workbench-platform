@@ -17,6 +17,7 @@ export function normalizeSessionAttachment(value = {}, fallbackId = 'attachment'
   const name = String(value.name || '附件');
   const mimeType = String(value.mimeType || 'application/octet-stream').toLowerCase();
   const kind = sessionAttachmentKind({ mimeType, name, path: value.path || value.storedPath });
+  const progress = value.progress == null ? Number.NaN : Number(value.progress);
   return {
     id: String(value.id || fallbackId),
     name,
@@ -25,6 +26,8 @@ export function normalizeSessionAttachment(value = {}, fallbackId = 'attachment'
     kind,
     inputType: value.inputType || inputTypeForKind(kind),
     status: ['uploading', 'ready', 'error'].includes(value.status) ? value.status : 'ready',
+    ...(Number.isFinite(progress) ? { progress: Math.min(100, Math.max(0, progress)) } : {}),
+    ...(value.error ? { error: String(value.error) } : {}),
     ...(value.previewUrl ? { previewUrl: String(value.previewUrl) } : {}),
   };
 }

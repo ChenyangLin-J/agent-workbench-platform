@@ -3,6 +3,7 @@ import {
   sessionMessagePresentation,
   sessionStatusTone as sharedSessionStatusTone,
 } from '../session.js';
+import { normalizeSessionAttachment } from '../attachments.js';
 import TurndownService from 'turndown';
 import { gfm as turndownGfm } from 'turndown-plugin-gfm';
 
@@ -50,6 +51,29 @@ export function localFileBrowserHref(value) {
   if (/^\.\.?[\\/]/.test(href)) return href;
   if (/^[a-z]:[\\/]/i.test(href)) return `file:///${href.replace(/\\/g, '/')}`;
   return `file://${href}`;
+}
+
+export function isDocumentResourceHref(value) {
+  const href = String(value ?? '').trim();
+  if (!href || href.startsWith('#') || href.startsWith('//')) return false;
+  if (/^(?:https?:|data:|blob:|mailto:|tel:|codex:)/i.test(href)) return false;
+  return isLocalFileHref(href) || !/^[a-z][a-z\d+.-]*:/i.test(href);
+}
+
+export function resolveDocumentResourceHref(file = {}, value = '', resolver = null) {
+  const href = String(value ?? '').trim();
+  if (!isDocumentResourceHref(href) || typeof resolver !== 'function') return href;
+  const resolved = resolver({ file, href });
+  return resolved ? String(resolved) : href;
+}
+
+export function markdownHeadingId(value = '') {
+  return String(value)
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[^\p{Letter}\p{Number}\s_-]/gu, '')
+    .replace(/[\s_]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'section';
 }
 
 const CODE_PREVIEW_EXTENSIONS = new Set([
@@ -125,13 +149,8 @@ export function normalizeSessionViewModel(value = {}) {
           canFork: Boolean(message?.canFork),
           attachments: Array.isArray(message?.attachments)
             ? message.attachments.map((attachment, attachmentIndex) => ({
-                id: String(attachment?.id || `attachment-${index}-${attachmentIndex}`),
-                name: String(attachment?.name || '附件'),
-                kind: ['image', 'audio', 'file'].includes(attachment?.kind) ? attachment.kind : 'file',
-                mimeType: String(attachment?.mimeType || 'application/octet-stream').toLowerCase(),
-                size: Number.isFinite(Number(attachment?.size)) ? Number(attachment.size) : 0,
+                ...normalizeSessionAttachment(attachment, `attachment-${index}-${attachmentIndex}`),
                 sourceKind: String(attachment?.sourceKind || ''),
-                previewUrl: attachment?.previewUrl ? String(attachment.previewUrl) : '',
               }))
             : [],
           media: normalizeMedia(message?.media, `message-${index}`),
@@ -152,6 +171,7 @@ export function normalizeSessionViewModel(value = {}) {
           detail: String(item?.detail || ''),
           turnId: stringOrNull(item?.turnId),
           media: normalizeMedia(item?.media, `technical-${index}`),
+          artifacts: normalizeTechnicalArtifacts(item?.artifacts, `technical-${index}`),
         }))
       : [],
     technicalDetailsAvailable: Array.isArray(value.technicalDetailsAvailable)
@@ -544,6 +564,22 @@ function normalizeModelOptions(value) {
             ? model.reasoningEfforts.map(String).filter(Boolean)
             : ['low', 'medium', 'high', 'xhigh'],
       }))
+    : [];
+}
+
+function normalizeTechnicalArtifacts(value, fallbackId) {
+  return Array.isArray(value)
+    ? value.map((artifact, index) => ({
+        id: String(artifact?.id || `${fallbackId}-artifact-${index}`),
+        name: String(artifact?.name || artifact?.path || '文件产物'),
+        kind: ['image', 'audio', 'file'].includes(artifact?.kind) ? artifact.kind : 'file',
+        mimeType: String(artifact?.mimeType || 'application/octet-stream').toLowerCase(),
+        size: Number.isFinite(Number(artifact?.size)) ? Math.max(0, Number(artifact.size)) : 0,
+        status: String(artifact?.status || ''),
+        path: String(artifact?.path || ''),
+        href: String(artifact?.href || ''),
+        previewUrl: String(artifact?.previewUrl || ''),
+      })).filter((artifact) => artifact.name)
     : [];
 }
 

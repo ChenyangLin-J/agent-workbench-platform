@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { clipboardAttachmentFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isLocalFileHref, localFileBrowserHref, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -19,19 +19,77 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(source, /onOpenLink\(href\)/);
   assert.match(source, /onRevealLink\(href\)/);
   assert.match(source, /className="cwu-local-file-reveal"/);
-  assert.match(source, /components=\{markdownLinkComponents\(onOpenLink, onRevealLink, revealLabel\)\}/);
+  assert.match(source, /components=\{documentMarkdownComponents\(\{ documentResourceUrl, file, onOpenLink, onRevealLink, revealLabel \}\)\}/);
   assert.match(source, /\^https\?:\\\/\\\//);
   assert.match(source, /rel="noreferrer" target="_blank"/);
   assert.match(source, /onOpenExternal\(file\)/);
+  assert.match(source, /onReveal\(file\)/);
+  assert.match(source, /onEdit\(file\)/);
+  assert.match(source, /onSave\(\{ file, content: editorContent, version: file\.version \|\| null \}\)/);
+  assert.match(source, /documentResourceUrl/);
+  assert.match(source, /rehypeDocumentHeadingIds/);
+  assert.match(source, /className="cwu-document-editor"/);
+  assert.match(source, /srcDoc=\{sandboxedHtmlSource\(file\.content \|\| ''\)\}/);
+  assert.match(source, /sandbox="allow-scripts"/);
+  assert.match(source, /aria-label="文件查看方式"/);
   assert.match(source, /file\.format === 'spreadsheet'/);
   assert.match(source, /function SpreadsheetPreview/);
   assert.match(styles, /\.cwu-document-preview/);
+  assert.match(styles, /\.cwu-document-tabs/);
+  assert.match(styles, /\.cwu-document-html/);
+  assert.match(styles, /\.cwu-document-editor/);
   assert.match(styles, /\.cwu-spreadsheet-scroll table/);
   assert.match(styles, /\.cwu-spreadsheet-scroll \{ min-width: 0/);
   assert.match(styles, /\.cwu-local-file-link:hover \.cwu-local-file-reveal/);
   assert.match(styles, /\.cwu-local-file-link \{ position: relative; display: inline-block/);
   assert.match(styles, /\.cwu-local-file-reveal \{ position: absolute;/);
   assert.match(styles, /@media \(hover: none\)/);
+});
+
+test('Markdown document resources and heading anchors stay host-resolved and stable', () => {
+  assert.equal(isDocumentResourceHref('./images/chart.png'), true);
+  assert.equal(isDocumentResourceHref('../notes.md'), true);
+  assert.equal(isDocumentResourceHref('images/chart.png'), true);
+  assert.equal(isDocumentResourceHref('/Users/mac/chart.png'), true);
+  assert.equal(isDocumentResourceHref('#overview'), false);
+  assert.equal(isDocumentResourceHref('https://example.com/chart.png'), false);
+  assert.equal(resolveDocumentResourceHref(
+    { path: '/workspace/report.md' },
+    './images/chart.png',
+    ({ href }) => `/resource?href=${encodeURIComponent(href)}`,
+  ), '/resource?href=.%2Fimages%2Fchart.png');
+  assert.equal(resolveDocumentResourceHref({}, 'https://example.com/a.png', () => '/blocked'), 'https://example.com/a.png');
+  assert.equal(markdownHeadingId('能力合并 / Next Step'), '能力合并-next-step');
+  assert.equal(markdownHeadingId('***'), 'section');
+});
+
+test('Session UI keeps attachment lifecycle and technical file artifacts host-neutral', async () => {
+  const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
+  const view = normalizeSessionViewModel({
+    technicalItems: [{
+      id: 'change-1',
+      artifacts: [{ name: 'report.html', path: '/tmp/report.html', status: 'modify' }],
+    }],
+  });
+  assert.deepEqual(view.technicalItems[0].artifacts[0], {
+    id: 'technical-0-artifact-0',
+    name: 'report.html',
+    kind: 'file',
+    mimeType: 'application/octet-stream',
+    size: 0,
+    status: 'modify',
+    path: '/tmp/report.html',
+    href: '',
+    previewUrl: '',
+  });
+  assert.match(source, /onUploadAttachments\(\[placeholder\.file\], \{/);
+  assert.match(source, /onProgress: \(progress\) =>/);
+  assert.match(source, /retryAttachment\(attachment\)/);
+  assert.match(source, /className="cwu-technical-artifacts"/);
+  assert.match(source, /onOpenArtifact/);
+  assert.match(source, /onRevealArtifact/);
+  assert.match(styles, /\.cwu-attachment-progress/);
+  assert.match(styles, /\.cwu-technical-artifacts/);
 });
 
 test('code document previews keep line structure and resolve requested lines', async () => {
