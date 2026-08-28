@@ -1,171 +1,94 @@
-# Agent Workbench 共享架构
+# Agent Workbench Platform Architecture
 
-文档类型：重构 spec  
-状态：当前完整版；定义公共 Agent 能力、活动消费者与冻结参考实现的边界和迁移顺序。
+`@agent-workbench/platform` is a product-neutral package for composing independent Codex workbenches. It owns reusable Agent semantics and UI; every consumer remains a separate product with separate data, authorization, deployment, and product objects.
 
-## 当前问题
-
-`@agent-workbench/platform` 已经共享 Codex App Server、Session Kernel、附件、Subagent、Side Chat、Capability 原语、Skill 内容预览和 React Session UI。Personal 是当前 canary；下一阶段的核心问题是让 Agent Terminal Web 与后续 Superset Side Agent 通过同一公共合约接入，而不是复制 Personal adapter 或运行目录。
-
-共享的目标不是让各产品长得一样，而是让同一项 Agent 能力只实现一次，并允许每个产品保留自己的导航、数据、权限、视觉与业务内容。Solvely Workbench 已冻结，只作为现有边界参考，不再进入当前升级计划。
-
-## 已确认的现状
-
-| 宿主 | 当前技术形态 | Platform 使用情况 | 产品边界 |
-| --- | --- | --- | --- |
-| Personal Workbench | 原生页面外壳 + React `SessionBrowser` / `SessionWorkspace` | 固定 `v0.6.11`；已用本地 `v0.6.12` 完成 Mac 与手机 canary | 项目、事项、个人状态、记忆和资产 |
-| Solvely Workbench | Next.js + React | 冻结在 `v0.3.9`；不再升级 | 业务导航、报告、SQL、证据及业务 Tools/Skills |
-| Agent Terminal Web | Express + WebSocket + 原生页面，同时支持 PTY Terminal 与 App Server | 固定旧版 `v0.4.17`；只复用 `SessionList`，详情区仍独立实现 | 手机优先入口、Terminal、记忆和多执行主机 |
-| Superset Side Agent | 待接入的轻量侧边面板 | 尚未接入 | Dashboard、Chart、筛选条件和 Superset 权限上下文 |
-
-代码证据：
-
-- Platform 的 `SessionWorkspace`、`SideChatPanel`、Subagent 详情和 `CapabilityPanel` 已提供共享 React UI 与公共动作合约。
-- Personal 通过自己的 API、持久化、Runtime 与健康检查 adapter 使用这些公共能力，不读取 Platform 同级源码。
-- Solvely 的现有配置与 Canvas 只保留为冻结边界参考，不作为当前验收宿主。
-- Agent Terminal Web 已把 Session 列表接到 Platform，但仍在自己的 `server.js`、`public/app.js` 与 `public/styles.css` 中维护 App Server transcript、Composer、Side Chat、Subagent、附件与 Browser UI。
-
-### Agent Terminal UI 对照结论
-
-| 归属 | 能力 |
-| --- | --- |
-| 合入 Platform | iOS `visualViewport` 跟随、动态视口与安全区、触摸操作可达性、手机长内容换行、抽屉式 Session 列表和窄屏 Composer 工具栏 |
-| 保留 Platform 现有实现 | Transcript、Composer、附件预览、Side Chat、Subagent 链路、执行过程、排队消息、文件与图片预览 |
-| 只留 Agent Terminal | Terminal/Text 标签、xterm/PTY、终端快捷键、PWA 主导航、Memory、多主机、账号、公开分享与终端专用 Focus Mode |
-| 全量迁移后删除 | Agent Terminal 自己的 App Server transcript/Composer、Side Chat/Subagent 面板、Markdown 渲染和 Browser Provider 前端重复层 |
-
-第一批移动行为已进入 Platform `v0.6.12`：显式发送在软件键盘改变视口时继续跟随新输出，用户触摸或滚轮阅读历史会停止强制跟随；手机表格、代码块、Composer 与触摸菜单也使用公共响应式规则。产品外壳仍需提供 `viewport-fit=cover` 并给共享区域一个可收缩的高度容器。
-
-## 目标边界
-
-先保留一个 npm 包和一个 Git 仓库，不为了架构整洁立即拆成多个发布包。包内形成三个清楚的层次：
+## Layers
 
 ```text
 @agent-workbench/platform/runtime
-  App Server connection、Session/Turn、事件、审批、附件输入
+  App Server connections, Session/Turn/request semantics, approvals, inputs
 
 @agent-workbench/platform/features
-  Side Chat、Subagent 等完整 Feature 的 controller、状态与 action contract
+  Side Chat, Subagent and other complete feature contracts
 
 @agent-workbench/platform/ui
-  React SessionWorkspace 与 Feature 面板
+  SessionWorkspace, SessionBrowser and shared React feature panels
 
-@agent-workbench/platform/plugins
-  Skill source、MCP server、CLI tool、credential provider 的声明式 registry、profile resolver 与 health contract
+@agent-workbench/platform/plugins + capabilities
+  product-neutral manifests, registry, dependency resolution, install plans and locks
 
-agent-workbench-platform/capabilities
-  通用 Capability catalog、schema、依赖关系与安装策略元数据
+consumer host
+  stores, adapters, product context, authorization, side effects, navigation and deployment
 ```
 
-Runtime 与 Feature contract 不依赖 DOM。React 是四个 Web 宿主的统一 renderer，不是 Agent Runtime 本身。以后只有出现真实的非 React 消费者时，才评估拆分 npm 包。
+Runtime and Feature contracts do not depend on DOM. React is the current shared renderer, not the Runtime itself. A second package is justified only by a real consumer boundary, not by directory aesthetics.
 
-### 可插拔能力底座
+## Consumer shapes
 
-Platform 的可插拔能力仅表达可用集成，不拥有产品权限、凭据值、进程或网络副作用。`@agent-workbench/platform/plugins` 支持 `skill-source`、`mcp-server`、`cli-tool` 和 `credential-provider` 四类 manifest；每个 manifest 必须带稳定的 `id`、`kind` 与 `version`。`capabilities/registry.json` 保存通用能力，默认全部关闭；消费者仓库用同一 schema 保存 `custom` catalog。两类 catalog 合并时禁止自定义能力用同一 id 静默覆盖通用能力。
+| Consumer | Shape | Product-owned concerns | What it proves about Platform |
+| --- | --- | --- | --- |
+| Personal Workbench | Long-lived, project-oriented full product | Projects, matters, formal state, local files, Personal capabilities and services | Shared features compose inside a complex product |
+| Data Skill Lab | Independent minimal Workbench with one candidate Skill or a baseline | Run creation, Skill snapshot, constrained capability allowlist, evaluation evidence and isolated Runtime | A Session can run without a project model or Personal state |
+| Agent Terminal Web | Terminal-oriented, mobile-first, multi-host product | PTY, Terminal navigation, memory, hosts, accounts and sharing | Shared Session UI composes inside a different interaction shell |
+| Superset Side Agent | Future lightweight embedded host | Dashboard, chart, filters and Superset authorization context | Feature profiles can expose a deliberately smaller surface |
 
-产品 Profile 按能力 id 保存启停、宿主绑定与 `credentialRefs`；resolver 自动补全依赖并生成安装计划和无绝对路径的版本 lock。project 归属和凭据存储始终留在消费者。resolver 输出不含 project 数据或密钥值，且拒绝 manifest、config 与 health 结果中的 secret/token/password 等值字段。health checker 仅调用插件自愿提供的 `check({ manifest, config, credentialRefs })`，把结果收敛为 `healthy`、`degraded`、`disabled` 或 `error`，并显式报告 Profile 已声明但 Registry 未安装的插件；Platform 不执行包管理器、登录、CLI 或 MCP 副作用。
+Solvely Workbench is a frozen compatibility reference, not an active migration target.
 
-### Platform 拥有
+Data Skill Lab currently incubates inside the Personal repository and still launches Personal host code. That source location is temporary implementation debt, not product ownership. Platform contracts used by the Lab must remain project-free; extracting its minimal host is a separate consumer task and does not move evaluation policy into Platform.
 
-- Codex thread、turn、request 和事件的产品中立语义，以及 Composer 中模型、思考强度和访问模式的统一交互合约。
-- Side Chat、Subagent、附件和审批等 Feature 的状态模型、动作合约、错误语义和 React UI。
-- 附件 transcript envelope、文本/文件 Runtime input、Codex connection preparation、Skill roots inventory 与执行配置协议映射。
-- Feature 能力配置，例如 `sideChats: hidden | summary | full` 与 `subagents: hidden | summary | full`。
-- 通用 Capability schema、catalog、依赖解析、安装计划、两阶段安装动作合约、host-backed Manager、React Panel 与 lock 格式。
-- project-free 与 project-scoped 两类 fixture 和合约测试。
+## Ownership
 
-### 产品拥有
+| Platform owns | Consumer owns |
+| --- | --- |
+| Session, Turn, request, queue, interrupt and replay semantics | Product navigation, objects, labels and status |
+| Provider-neutral Runtime and Feature contracts | App Server processes, connection ownership and service lifecycle |
+| Side Chat and Subagent state/action semantics | Persistent stores and product-specific retention policy |
+| Attachment metadata, limits, input and transcript envelopes | Attachment bytes, URLs, path authorization and file actions |
+| Shared Session/Feature React UI and extension slots | Page shell, theme, placement and business extensions |
+| Capability schema, common catalog, dependency resolution, plans and portable locks | Product Profile, custom catalog, host checks, install handlers and authentication |
+| Browser Provider lifecycle primitives and product-neutral proxy behavior | Browser profile, MCP endpoint, authorization and user-facing controls |
+| Project-free and project-scoped contract fixtures | Consumer integration, end-to-end and manual acceptance evidence |
 
-- 页面导航、项目/业务对象、用户和权限、凭据、部署及数据目录。
-- 产品专属状态与存储位置，以及把这些状态和访问模式映射到 Runtime / Feature contract 的 adapter。
-- 产品 Profile、自定义 Capability catalog、安装执行器、宿主机路径、MCP endpoint 和认证流程。
+Platform never reads a product database, chooses a package manager, stores credential values, or invents a project/task model. Consumers pass context through adapters, actions, stores, Profiles, and extension slots.
 
-安装动作采用 plan / execute 两阶段：Platform 校验动作、确认要求和无密钥的公开结果；消费者按 strategy 注入真实 handler。任何需要修改宿主机或安装包的动作必须先返回 `action-required`，消费者取得明确确认后才能调用 execute。交互式认证不通过公共动作传递 token、密码或其他凭据值。
-- Personal 的项目与事项、Solvely 的报告与 SQL、Agent Terminal 的 PTY 与多主机、Superset 的 Dashboard 上下文。
-- 主题、入口位置、产品文案，以及通过 slot 插入的业务内容。
+## Shared invariants
 
-## 第一个共享 Feature：Side Chat
+### Session and UI
 
-Side Chat 用来验证这条边界是否成立。Platform 统一以下语义：
+- A Session can exist with no project. Project-scoped consumers may add `contextId` and labels without placing product fields in Core records.
+- `SessionBrowser` and `SessionWorkspace` own common list, transcript, Composer, queue, approval, attachment, Subagent, Realtime and responsive interaction semantics.
+- Products own full-text search backends, navigation and any content rendered through extension slots.
+- Host file actions receive the original authorized reference. Platform renders and normalizes metadata but does not grant filesystem access.
 
-- 从父 Session 创建独立 fork，并保存 `parentSessionId` 与 `sideThreadId` 关系。
-- 统一 `creating | idle | running | interrupted | expired | error` 状态。
-- 独立 transcript、连续追问、停止、模型/推理配置和显式删除。
-- 收起面板、切换 Session、页面刷新与删除是不同动作；只有显式删除移除记录。
-- Runtime 不可恢复时保留只读记录，并明确显示 `expired`，不伪装成可继续会话。
+### Side Chat and Subagent
 
-Platform 提供 controller、View Model、React `SideChatPanel` 和以下 product adapter 合约：
+- Side Chat is an explicit fork with its own lifecycle and persistence adapter. Closing, switching Session, refreshing, Runtime expiry, and explicit deletion remain different actions.
+- Subagents come from Runtime parent/child relationships and are not represented as Side Chats. Products choose visibility and placement, not parsing semantics.
 
-```text
-SideChatStore
-  list(parentSessionId)
-  load(sideChatId)
-  save(record)
-  remove(sideChatId)
+### Capabilities and credentials
 
-SideChatRuntime
-  fork(parentRuntimeSessionId, options)
-  submit(sideRuntimeSessionId, input, options)
-  interrupt(sideRuntimeSessionId, turnId)
-  readSnapshot(sideRuntimeSessionId)
-```
+- Common capabilities are disabled by default. Consumers merge their custom catalog without shadowing a common id.
+- Installation follows a side-effect-free `plan` and an explicitly confirmed `execute`. Platform never invokes a real package manager or login flow by itself.
+- Profiles and health adapters use credential references. Manifests, locks, public results and logs reject credential values.
 
-产品可以选择自己的持久化实现，但不能重定义关闭、删除、失效和运行状态的语义。
+### Browser Provider
 
-## Subagent 边界
+- Discovery and tool inventory are process-free. The first real tool call may start a consumer-configured Provider.
+- Stateful calls are serialized. Provider instances return to zero when idle and teardown is bounded; a consumer may separately choose to retain its browser window.
+- The consumer owns profile directories, endpoints, path allowlists and every external action authorization.
 
-Subagent 与 Side Chat 保持不同数据模型。Platform 继续从 Codex 父子 Agent 关系发现 Subagent，并补齐：
+## Placement test
 
-- 读取单个 Subagent 的完整 Turn/Item 链路。
-- 从列表进入详情、返回列表、打开独立 Session和停止运行中 Agent。
-- 统一摘要与完整模式的 View Model 和 React 面板。
+Put a change in Platform only when its state and behavior can be expressed without a product object and at least two consumer shapes should share it. Put it in a consumer when it depends on product data, authorization, deployment, storage, vocabulary, or evaluation policy.
 
-产品只决定是否显示、入口位置和当前 Session 的业务归属，不复制 Subagent 解析与链路渲染。
+When a change crosses the boundary, Platform defines the contract and the consumer implements the adapter. Do not make Platform import consumer code or make one consumer read a sibling Platform checkout.
 
-## 宿主装配
+## Verification boundary
 
-| Feature | Personal | Solvely | Agent Terminal | Superset |
-| --- | --- | --- | --- | --- |
-| Session/Turn | full | full | full | lightweight |
-| Side Chat | full | configurable | full | hidden 或 lightweight |
-| Subagent | full | configurable | full | hidden |
-| 审批/用户输入 | full | full | full | 按权限配置 |
-| 附件 | full | full | configurable | Dashboard 上下文优先 |
-| Browser/Realtime | Personal 配置 | 产品配置 | 产品配置 | hidden |
-| 产品扩展 | 项目/事项 | 报告/SQL/证据 | Terminal/记忆/多主机 | Chart/筛选条件 |
+- Platform automated tests cover the public contract, including project-free and project-scoped fixtures.
+- Personal is the canary for shared full-product Session and UI behavior.
+- Data Skill Lab is the canary for minimal, project-free and constrained-capability composition.
+- Agent Terminal owns PTY, mobile shell and multi-host regression while adopting shared Session surfaces.
+- Automatic tests establish contract correctness; consumer browser or workflow acceptance establishes that the product remains usable. One does not replace the other.
 
-这里的 `full`、`lightweight` 和 `hidden` 是宿主 profile，不产生不同 Feature 实现。Solvely 列仅记录冻结状态，不表示后续会继续迁移。
-
-## 不改什么
-
-- 不把 Personal 与 Solvely 的页面外壳、导航和业务内容合并。
-- 不让浏览器直接连接或启动 Codex App Server；各产品后端仍拥有执行连接与鉴权。
-- 不把产品数据库或权限模型迁入 Platform。
-- 不在本轮迁移冻结的 Solvely；能力插件只提供声明与健康合约，不替代各宿主的执行和授权逻辑。
-- 不复制 DeepSeek Harness 的完整插件框架；只采用 base feature 加宿主 profile 的组合原则。
-
-## 迁移顺序
-
-1. **公共合约（已完成）**：Platform 已发布 Side Chat Feature、Subagent 详情、能力配置、Skill 内容预览与 project-free/project-scoped fixture。
-2. **Personal canary（已接入，持续验证）**：现有 API 和数据保持在产品仓库，通过 adapter 使用共享 controller/View Model/React 面板；真实使用问题先在 Personal 验收，再判断是否属于公共层。
-3. **Agent Terminal 迁移**：先升级到当前 Platform，使用完整 `SessionBrowser` / `SessionWorkspace` 替换 App Server 详情区；保留 PTY、产品导航、记忆和多主机。完成 transcript、附件、Side Chat、Subagent 与手机回归后，再删除对应重复前端，不等待整个产品 React 化。
-4. **Superset 接入**：使用 lightweight profile 和独立后端 adapter，只暴露当前 Dashboard 所需能力。
-
-Solvely Workbench 保持冻结版本，不属于当前迁移步骤。
-
-每一步都必须在当前宿主通过后才能删除其旧实现；不得先做一次跨仓库批量替换。
-
-## 验证方式
-
-- Platform 单测同时覆盖 project-free 与 project-scoped Session。
-- 同一组 Side Chat 合约测试必须能运行在内存 store 与至少一个真实产品 adapter 上。
-- 刷新、切换 Session、服务重启、Runtime 丢失和显式删除分别验证，不能只测正常问答。
-- Personal 先作为真实 canary 完成浏览器验收；Agent Terminal Web 接入时复用同一组合约测试，并确认 PTY、移动布局和多主机能力没有变化。
-- 每个消费者固定明确的 Platform 版本；升级证据记录测试命令、关键输出和浏览器截图。
-
-## 风险
-
-- 如果 Platform 直接读取产品数据库，会重新形成产品耦合；必须经过 store adapter。
-- 如果只共享 React 面板而不共享状态和动作语义，重复实现仍然存在。
-- 如果为了统一视觉删除现有 slot，Solvely 的报告/SQL体验和 Personal 的项目上下文会被压平。
-- Personal 已在使用中，迁移期间必须保留旧链路作为短期回退，但验收后应删除被替代代码，不能长期双轨。
+Release and consumer adoption gates are defined in [`operations/RELEASING.md`](operations/RELEASING.md). Active Agent Terminal migration scope is defined separately in [`specs/agent-terminal-migration.md`](specs/agent-terminal-migration.md).

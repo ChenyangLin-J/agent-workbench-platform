@@ -1,0 +1,18 @@
+# Agent Workbench Platform Documentation
+
+This is the durable documentation entry for the shared package. Read only the route needed for the current task.
+
+| Task | Read | Purpose |
+| --- | --- | --- |
+| Understand ownership or decide where a change belongs | [`architecture.md`](architecture.md) | Stable Platform/consumer boundary and host contracts |
+| Continue the Agent Terminal shared-UI migration | [`specs/agent-terminal-migration.md`](specs/agent-terminal-migration.md) | Active scope, order, acceptance, and deletion gate |
+| Change a version, publish a tag, or upgrade a consumer | [`operations/RELEASING.md`](operations/RELEASING.md) | Release, canary, evidence, and rollback workflow |
+| Use or install the package | [`../README.md`](../README.md) | Public entry points and development commands |
+| Verify implementation behavior | [`../test/`](../test/) | Executable contract truth |
+
+## Lifecycle
+
+- `architecture.md` describes current stable contracts. It does not track consumer pins, temporary migration progress, or release history.
+- `specs/` contains only active migrations and unresolved designs. Once a spec is implemented, cancelled, or absorbed, remove it from the active index and archive it only when its history is still useful.
+- `operations/` contains repeatable workflows, not one release's transcript. Git tags and GitHub Releases are the package release record; consumer repositories keep their own adoption evidence.
+- `README.md` stays a concise public entry. Detailed product behavior belongs to the owning consumer, not this repository.

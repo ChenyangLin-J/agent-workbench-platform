@@ -4,7 +4,7 @@ Shared, product-neutral building blocks for independent Codex workbench applicat
 
 The package lets multiple products reuse one implementation while keeping their repositories, accounts, data, deployments, and product organization separate.
 
-The current shared boundary and consumer migration order are defined in [`docs/architecture.md`](docs/architecture.md).
+Start with the [`docs/README.md`](docs/README.md) documentation map. The stable shared boundary is defined in [`docs/architecture.md`](docs/architecture.md); active consumer migrations live in `docs/specs/`.
 
 ## Included
 
@@ -31,12 +31,12 @@ Pin a release tag from any GitHub or GitLab consumer:
 ```json
 {
   "dependencies": {
-    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/v0.6.6.tar.gz"
+    "@agent-workbench/platform": "https://github.com/ChenyangLin-J/agent-workbench-platform/archive/refs/tags/vX.Y.Z.tar.gz"
   }
 }
 ```
 
-Release tags follow semantic compatibility boundaries. Consumers may automatically accept a newer patch in their current minor line after their own tests pass; minor and major upgrades require product-level review. A package change on `main` must bump `package.json`: GitHub Actions tests it, creates the matching tag and release, and rejects package changes that reuse an existing version.
+Replace `vX.Y.Z` with an existing release tag. Consumers may automatically accept a newer patch in their current minor line after their own tests pass; minor and major upgrades require product-level review. The complete version, release, consumer-canary, and rollback workflow is in [`docs/operations/RELEASING.md`](docs/operations/RELEASING.md).
 
 Consumers provide React and their own compatible Codex CLI version. This lets independent products keep separate accounts and upgrade from `0.145.x` to `0.147.x` without forking Core:
 
