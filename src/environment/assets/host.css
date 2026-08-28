@@ -1,0 +1,21 @@
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+body { overflow: hidden; background: var(--cwu-bg); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+button, input, textarea, select { font-family: inherit; }
+.awb-minimal-host { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); padding: 12px; gap: 10px; box-sizing: border-box; }
+.awb-host-bar { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid var(--cwu-border); border-radius: 11px; background: var(--cwu-surface); padding: 9px 12px; color: var(--cwu-text); }
+.awb-host-identity { min-width: 0; display: flex; align-items: baseline; gap: 9px; }
+.awb-host-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.awb-host-identity span, .awb-host-isolation { color: var(--cwu-muted); font-size: 10px; }
+.awb-host-meta { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.awb-host-isolation { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.awb-host-isolation[data-satisfied="false"] { color: var(--cwu-error); }
+.awb-host-stop { border: 1px solid var(--cwu-border); border-radius: 8px; background: transparent; color: var(--cwu-muted); padding: 6px 9px; font-size: 10px; cursor: pointer; }
+.awb-host-stop:hover { color: var(--cwu-error); }
+.awb-host-error { position: fixed; z-index: 100; right: 18px; bottom: 18px; max-width: min(460px, calc(100vw - 36px)); border: 1px solid color-mix(in srgb, var(--cwu-error) 60%, var(--cwu-border)); border-radius: 10px; background: var(--cwu-surface); color: var(--cwu-error); padding: 10px 12px; box-shadow: 0 12px 36px rgba(40, 34, 28, .18); font-size: 12px; }
+.awb-minimal-host > .cwu-browser { height: 100%; }
+@media (max-width: 640px) {
+  .awb-minimal-host { padding: 0; gap: 0; }
+  .awb-host-bar { border-width: 0 0 1px; border-radius: 0; }
+  .awb-host-isolation { display: none; }
+  .awb-minimal-host > .cwu-browser { border: 0; border-radius: 0; }
+}

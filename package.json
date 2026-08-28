@@ -1,7 +1,7 @@
 {
   "name": "@agent-workbench/platform",
   "version": "0.7.0",
-  "description": "Shared Codex runtime, Session UI, Sub Agent, Realtime, and browser-provider primitives for independent agent workbench products.",
+  "description": "Shared Codex runtime, Session UI, Sub Agent, Realtime, runnable environments, browser, and capability primitives for independent agent workbench products.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -20,6 +20,8 @@
     "mcp"
   ],
   "files": [
+    "bin/",
+    "containers/",
     "src/",
     "capabilities/",
     "schemas/",
@@ -28,6 +30,9 @@
     "LICENSE"
   ],
   "type": "module",
+  "bin": {
+    "agent-workbench": "./bin/agent-workbench.js"
+  },
   "exports": {
     ".": "./src/index.js",
     "./session": "./src/session.js",
@@ -43,6 +48,7 @@
     "./ui-hooks": "./src/ui-hooks.js",
     "./runtime": "./src/runtime.js",
     "./runtime/core": "./src/runtime/core/index.js",
+    "./environment": "./src/environment/index.js",
     "./browser-provider": "./src/browser/provider.js",
     "./realtime-controller": "./src/browser/realtime-controller.js",
     "./ui": "./src/ui/index.jsx",
@@ -50,6 +56,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
+    "test:docker-environment": "node scripts/smoke-docker-environment.mjs",
     "update:playwright-tools": "node scripts/update-playwright-tools.mjs"
   },
   "peerDependencies": {
@@ -57,9 +64,18 @@
     "react": ">=19",
     "react-dom": ">=19"
   },
+  "optionalDependencies": {
+    "@openai/codex-darwin-arm64": "npm:@openai/codex@0.147.0-darwin-arm64",
+    "@openai/codex-darwin-x64": "npm:@openai/codex@0.147.0-darwin-x64",
+    "@openai/codex-linux-arm64": "npm:@openai/codex@0.147.0-linux-arm64",
+    "@openai/codex-linux-x64": "npm:@openai/codex@0.147.0-linux-x64",
+    "@openai/codex-win32-arm64": "npm:@openai/codex@0.147.0-win32-arm64",
+    "@openai/codex-win32-x64": "npm:@openai/codex@0.147.0-win32-x64"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "@playwright/mcp": "0.0.79",
+    "esbuild": "0.28.2",
     "katex": "0.16.47",
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",

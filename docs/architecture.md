@@ -17,6 +17,9 @@
 @agent-workbench/platform/plugins + capabilities
   product-neutral manifests, registry, dependency resolution, install plans and locks
 
+@agent-workbench/platform/environment
+  project-free Minimal Host, Environment/Run manifests, lifecycle and isolation providers
+
 consumer host
   stores, adapters, product context, authorization, side effects, navigation and deployment
 ```
@@ -46,6 +49,7 @@ Data Skill Lab currently incubates inside the Personal repository and still laun
 | Attachment metadata, limits, input and transcript envelopes | Attachment bytes, URLs, path authorization and file actions |
 | Shared Session/Feature React UI and extension slots | Page shell, theme, placement and business extensions |
 | Capability schema, common catalog, dependency resolution, plans and portable locks | Product Profile, custom catalog, host checks, install handlers and authentication |
+| Environment/Run schema, Minimal Host, lifecycle and provider enforcement contract | Profile selection, credential/egress brokers, data adapters, retention and deployment |
 | Browser Provider lifecycle primitives and product-neutral proxy behavior | Browser profile, MCP endpoint, authorization and user-facing controls |
 | Project-free and project-scoped contract fixtures | Consumer integration, end-to-end and manual acceptance evidence |
 
@@ -76,6 +80,14 @@ Platform never reads a product database, chooses a package manager, stores crede
 - Discovery and tool inventory are process-free. The first real tool call may start a consumer-configured Provider.
 - Stateful calls are serialized. Provider instances return to zero when idle and teardown is bounded; a consumer may separately choose to retain its browser window.
 - The consumer owns profile directories, endpoints, path allowlists and every external action authorization.
+
+### Runnable environments
+
+- Creating an Environment creates instance state, not source code. A consumer needs another repository only when it adds product-specific routes, adapters, UI, persistence or deployment.
+- The built-in Host runs Sessions without projects, tasks, memory, evaluation policy or a consumer checkout. `policies/`, `evaluations/` and `gold/` are optional consumer/evaluator assets and are never required Host directories.
+- Requested isolation is not evidence. The effective level is derived from provider enforcement facets and startup fails when it is below the Profile minimum.
+- Development mode is useful but explicitly non-isolated. The Docker provider currently proves strong isolation only for offline, empty-capability Runs; profiles that need credentials, network, external effects or capability staging fail closed until enforcing brokers exist.
+- Each Run owns its Runtime home, Session state, workspace, temporary paths and transient credential directory. Stop removes transient credentials and child resources while retaining the Run manifest and Session state.
 
 ## Placement test
 

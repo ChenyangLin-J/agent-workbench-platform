@@ -1,0 +1,11 @@
+{
+  "schema": "agent-workbench.environment-profile/v1",
+  "id": "offline-docker-host",
+  "features": {
+    "attachments": false
+  },
+  "isolation": {
+    "provider": "docker",
+    "minimumLevel": "ephemeral-machine"
+  }
+}

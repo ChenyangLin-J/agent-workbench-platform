@@ -19,6 +19,7 @@ Start with the [`docs/README.md`](docs/README.md) documentation map. The stable 
 - Product-neutral capability plugins: skill sources, MCP servers, CLI tools, and credential providers
 - A versioned common Capability Registry, schema, dependency resolver, install plan, portable lock, host-backed Capability Manager, and React management panel
 - Codex connection preparation, Skill-root inventory validation, execution-profile translation, and grouped/incremental Session pagination policy
+- A runnable, project-free Minimal Host with Environment manifests, lifecycle CLI, and honest development or Docker isolation reporting
 
 ## Product boundary
 
@@ -65,6 +66,7 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 - `@agent-workbench/platform/ui-hooks`
 - `@agent-workbench/platform/runtime`
 - `@agent-workbench/platform/runtime/core`
+- `@agent-workbench/platform/environment`
 - `@agent-workbench/platform/browser-provider`
 - `@agent-workbench/platform/realtime-controller`
 - `@agent-workbench/platform/ui`
@@ -100,6 +102,8 @@ Requires Node.js 22 or newer.
 npm ci
 npm test
 ```
+
+To create and run the built-in project-free Host, start with the Environment runbook: [`docs/operations/ENVIRONMENTS.md`](docs/operations/ENVIRONMENTS.md). Creating an Environment creates isolated instance data; it does not create a repository. A separate consumer repository is needed only when the product adds custom source code, routes, adapters, or deployment.
 
 When updating `@playwright/mcp`, regenerate the versioned tool manifest:
 

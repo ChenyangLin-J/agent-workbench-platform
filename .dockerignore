@@ -1,0 +1,14 @@
+**
+!.dockerignore
+!package.json
+!package-lock.json
+!bin/
+!bin/**
+!capabilities/
+!capabilities/**
+!containers/
+!containers/minimal-host.Dockerfile
+!schemas/
+!schemas/**
+!src/
+!src/**

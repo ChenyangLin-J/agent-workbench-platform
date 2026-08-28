@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workbench.local/schemas/environment-profile.schema.json",
+  "title": "Agent Workbench Environment Profile",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "$schema": { "const": "agent-workbench.environment-profile/v1" },
+    "schema": { "const": "agent-workbench.environment-profile/v1" },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$" },
+    "title": { "type": "string", "minLength": 1 },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "reasoningEffort": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "features": {
+      "type": "object",
+      "properties": {
+        "sessionWorkspace": { "const": true },
+        "attachments": { "type": "boolean" },
+        "sideChat": { "type": "boolean" },
+        "subagents": { "type": "boolean" },
+        "browser": { "type": "boolean" },
+        "capabilityMutation": { "type": "boolean" },
+        "evidenceDashboard": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "lock": { "$ref": "#/$defs/capabilityLock" }
+      },
+      "additionalProperties": false
+    },
+    "isolation": {
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "minimumLevel": { "enum": ["development", "guarded-host", "ephemeral-machine"] },
+        "filesystem": {
+          "type": "object",
+          "properties": {
+            "readableRoots": { "$ref": "#/$defs/stringList" },
+            "writableRoots": { "$ref": "#/$defs/stringList" }
+          },
+          "additionalProperties": false
+        },
+        "environmentKeys": { "$ref": "#/$defs/stringList" },
+        "networkTargets": { "$ref": "#/$defs/stringList" },
+        "credentialReferences": { "$ref": "#/$defs/stringList" },
+        "externalEffects": {
+          "type": "object",
+          "properties": {
+            "read": { "$ref": "#/$defs/stringList" },
+            "write": { "$ref": "#/$defs/stringList" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "extensions": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "capabilityLock": {
+      "type": "object",
+      "properties": {
+        "version": { "type": "integer", "minimum": 1 },
+        "profileId": { "type": "string", "minLength": 1 },
+        "catalogVersion": { "type": "integer", "minimum": 1 },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "scope", "version"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "kind": { "type": "string", "minLength": 1 },
+              "scope": { "type": "string", "minLength": 1 },
+              "version": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

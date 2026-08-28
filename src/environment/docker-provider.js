@@ -1,0 +1,245 @@
+import { execFile, spawn } from 'node:child_process';
+import { closeSync, openSync } from 'node:fs';
+import { lstat, realpath, stat } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { promisify } from 'node:util';
+
+import { defineIsolationProvider, providerError } from './providers.js';
+import { isPathContained } from './paths.js';
+
+const execFileAsync = promisify(execFile);
+const SAFE_ENVIRONMENT_KEYS = new Set(['LANG', 'LC_ALL', 'TZ']);
+
+export function createDockerIsolationProvider({
+  dockerCommand = 'docker',
+  spawnProcess = spawn,
+  inspectDocker = defaultDockerInspection,
+} = {}) {
+  return defineIsolationProvider({
+    id: 'docker',
+    async inspect(context = {}) {
+      const profile = context.profile;
+      const facts = dockerProfileFacts(profile);
+      const filesystem = await dockerFilesystemFacts(profile, context);
+      const docker = await inspectDocker(dockerCommand);
+      const available = docker.available && facts.ready && filesystem.ready;
+      const enforced = (condition = true) => docker.available && condition;
+      const mode = (condition, satisfied, unsatisfied) => !docker.available
+        ? 'docker-unavailable'
+        : condition ? satisfied : unsatisfied;
+      return {
+        available,
+        ...(available
+          ? {}
+          : { reason: [...docker.reasons, ...facts.reasons, ...filesystem.reasons].join(' ') }),
+        enforcement: {
+          filesystem: { enforced: enforced(filesystem.ready), mode: mode(filesystem.ready, 'canonical-container-mount-allowlist', 'invalid-mount-boundary') },
+          process: { enforced: enforced(), mode: mode(true, 'container-pid-namespace-and-limits', 'docker-unavailable') },
+          environment: { enforced: enforced(facts.environment), mode: mode(facts.environment, 'constructed-container-env', 'unsupported-env-injection') },
+          capabilities: { enforced: enforced(facts.capabilities), mode: mode(facts.capabilities, 'empty-capability-lock', 'capability-staging-required') },
+          credentials: { enforced: enforced(facts.credentials), mode: mode(facts.credentials, 'no-credentials', 'credential-broker-required') },
+          network: { enforced: enforced(facts.network), mode: mode(facts.network, 'internal-network-with-fixed-ingress-sidecar', 'egress-proxy-required') },
+          externalEffects: { enforced: enforced(facts.externalEffects), mode: mode(facts.externalEffects, 'no-external-effects', 'effect-adapter-required') },
+          crossRun: { enforced: enforced(), mode: mode(true, 'unique-container-network-and-run-mounts', 'docker-unavailable') },
+          ephemeralIdentity: { enforced: enforced(), mode: mode(true, 'auto-removed-container', 'docker-unavailable') },
+        },
+      };
+    },
+    async start({ launch } = {}) {
+      validateLaunch(launch);
+      const args = launch.args.map((argument) => argument === '--internal-host' ? '--internal-docker-supervisor' : argument);
+      if (!args.includes('--internal-docker-supervisor')) {
+        throw providerError('DOCKER_SUPERVISOR_ENTRY_MISSING', 'Docker provider requires the internal container supervisor entry point.');
+      }
+      const stdout = openSync(launch.stdoutPath, 'a', 0o600);
+      let stderr;
+      let child;
+      try {
+        stderr = openSync(launch.stderrPath, 'a', 0o600);
+        const dockerEnvironment = await resolveDockerEnvironment(dockerCommand);
+        child = spawnProcess(launch.command, args, {
+          cwd: launch.cwd,
+          env: {
+            ...launch.environment,
+            ...dockerEnvironment,
+            AGENT_WORKBENCH_DOCKER_COMMAND: dockerCommand,
+          },
+          detached: true,
+          shell: false,
+          stdio: ['ignore', stdout, stderr],
+        });
+      } finally {
+        closeSync(stdout);
+        if (stderr !== undefined) closeSync(stderr);
+      }
+      if (!Number.isSafeInteger(child.pid) || child.pid <= 1) {
+        throw providerError('DOCKER_SUPERVISOR_LAUNCH_FAILED', 'Docker supervisor did not return a valid process id.');
+      }
+      child.unref?.();
+      return {
+        pid: child.pid,
+        processGroupId: child.pid,
+        expectedArguments: args,
+        startupTimeoutMs: 5 * 60_000,
+      };
+    },
+    async stop({ pid, processGroupId = pid, verifyOwnership, manifest } = {}) {
+      if (!Number.isSafeInteger(pid) || pid <= 1 || !Number.isSafeInteger(processGroupId) || processGroupId <= 1) {
+        throw providerError('ISOLATION_PROCESS_INVALID', 'Refusing to stop an invalid Docker supervisor process.');
+      }
+      if (typeof verifyOwnership === 'function' && await verifyOwnership({ pid, processGroupId })) {
+        try {
+          // Signal only the supervisor. Its `docker wait` child must stay alive long
+          // enough to observe the owned workload's graceful exit and clean sidecars.
+          process.kill(pid, 'SIGTERM');
+        } catch (error) {
+          if (error?.code !== 'ESRCH') throw error;
+        }
+        return { stopped: true };
+      }
+      const recovered = await recoverOwnedDockerResources(dockerCommand, manifest);
+      if (recovered) return { stopped: true, recovered: true };
+      throw providerError('ISOLATION_PROCESS_UNOWNED', `Refusing to stop unverified Docker supervisor ${pid}.`);
+    },
+  });
+}
+
+async function dockerFilesystemFacts(profile = {}, context = {}) {
+  const reasons = [];
+  const paths = [
+    ...(profile.isolation?.filesystem?.readableRoots || []),
+    ...(profile.isolation?.filesystem?.writableRoots || []),
+  ];
+  const environmentRoot = context.paths?.runs
+    ? context.paths.root
+    : context.paths?.root ? dirname(dirname(context.paths.root)) : null;
+  for (const path of paths) {
+    if (path === '/' || /[,\n\r]/.test(path)) {
+      reasons.push(`Unsafe container mount root: ${path}.`);
+      continue;
+    }
+    try {
+      const [info, canonical, target] = await Promise.all([lstat(path), realpath(path), stat(path)]);
+      if (info.isSymbolicLink() || canonical !== resolve(path)) reasons.push(`Container mount root must be canonical and not a symlink: ${path}.`);
+      if (!target.isDirectory()) reasons.push(`Container mount root must be a directory: ${path}.`);
+      if (environmentRoot && isPathContained(path, environmentRoot)) {
+        reasons.push(`Container mount root would expose Environment or sibling Run state: ${path}.`);
+      }
+    } catch (error) {
+      reasons.push(`Container mount root is unavailable: ${path} (${error.code || 'error'}).`);
+    }
+  }
+  return { ready: reasons.length === 0, reasons };
+}
+
+async function recoverOwnedDockerResources(dockerCommand, manifest) {
+  const state = manifest?.process?.providerState;
+  if (!state || manifest?.isolation?.provider !== 'docker') return false;
+  let found = false;
+  for (const id of [state.containerId, state.ingressId].filter(Boolean)) {
+    let label;
+    try {
+      ({ stdout: label } = await execFileAsync(dockerCommand, ['inspect', '--format', '{{index .Config.Labels "ai.agent-workbench.run"}}', id], {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      }));
+    } catch {
+      continue;
+    }
+    if (String(label).trim() !== manifest.id) {
+      throw providerError('DOCKER_CONTAINER_UNOWNED', `Refusing to remove unowned container ${id}.`);
+    }
+    found = true;
+    await execFileAsync(dockerCommand, ['rm', '--force', id], { timeout: 20_000, maxBuffer: 1024 * 1024 });
+  }
+  if (state.networkName) {
+    let label;
+    try {
+      ({ stdout: label } = await execFileAsync(dockerCommand, ['network', 'inspect', '--format', '{{index .Labels "ai.agent-workbench.run"}}', state.networkName], {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      }));
+    } catch {
+      label = null;
+    }
+    if (label != null) {
+      if (String(label).trim() !== manifest.id) {
+        throw providerError('DOCKER_NETWORK_UNOWNED', `Refusing to remove unowned network ${state.networkName}.`);
+      }
+      found = true;
+      await execFileAsync(dockerCommand, ['network', 'rm', state.networkName], { timeout: 20_000, maxBuffer: 1024 * 1024 });
+    }
+  }
+  return found;
+}
+
+async function resolveDockerEnvironment(dockerCommand) {
+  const environment = {};
+  for (const key of ['DOCKER_HOST', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH']) {
+    if (typeof process.env[key] === 'string' && process.env[key]) environment[key] = process.env[key];
+  }
+  if (!environment.DOCKER_HOST) {
+    try {
+      const { stdout } = await execFileAsync(dockerCommand, ['context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'], {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      });
+      const host = String(stdout).trim();
+      if (host) environment.DOCKER_HOST = host;
+    } catch {
+      // docker info in inspect() remains the source of the user-facing availability error.
+    }
+  }
+  return environment;
+}
+
+export function dockerProfileFacts(profile = {}) {
+  const reasons = [];
+  const environmentKeys = profile.isolation?.environmentKeys || [];
+  const unsafeEnvironmentKeys = environmentKeys.filter((key) => !SAFE_ENVIRONMENT_KEYS.has(key));
+  const environment = unsafeEnvironmentKeys.length === 0;
+  if (!environment) reasons.push(`Container environment keys require a secret-safe broker: ${unsafeEnvironmentKeys.join(', ')}.`);
+  const capabilities = (profile.capabilities?.lock?.capabilities || []).length === 0;
+  if (!capabilities) reasons.push('Container capability snapshots are not staged yet.');
+  const credentials = (profile.isolation?.credentialReferences || []).length === 0;
+  if (!credentials) reasons.push('Container credential references require a short-lived credential broker.');
+  const network = (profile.isolation?.networkTargets || []).length === 0;
+  if (!network) reasons.push('Container network targets require the controlled egress proxy.');
+  const externalEffects = ['read', 'write'].every((kind) => (profile.isolation?.externalEffects?.[kind] || []).length === 0);
+  if (!externalEffects) reasons.push('Declared external effects require an enforcing capability adapter.');
+  return {
+    environment,
+    capabilities,
+    credentials,
+    network,
+    externalEffects,
+    ready: environment && capabilities && credentials && network && externalEffects,
+    reasons,
+  };
+}
+
+async function defaultDockerInspection(dockerCommand) {
+  try {
+    const { stdout } = await execFileAsync(dockerCommand, ['info', '--format', '{{.ServerVersion}}'], {
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const version = String(stdout).trim();
+    return version
+      ? { available: true, version, reasons: [] }
+      : { available: false, version: null, reasons: ['Docker daemon did not report a version.'] };
+  } catch (error) {
+    return { available: false, version: null, reasons: [`Docker daemon is unavailable: ${error.message}.`] };
+  }
+}
+
+function validateLaunch(launch) {
+  if (!launch || typeof launch !== 'object') throw new TypeError('Docker isolation launch descriptor is required');
+  for (const name of ['command', 'cwd', 'stdoutPath', 'stderrPath']) {
+    if (typeof launch[name] !== 'string' || !launch[name]) throw new TypeError(`Docker isolation launch ${name} is required`);
+  }
+  if (!Array.isArray(launch.args) || launch.args.some((value) => typeof value !== 'string')) {
+    throw new TypeError('Docker isolation launch args must be strings');
+  }
+  if (!launch.environment || typeof launch.environment !== 'object') throw new TypeError('Docker isolation launch environment is required');
+}

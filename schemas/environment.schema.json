@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workbench.local/schemas/environment.schema.json",
+  "title": "Agent Workbench Environment or Run Manifest",
+  "type": "object",
+  "required": ["schema", "kind", "id", "status", "versions", "profile", "features", "capabilities", "isolation", "paths", "lifecycle"],
+  "properties": {
+    "schema": { "const": "agent-workbench.environment/v1" },
+    "kind": { "enum": ["environment", "run"] },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,95}$" },
+    "environmentId": { "type": "string" },
+    "status": { "enum": ["created", "running", "stopped", "failed"] },
+    "versions": { "type": "object" },
+    "profile": { "type": "object" },
+    "runtime": { "type": "object" },
+    "features": { "type": "object" },
+    "capabilities": { "type": "object" },
+    "isolation": { "type": "object" },
+    "paths": { "type": "object" },
+    "process": { "type": "object" },
+    "extensions": { "type": "object" },
+    "lifecycle": { "type": "object" }
+  },
+  "additionalProperties": false
+}

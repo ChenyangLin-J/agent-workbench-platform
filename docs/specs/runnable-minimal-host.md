@@ -1,6 +1,6 @@
 # Runnable Minimal Host and Isolated Environments
 
-Lifecycle: active design spec. This spec defines a product-neutral runnable host and environment contract; it does not define a Data Skill evaluation product.
+Lifecycle: active implementation and adoption spec. The project-free Host and offline strong-isolation milestone are implemented on `feature/runnable-minimal-host`; Data Skill Lab adoption and enforcing broker work remain open. This spec does not define a Data Skill evaluation product.
 
 ## Objective
 
@@ -39,19 +39,36 @@ Consumers provide:
 
 The Minimal Host must not require or create `policies/`, `evaluations/`, `gold/`, project registries, task stores or business context. A consumer may keep any optional assets in its own layout or in an entirely separate evaluator system.
 
-## Expected commands
-
-Names are provisional; behavior is the contract.
+## Commands
 
 ```text
 agent-workbench env create --profile <profile>
 agent-workbench env run <environment-or-run>
 agent-workbench env inspect <environment-or-run>
 agent-workbench env stop <environment-or-run>
-agent-workbench app create <directory>     # only when source customization is required
 ```
 
-`env create` creates instance data, not a new source repository. `app create` is a separate scaffold for a real consumer that needs custom code.
+`env create` creates instance data, not a new source repository. A future app scaffold, if justified by repeated consumer setup, is a separate concern for products that need custom code.
+
+## Current milestone
+
+Implemented in Platform:
+
+- strict Profile normalization, stable hashing and secret-value rejection;
+- atomic Environment/Run creation, contained paths, symlink escape checks and retained project-free Session state;
+- `env create`, `run`, `inspect` and `stop` plus the built-in Session UI and Codex Runtime lifecycle;
+- effective isolation derived from nine enforcement facets rather than provider self-report;
+- a real Docker ephemeral provider for offline, empty-capability Profiles, including exact owned-resource cleanup and a repeatable Docker smoke test;
+- an explicit non-isolated development provider for trusted local work.
+
+Deliberately blocked rather than downgraded:
+
+- short-lived Codex or domain credentials;
+- allowlisted model/data network access;
+- non-empty Capability snapshot staging;
+- read/write external effects and domain data adapters.
+
+Those four boundaries need enforcing brokers before Data Skill Lab can use the strong provider for a real Candidate/Baseline run. Platform automated tests and the offline Docker smoke are complete; independent consumer canary and manual browser acceptance remain release gates.
 
 ## Environment manifest
 
@@ -123,10 +140,11 @@ Existing Personal Lab Runs are not moved wholesale. Runtime homes and authentica
 1. Checkpoint active Platform and Personal work; do not extract from a changing worktree.
 2. Define and test the manifest schema, isolation levels and provider interface in Platform.
 3. Add the project-free Minimal Host and CLI using existing Runtime, UI and Capability primitives.
-4. Implement one guarded-host provider and prove that failed enforcement blocks startup.
-5. Implement the ephemeral container/VM provider required for untrusted evaluation.
-6. Port Data Skill Lab as a thin Profile and run Candidate/Baseline parity against the existing implementation.
-7. After acceptance, remove Personal's Lab host integration while preserving the chosen historical evidence boundary.
+4. Prove that failed enforcement blocks startup; add a guarded-host provider only when a supported OS contract is concrete.
+5. Implement the offline ephemeral container provider required as the strong-isolation base.
+6. Add credential, egress, Capability staging and effect/data brokers without weakening effective-isolation reporting.
+7. Port Data Skill Lab as a thin Profile and run Candidate/Baseline parity against the existing implementation.
+8. After acceptance, remove Personal's Lab host integration while preserving the chosen historical evidence boundary.
 
 Do not pre-emptively move Personal adapter code into Platform. Add a shared abstraction only when the Minimal Host implementation demonstrates the product-neutral contract and tests it without Personal fixtures.
 
@@ -143,8 +161,8 @@ Do not pre-emptively move Personal adapter code into Platform. Add a shared abst
 
 ## Open decisions
 
-- Final CLI/package entry-point names.
-- Guarded-host implementations supported first on macOS and Linux.
-- Container/VM backend and short-lived Codex authentication flow.
+- Whether a guarded-host provider has enough value to support before the broker-backed Docker path.
+- Short-lived Codex authentication and destination-bound egress broker contracts.
+- Capability snapshot and domain data/effect adapter contracts.
 - Default Run retention and the boundary between retained Session state and disposable credentials.
 - Whether evidence export becomes a generic optional extension after a second consumer demonstrates the same contract.

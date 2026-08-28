@@ -6,6 +6,7 @@ This is the durable documentation entry for the shared package. Read only the ro
 | --- | --- | --- |
 | Understand ownership or decide where a change belongs | [`architecture.md`](architecture.md) | Stable Platform/consumer boundary and host contracts |
 | Build the runnable minimal host or isolated environments | [`specs/runnable-minimal-host.md`](specs/runnable-minimal-host.md) | Active CLI, manifest, isolation, and adoption design |
+| Create, inspect, run, or stop a local Environment | [`operations/ENVIRONMENTS.md`](operations/ENVIRONMENTS.md) | Profile examples, lifecycle commands, provider guarantees, and verification |
 | Continue the Agent Terminal shared-UI migration | [`specs/agent-terminal-migration.md`](specs/agent-terminal-migration.md) | Active scope, order, acceptance, and deletion gate |
 | Change a version, publish a tag, or upgrade a consumer | [`operations/RELEASING.md`](operations/RELEASING.md) | Release, canary, evidence, and rollback workflow |
 | Use or install the package | [`../README.md`](../README.md) | Public entry points and development commands |
