@@ -11,6 +11,7 @@ import '../browser/subagent-elements.js';
 
 import {
   clipboardAttachmentFiles,
+  documentPreviewPresentation,
   groupSessionMessages,
   groupSessionSummaries,
   isLocalFileHref,
@@ -771,6 +772,7 @@ export function SessionWorkspace({
   const transcriptRef = useRef(null);
   const composerRef = useRef(null);
   const followLatestRef = useRef(true);
+  const submitFollowRef = useRef(false);
   const messageActivityRef = useRef({ sessionId: view.sessionId, key: '' });
   const [draft, setDraft] = useState(view.draft);
   const [attachments, setAttachments] = useState([]);
@@ -811,6 +813,7 @@ export function SessionWorkspace({
 
   useEffect(() => {
     followLatestRef.current = true;
+    submitFollowRef.current = false;
     setDraft(view.draft);
     setAttachments([]);
     setAttachmentUploadState({ status: 'idle', error: '' });
@@ -818,6 +821,25 @@ export function SessionWorkspace({
     setAwayFromLatest(false);
     setHasNewMessagesBelow(false);
     messageActivityRef.current = { sessionId: view.sessionId, key: latestMessageActivityKey };
+  }, [view.sessionId]);
+
+  useEffect(() => {
+    const followAfterViewportChange = () => {
+      if (!submitFollowRef.current) return;
+      requestAnimationFrame(() => {
+        const target = transcriptRef.current;
+        if (!target) return;
+        target.scrollTop = target.scrollHeight;
+        setAwayFromLatest(false);
+        setHasNewMessagesBelow(false);
+      });
+    };
+    window.addEventListener('resize', followAfterViewportChange);
+    window.visualViewport?.addEventListener('resize', followAfterViewportChange);
+    return () => {
+      window.removeEventListener('resize', followAfterViewportChange);
+      window.visualViewport?.removeEventListener('resize', followAfterViewportChange);
+    };
   }, [view.sessionId]);
 
   useEffect(() => {
@@ -857,8 +879,13 @@ export function SessionWorkspace({
     const target = event.currentTarget;
     const away = sessionTranscriptAwayFromLatest(target);
     followLatestRef.current = !away;
+    if (away) submitFollowRef.current = false;
     setAwayFromLatest(away);
     if (!away) setHasNewMessagesBelow(false);
+  }
+
+  function stopSubmitFollow() {
+    submitFollowRef.current = false;
   }
 
   function scrollToLatest() {
@@ -874,6 +901,7 @@ export function SessionWorkspace({
     if ((!prompt && !attachments.length) || submitting || uploading || !actions.onSubmit) return;
     const submittedDraft = draft;
     const submittedAttachments = attachments;
+    submitFollowRef.current = true;
     followLatest();
     setSubmitting(true);
     setDraft('');
@@ -1083,7 +1111,13 @@ export function SessionWorkspace({
       </header>
 
       <main className="cwu-session-main">
-        <agent-session-stream className="cwu-transcript" onScroll={updateFollowState} ref={transcriptRef}>
+        <agent-session-stream
+          className="cwu-transcript"
+          onPointerDown={stopSubmitFollow}
+          onScroll={updateFollowState}
+          onWheel={stopSubmitFollow}
+          ref={transcriptRef}
+        >
           {extensions.renderBeforeMessages?.({ session: view }) || null}
           <div className="cwu-message-column">
             {view.hasEarlierTurns && actions.onLoadEarlier ? (
@@ -1587,9 +1621,45 @@ function DocumentPreview({ file, onClose, onOpenExternal, onOpenLink, onRevealLi
                 remarkPlugins={MARKDOWN_REMARK_PLUGINS}
               >{normalizeMarkdownMath(file.content || '')}</ReactMarkdown>
             </div>
-          ) : <pre className="cwu-document-code">{file.content || ''}</pre>}
+          ) : documentPreviewPresentation(file).code ? (
+            <DocumentCodePreview file={file} />
+          ) : <pre className="cwu-document-text">{file.content || ''}</pre>}
         </div>
       </section>
+    </div>
+  );
+}
+
+function DocumentCodePreview({ file }) {
+  const preview = useMemo(() => documentPreviewPresentation(file), [file]);
+  const highlightedLineRef = useRef(null);
+
+  useEffect(() => {
+    if (!preview.highlightLine) return undefined;
+    const frame = requestAnimationFrame(() => {
+      highlightedLineRef.current?.scrollIntoView({ block: 'center', inline: 'nearest' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [file.name, file.path, preview.highlightLine]);
+
+  return (
+    <div aria-label={`${file.name} 源码`} className="cwu-document-code" role="list">
+      {preview.lines.map((line, index) => {
+        const lineNumber = index + 1;
+        const highlighted = lineNumber === preview.highlightLine;
+        return (
+          <div
+            aria-current={highlighted ? 'location' : undefined}
+            className={`cwu-document-code-line ${highlighted ? 'is-highlighted' : ''}`}
+            key={lineNumber}
+            ref={highlighted ? highlightedLineRef : undefined}
+            role="listitem"
+          >
+            <span aria-hidden="true" className="cwu-document-line-number">{lineNumber}</span>
+            <code>{line || '\u00a0'}</code>
+          </div>
+        );
+      })}
     </div>
   );
 }

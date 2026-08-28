@@ -52,6 +52,33 @@ export function localFileBrowserHref(value) {
   return `file://${href}`;
 }
 
+const CODE_PREVIEW_EXTENSIONS = new Set([
+  'bash', 'c', 'cc', 'cjs', 'cpp', 'cs', 'css', 'go', 'h', 'hpp', 'html', 'java', 'js', 'json', 'jsonl',
+  'jsx', 'kt', 'kts', 'mjs', 'php', 'py', 'rb', 'rs', 'scss', 'sh', 'sql', 'sqlx', 'swift', 'toml', 'ts',
+  'tsx', 'xml', 'yaml', 'yml', 'zsh',
+]);
+
+export function documentPreviewPresentation(file = {}) {
+  const name = String(file.name || 'file');
+  const format = String(file.format || '').toLowerCase();
+  const extension = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+  const content = String(file.content || '');
+  const lines = content.split('\n');
+  const explicitLine = Number(file.highlightLine ?? file.line);
+  const referencedLine = [file.reference, file.href, file.path]
+    .map((value) => String(value || '').match(/(?:#L|:)(\d+)(?:C\d+|:\d+)?$/i)?.[1])
+    .find(Boolean);
+  const candidateLine = Number.isInteger(explicitLine) && explicitLine > 0
+    ? explicitLine
+    : Number(referencedLine || 0);
+  const highlightLine = candidateLine > 0 && candidateLine <= lines.length ? candidateLine : null;
+  return {
+    code: format === 'code' || format === 'sql' || (format === 'text' && CODE_PREVIEW_EXTENSIONS.has(extension)),
+    highlightLine,
+    lines,
+  };
+}
+
 export function normalizeSessionViewModel(value = {}) {
   const models = normalizeModelOptions(value.models);
   const rawExecutionProfile = value.executionProfile;

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { clipboardAttachmentFiles, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isLocalFileHref, localFileBrowserHref, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { clipboardAttachmentFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isLocalFileHref, localFileBrowserHref, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -32,6 +32,30 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(styles, /\.cwu-local-file-link \{ position: relative; display: inline-block/);
   assert.match(styles, /\.cwu-local-file-reveal \{ position: absolute;/);
   assert.match(styles, /@media \(hover: none\)/);
+});
+
+test('code document previews keep line structure and resolve requested lines', async () => {
+  assert.deepEqual(documentPreviewPresentation({
+    name: 'server.js', format: 'text', content: 'one\ntwo\nthree', reference: '/tmp/server.js#L2',
+  }), {
+    code: true,
+    highlightLine: 2,
+    lines: ['one', 'two', 'three'],
+  });
+  assert.equal(documentPreviewPresentation({
+    name: 'query.sql', format: 'sql', content: 'select 1', highlightLine: 9,
+  }).highlightLine, null);
+  assert.equal(documentPreviewPresentation({
+    name: 'notes.txt', format: 'text', content: 'plain text',
+  }).code, false);
+
+  const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
+  assert.match(source, /function DocumentCodePreview/);
+  assert.match(source, /scrollIntoView\(\{ block: 'center', inline: 'nearest' \}\)/);
+  assert.match(source, /className="cwu-document-line-number"/);
+  assert.match(styles, /\.cwu-document-code-line \{[^}]*grid-template-columns:/);
+  assert.match(styles, /\.cwu-document-line-number \{[^}]*position: sticky;[^}]*left: 0;/);
+  assert.match(styles, /\.cwu-document-code-line\.is-highlighted/);
 });
 
 test('Session UI only offers host reveal actions for local file targets', () => {
@@ -257,6 +281,34 @@ test('Session transcript only offers the latest-message shortcut away from the b
   assert.equal(sessionTranscriptAwayFromLatest({ scrollHeight: 1000, scrollTop: 600, clientHeight: 200 }), false);
   assert.equal(sessionTranscriptAwayFromLatest({ scrollHeight: 1001, scrollTop: 600, clientHeight: 200 }), true);
   assert.equal(sessionTranscriptAwayFromLatest({ scrollHeight: 400, scrollTop: 0, clientHeight: 600 }), false);
+});
+
+test('Session UI keeps explicit submissions visible across mobile viewport changes', async () => {
+  const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
+
+  assert.match(source, /submitFollowRef\.current = true;/);
+  assert.match(source, /window\.visualViewport\?\.addEventListener\('resize', followAfterViewportChange\)/);
+  assert.match(source, /onPointerDown=\{stopSubmitFollow\}/);
+  assert.match(source, /onWheel=\{stopSubmitFollow\}/);
+  assert.match(styles, /\.cwu-session-shell \{[^}]*height: 100vh;[^}]*height: 100dvh;/);
+  assert.match(styles, /\.cwu-session-main \{[^}]*height: calc\(100vh - 64px\);[^}]*height: calc\(100dvh - 64px\);/);
+  assert.match(styles, /\.cwu-transcript \{[^}]*overscroll-behavior: contain;[^}]*-webkit-overflow-scrolling: touch;/);
+  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.cwu-composer-wrap \{[^}]*env\(safe-area-inset-bottom\)/);
+  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.cwu-composer textarea,[^}]*\.cwu-message-editor textarea \{[^}]*font-size: 16px;/);
+  assert.match(styles, /@media \(hover: none\)[\s\S]*?\.cwu-browser-row-menu > summary \{[^}]*opacity: \.68;/);
+  assert.match(styles, /@media \(hover: none\)[\s\S]*?\.cwu-message-actions \{[^}]*opacity: 1;/);
+  assert.match(styles, /@media \(max-width: 640px\)[\s\S]*?\.cwu-browser \{[^}]*min-height: 0;/);
+});
+
+test('Session UI wraps long transcript content on narrow touch screens', async () => {
+  const styles = await readFile(stylesUrl, 'utf8');
+
+  assert.match(styles, /@media \(max-width: 520px\)[\s\S]*?\.cwu-message-body pre \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
+  assert.match(styles, /@media \(max-width: 520px\)[\s\S]*?\.cwu-message-body table \{[^}]*width: 100%;[^}]*table-layout: fixed;/);
+  assert.match(styles, /@media \(max-width: 520px\)[\s\S]*?\.cwu-message-body th,[^}]*\.cwu-message-body td \{[^}]*overflow-wrap: anywhere;/);
+  assert.match(styles, /@media \(max-width: 520px\)[\s\S]*?\.cwu-composer-footer \{[^}]*flex-wrap: wrap;/);
+  assert.match(styles, /@media \(max-width: 520px\)[\s\S]*?\.cwu-composer-meta \{[^}]*width: 100%;[^}]*overflow-x: auto;/);
+  assert.match(styles, /@media \(max-width: 520px\)[\s\S]*?\.cwu-execution-controls \{[^}]*max-width: none;/);
 });
 
 test('Side Chat React UI owns shared interaction while products supply actions and storage', async () => {

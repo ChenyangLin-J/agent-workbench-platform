@@ -13,9 +13,9 @@
 
 | 宿主 | 当前技术形态 | Platform 使用情况 | 产品边界 |
 | --- | --- | --- | --- |
-| Personal Workbench | 原生页面外壳 + React `SessionWorkspace` | 固定 `v0.6.6`；当前 canary | 项目、事项、个人状态、记忆和资产 |
+| Personal Workbench | 原生页面外壳 + React `SessionBrowser` / `SessionWorkspace` | 固定 `v0.6.11`；已用本地 `v0.6.12` 完成 Mac 与手机 canary | 项目、事项、个人状态、记忆和资产 |
 | Solvely Workbench | Next.js + React | 冻结在 `v0.3.9`；不再升级 | 业务导航、报告、SQL、证据及业务 Tools/Skills |
-| Agent Terminal Web | Express + WebSocket + 原生页面，同时支持 PTY Terminal 与 App Server | 尚未使用 Platform；独立实现 App Server、Session 与 Side Chat | 手机优先入口、Terminal、记忆和多执行主机 |
+| Agent Terminal Web | Express + WebSocket + 原生页面，同时支持 PTY Terminal 与 App Server | 固定旧版 `v0.4.17`；只复用 `SessionList`，详情区仍独立实现 | 手机优先入口、Terminal、记忆和多执行主机 |
 | Superset Side Agent | 待接入的轻量侧边面板 | 尚未接入 | Dashboard、Chart、筛选条件和 Superset 权限上下文 |
 
 代码证据：
@@ -23,7 +23,18 @@
 - Platform 的 `SessionWorkspace`、`SideChatPanel`、Subagent 详情和 `CapabilityPanel` 已提供共享 React UI 与公共动作合约。
 - Personal 通过自己的 API、持久化、Runtime 与健康检查 adapter 使用这些公共能力，不读取 Platform 同级源码。
 - Solvely 的现有配置与 Canvas 只保留为冻结边界参考，不作为当前验收宿主。
-- Agent Terminal Web 的公开仓库没有 `@agent-workbench/platform` 依赖，并在自己的 `server.js` 与 `public/app.js` 中维护 Side Chat。
+- Agent Terminal Web 已把 Session 列表接到 Platform，但仍在自己的 `server.js`、`public/app.js` 与 `public/styles.css` 中维护 App Server transcript、Composer、Side Chat、Subagent、附件与 Browser UI。
+
+### Agent Terminal UI 对照结论
+
+| 归属 | 能力 |
+| --- | --- |
+| 合入 Platform | iOS `visualViewport` 跟随、动态视口与安全区、触摸操作可达性、手机长内容换行、抽屉式 Session 列表和窄屏 Composer 工具栏 |
+| 保留 Platform 现有实现 | Transcript、Composer、附件预览、Side Chat、Subagent 链路、执行过程、排队消息、文件与图片预览 |
+| 只留 Agent Terminal | Terminal/Text 标签、xterm/PTY、终端快捷键、PWA 主导航、Memory、多主机、账号、公开分享与终端专用 Focus Mode |
+| 全量迁移后删除 | Agent Terminal 自己的 App Server transcript/Composer、Side Chat/Subagent 面板、Markdown 渲染和 Browser Provider 前端重复层 |
+
+第一批移动行为已进入 Platform `v0.6.12`：显式发送在软件键盘改变视口时继续跟随新输出，用户触摸或滚轮阅读历史会停止强制跟随；手机表格、代码块、Composer 与触摸菜单也使用公共响应式规则。产品外壳仍需提供 `viewport-fit=cover` 并给共享区域一个可收缩的高度容器。
 
 ## 目标边界
 
@@ -137,7 +148,7 @@ Subagent 与 Side Chat 保持不同数据模型。Platform 继续从 Codex 父�
 
 1. **公共合约（已完成）**：Platform 已发布 Side Chat Feature、Subagent 详情、能力配置、Skill 内容预览与 project-free/project-scoped fixture。
 2. **Personal canary（已接入，持续验证）**：现有 API 和数据保持在产品仓库，通过 adapter 使用共享 controller/View Model/React 面板；真实使用问题先在 Personal 验收，再判断是否属于公共层。
-3. **Agent Terminal 迁移**：前端迁到 React 后接入相同 Feature；PTY、移动布局、记忆和多主机继续归产品所有。
+3. **Agent Terminal 迁移**：先升级到当前 Platform，使用完整 `SessionBrowser` / `SessionWorkspace` 替换 App Server 详情区；保留 PTY、产品导航、记忆和多主机。完成 transcript、附件、Side Chat、Subagent 与手机回归后，再删除对应重复前端，不等待整个产品 React 化。
 4. **Superset 接入**：使用 lightweight profile 和独立后端 adapter，只暴露当前 Dashboard 所需能力。
 
 Solvely Workbench 保持冻结版本，不属于当前迁移步骤。
