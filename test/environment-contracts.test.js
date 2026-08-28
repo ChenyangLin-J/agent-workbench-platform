@@ -28,6 +28,7 @@ const COMPLETE_GUARD = Object.fromEntries([
 ].map((name) => [name, { enforced: true, mode: `test-${name}` }]));
 
 test('profile normalization is minimal, stable, and keeps optional evaluator assets out', () => {
+  assert.equal('sources' in normalizeEnvironmentProfile({ id: 'legacy-empty-profile' }).capabilities, false);
   const profile = normalizeEnvironmentProfile({
     schema: 'agent-workbench.environment-profile/v1',
     id: 'data-skill-lab',
@@ -37,7 +38,7 @@ test('profile normalization is minimal, stable, and keeps optional evaluator ass
       profileId: 'lab',
       catalogVersion: 2,
       capabilities: [{ id: 'skills.data', kind: 'skill-source', scope: 'custom', version: 'abc' }],
-    } },
+    }, sources: [{ id: 'skills.data', path: './candidate-skill' }] },
     isolation: {
       provider: 'container',
       minimumLevel: 'ephemeral-machine',
@@ -52,6 +53,7 @@ test('profile normalization is minimal, stable, and keeps optional evaluator ass
   assert.equal(profile.features.sessionWorkspace, true);
   assert.equal(profile.features.evidenceDashboard, false);
   assert.deepEqual(profile.isolation.filesystem.readableRoots, ['/profiles/fixtures']);
+  assert.deepEqual(profile.capabilities.sources, [{ id: 'skills.data', path: '/profiles/candidate-skill' }]);
   assert.equal(JSON.stringify(profile).includes('gold'), false);
   assert.equal(environmentProfileHash(profile), environmentProfileHash(structuredClone(profile)));
 });
@@ -66,6 +68,10 @@ test('profiles reject unknown fields and embedded credential values', () => {
     id: 'example',
     extensions: { 'ai.ddit.example': { databasePassword: 'secret-value' } },
   }), /must not contain credential values/);
+  assert.throws(() => normalizeEnvironmentProfile({
+    id: 'example',
+    capabilities: { sources: [{ id: 'skills.unlocked', path: './skill' }] },
+  }), /not present in the lock/);
 });
 
 test('effective isolation is derived from every enforcement facet', () => {

@@ -24,6 +24,7 @@ export function createMinimalCodexRuntime({
   manifest,
   bindingStore,
   spawnProcess = spawn,
+  runtimeEnvironmentOverrides = {},
 } = {}) {
   if (!manifest?.paths?.runtime || !manifest?.paths?.workspace) throw new TypeError('Run manifest is required');
   if (!bindingStore?.load || !bindingStore?.save) throw new TypeError('bindingStore is required');
@@ -47,7 +48,7 @@ export function createMinimalCodexRuntime({
     try {
       appServer = spawnProcess(launch.command, launch.args, {
         cwd: manifest.paths.workspace,
-        env: runtimeEnvironment(manifest),
+        env: runtimeEnvironment(manifest, process.env, runtimeEnvironmentOverrides),
         detached: false,
         shell: false,
         stdio: ['ignore', stdoutHandle.fd, stderrHandle.fd],
@@ -109,7 +110,7 @@ export function createMinimalCodexRuntime({
   };
 }
 
-export function runtimeEnvironment(manifest, source = process.env) {
+export function runtimeEnvironment(manifest, source = process.env, overrides = {}) {
   const environment = {};
   for (const key of unique([
     'LANG',
@@ -122,6 +123,12 @@ export function runtimeEnvironment(manifest, source = process.env) {
   environment.HOME = join(manifest.paths.runtime, 'home');
   environment.CODEX_HOME = join(manifest.paths.runtime, 'codex-home');
   environment.TMPDIR = manifest.paths.temporary;
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!/^AGENT_WORKBENCH_[A-Z0-9_]+$/.test(key) || typeof value !== 'string') {
+      throw new TypeError('Runtime environment overrides must use internal Agent Workbench string keys.');
+    }
+    environment[key] = value;
+  }
   return environment;
 }
 

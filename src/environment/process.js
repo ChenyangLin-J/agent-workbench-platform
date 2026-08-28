@@ -42,6 +42,8 @@ export async function launchEnvironmentRun(runTarget, {
     manifest,
     profile,
     paths: manifest.paths,
+    capabilitySnapshots: manifest.capabilities.snapshots,
+    capabilitySnapshotRoot: manifest.paths.capabilities,
   });
   assertIsolationSatisfied(inspection, profile.isolation.minimumLevel);
   if (typeof executable !== 'string' || !executable) throw new TypeError('Host executable is required');
@@ -56,13 +58,14 @@ export async function launchEnvironmentRun(runTarget, {
     stdoutPath: join(manifest.paths.state, 'host.stdout.log'),
     stderrPath: join(manifest.paths.state, 'host.stderr.log'),
   };
-  const started = await provider.start({ manifest, profile, inspection, launch });
-  const ownership = {
-    pid: started.pid,
-    processGroupId: started.processGroupId || started.pid,
-    expectedArguments: started.expectedArguments || launch.args,
-  };
+  let ownership = null;
   try {
+    const started = await provider.start({ manifest, profile, inspection, launch });
+    ownership = {
+      pid: started.pid,
+      processGroupId: started.processGroupId || started.pid,
+      expectedArguments: started.expectedArguments || launch.args,
+    };
     const identity = await waitForHostIdentity(manifest, ownership, {
       wait,
       startupTimeoutMs: Math.max(startupTimeoutMs, started.startupTimeoutMs || 0),
@@ -77,10 +80,14 @@ export async function launchEnvironmentRun(runTarget, {
       url: `http://127.0.0.1:${identity.port}`,
     };
   } catch (error) {
-    await provider.stop({
-      ...ownership,
-      verifyOwnership: () => verifyProcessLaunch(ownership),
-    }).catch(() => {});
+    if (ownership) {
+      await provider.stop({
+        ...ownership,
+        manifest,
+        verifyOwnership: () => verifyProcessLaunch(ownership),
+      }).catch(() => {});
+    }
+    await removeTransientCredentials(manifest).catch(() => {});
     await markRunStopped(manifest.paths.root, { failure: error }).catch(() => {});
     throw error;
   }

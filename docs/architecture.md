@@ -49,7 +49,7 @@ Data Skill Lab currently incubates inside the Personal repository and still laun
 | Attachment metadata, limits, input and transcript envelopes | Attachment bytes, URLs, path authorization and file actions |
 | Shared Session/Feature React UI and extension slots | Page shell, theme, placement and business extensions |
 | Capability schema, common catalog, dependency resolution, plans and portable locks | Product Profile, custom catalog, host checks, install handlers and authentication |
-| Environment/Run schema, Minimal Host, lifecycle and provider enforcement contract | Profile selection, credential/egress brokers, data adapters, retention and deployment |
+| Environment/Run schema, Minimal Host, lifecycle/provider enforcement, immutable Skill snapshots and the fixed Codex model broker | Profile selection, domain credentials/data adapters, retention and deployment |
 | Browser Provider lifecycle primitives and product-neutral proxy behavior | Browser profile, MCP endpoint, authorization and user-facing controls |
 | Project-free and project-scoped contract fixtures | Consumer integration, end-to-end and manual acceptance evidence |
 
@@ -86,7 +86,7 @@ Platform never reads a product database, chooses a package manager, stores crede
 - Creating an Environment creates instance state, not source code. A consumer needs another repository only when it adds product-specific routes, adapters, UI, persistence or deployment.
 - The built-in Host runs Sessions without projects, tasks, memory, evaluation policy or a consumer checkout. `policies/`, `evaluations/` and `gold/` are optional consumer/evaluator assets and are never required Host directories.
 - Requested isolation is not evidence. The effective level is derived from provider enforcement facets and startup fails when it is below the Profile minimum.
-- Development mode is useful but explicitly non-isolated. The Docker provider currently proves strong isolation only for offline, empty-capability Runs; profiles that need credentials, network, external effects or capability staging fail closed until enforcing brokers exist.
+- Development mode is useful but explicitly non-isolated. The Docker provider proves strong isolation for offline Runs, immutable `skill-source` snapshots, and one fixed Codex model channel backed by an unexpired ChatGPT access token. A Skill source is copied at Environment creation and hash-verified into each Run; only that Run copy is mounted read-only and the host source path is removed from the workload Profile. The workload never receives `auth.json`, the upstream access token or a refresh token; a broker-only sidecar owns the credential and fixed upstream. Other Capability kinds, credentials, network targets and external effects still fail closed.
 - Each Run owns its Runtime home, Session state, workspace, temporary paths and transient credential directory. Stop removes transient credentials and child resources while retaining the Run manifest and Session state.
 
 ## Placement test

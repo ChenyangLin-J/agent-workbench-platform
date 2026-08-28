@@ -1,6 +1,6 @@
 # Runnable Minimal Host and Isolated Environments
 
-Lifecycle: active implementation and adoption spec. The project-free Host and offline strong-isolation milestone are implemented on `feature/runnable-minimal-host`; Data Skill Lab adoption and enforcing broker work remain open. This spec does not define a Data Skill evaluation product.
+Lifecycle: active implementation and adoption spec. The project-free Host, offline strong-isolation base, immutable Skill snapshots and fixed Codex model broker are implemented; domain data/effect adapters and Data Skill Lab adoption remain open. This spec does not define a Data Skill evaluation product.
 
 ## Objective
 
@@ -58,17 +58,17 @@ Implemented in Platform:
 - atomic Environment/Run creation, contained paths, symlink escape checks and retained project-free Session state;
 - `env create`, `run`, `inspect` and `stop` plus the built-in Session UI and Codex Runtime lifecycle;
 - effective isolation derived from nine enforcement facets rather than provider self-report;
-- a real Docker ephemeral provider for offline, empty-capability Profiles, including exact owned-resource cleanup and a repeatable Docker smoke test;
+- a real Docker ephemeral provider for offline Profiles and immutable `skill-source` snapshots, including exact owned-resource cleanup and a repeatable Docker smoke test;
+- a fixed model egress sidecar that stages only an unexpired ChatGPT access token, never copies `auth.json` or refresh tokens, and exposes only Codex Responses routes to the workload;
+- Environment-time Skill snapshot staging, per-Run hash verification, a read-only workload mount and Runtime configuration that exposes no host source path;
 - an explicit non-isolated development provider for trusted local work.
 
 Deliberately blocked rather than downgraded:
 
-- short-lived Codex or domain credentials;
-- allowlisted model/data network access;
-- non-empty Capability snapshot staging;
+- Capability kinds other than `skill-source`;
 - read/write external effects and domain data adapters.
 
-Those four boundaries need enforcing brokers before Data Skill Lab can use the strong provider for a real Candidate/Baseline run. Platform automated tests and the offline Docker smoke are complete; independent consumer canary and manual browser acceptance remain release gates.
+Short-lived Codex model access is enforceable for the exact `credentials.codex-native` plus `https://chatgpt.com/backend-api/codex` pairing. Long-lived API keys, arbitrary targets and refresh-token transfer remain rejected. Local `skill-source` locks are enforceable through immutable snapshots; domain data/effect adapters are still required before Data Skill Lab can use the strong provider for a real data-backed Candidate/Baseline run. Platform automated tests and offline/fake-token Docker smoke are complete; independent consumer canary and manual browser acceptance remain release gates.
 
 ## Environment manifest
 
@@ -77,7 +77,7 @@ The resolved manifest records only reproducibility and enforcement facts:
 - schema, Platform and Runtime versions;
 - source Profile identity and hash;
 - Runtime, state, workspace and temporary paths;
-- feature configuration and resolved Capability lock;
+- feature configuration, resolved Capability lock and content-addressed snapshot metadata;
 - isolation provider, requested level and effective enforcement;
 - allowed filesystem roots, environment keys, network targets and credential references;
 - process identifiers, ports and lifecycle timestamps;
@@ -142,9 +142,11 @@ Existing Personal Lab Runs are not moved wholesale. Runtime homes and authentica
 3. Add the project-free Minimal Host and CLI using existing Runtime, UI and Capability primitives.
 4. Prove that failed enforcement blocks startup; add a guarded-host provider only when a supported OS contract is concrete.
 5. Implement the offline ephemeral container provider required as the strong-isolation base.
-6. Add credential, egress, Capability staging and effect/data brokers without weakening effective-isolation reporting.
-7. Port Data Skill Lab as a thin Profile and run Candidate/Baseline parity against the existing implementation.
-8. After acceptance, remove Personal's Lab host integration while preserving the chosen historical evidence boundary.
+6. Add the fixed short-lived Codex credential/egress broker without weakening effective-isolation reporting.
+7. Add immutable `skill-source` snapshot staging without exposing controller paths to the workload.
+8. Define consumer-owned effect/data adapter contracts.
+9. Port Data Skill Lab as a thin Profile and run Candidate/Baseline parity against the existing implementation.
+10. After acceptance, remove Personal's Lab host integration while preserving the chosen historical evidence boundary.
 
 Do not pre-emptively move Personal adapter code into Platform. Add a shared abstraction only when the Minimal Host implementation demonstrates the product-neutral contract and tests it without Personal fixtures.
 
@@ -162,7 +164,6 @@ Do not pre-emptively move Personal adapter code into Platform. Add a shared abst
 ## Open decisions
 
 - Whether a guarded-host provider has enough value to support before the broker-backed Docker path.
-- Short-lived Codex authentication and destination-bound egress broker contracts.
-- Capability snapshot and domain data/effect adapter contracts.
+- Domain data/effect adapter contracts and whether a second Capability kind proves a shared staging abstraction.
 - Default Run retention and the boundary between retained Session state and disposable credentials.
 - Whether evidence export becomes a generic optional extension after a second consumer demonstrates the same contract.

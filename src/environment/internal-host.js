@@ -12,6 +12,7 @@ import {
 } from './process.js';
 import { createDevelopmentIsolationProvider, inspectIsolationProvider } from './providers.js';
 import { EnvironmentSessionStore } from './session-store.js';
+import { prepareMinimalRuntimeConfiguration } from './runtime-config.js';
 import {
   markRunStopped,
   readEnvironmentManifest,
@@ -62,7 +63,12 @@ export async function runInternalMinimalHost(runTarget, {
   const assetsRoot = join(manifest.paths.state, 'minimal-host-assets');
   await buildMinimalHostAssets({ outputDirectory: assetsRoot });
   const sessionStore = new EnvironmentSessionStore({ stateRoot: manifest.paths.state });
-  const runtime = createMinimalCodexRuntime({ manifest, bindingStore: sessionStore });
+  const runtimeConfiguration = await prepareMinimalRuntimeConfiguration({ manifest });
+  const runtime = createMinimalCodexRuntime({
+    manifest,
+    bindingStore: sessionStore,
+    runtimeEnvironmentOverrides: runtimeConfiguration.environment,
+  });
   let stopping = false;
   let host;
 

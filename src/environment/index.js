@@ -23,9 +23,24 @@ export {
 export { isPathContained, resolveContainedPath } from './paths.js';
 export { EnvironmentSessionStore } from './session-store.js';
 export { createMinimalHost } from './minimal-host.js';
+export {
+  capabilitySnapshotsReady,
+  copyCapabilitySnapshots,
+  stageCapabilitySnapshots,
+  verifyCapabilitySnapshots,
+} from './capability-snapshots.js';
 export { buildMinimalHostAssets } from './assets.js';
 export { createMinimalCodexRuntime, runtimeEnvironment } from './codex-runtime.js';
+export { prepareMinimalRuntimeConfiguration } from './runtime-config.js';
 export { createDockerIsolationProvider, dockerProfileFacts } from './docker-provider.js';
+export {
+  CHATGPT_CODEX_BASE_URL,
+  CODEX_NATIVE_CREDENTIAL_REFERENCE,
+  codexModelBrokerRequest,
+  createCodexNativeCredentialBroker,
+  readStagedCodexCredential,
+} from './codex-credential.js';
+export { runModelEgressBroker } from './model-egress.js';
 export { runDockerSupervisor } from './docker-supervisor.js';
 export { runFixedIngressProxy } from './ingress-proxy.js';
 export { runInternalMinimalHost } from './internal-host.js';

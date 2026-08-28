@@ -13,6 +13,7 @@ import {
   createEnvironmentRun,
   inspectEnvironment,
   runFixedIngressProxy,
+  runModelEgressBroker,
   launchEnvironmentRun,
   listEnvironmentRuns,
   readEnvironmentManifest,
@@ -61,6 +62,17 @@ async function main(argv) {
     await runFixedIngressProxy({
       upstreamHost: requiredOption(options['upstream-host'], '--upstream-host'),
       upstreamPort: integerOption(options['upstream-port'], 'upstream-port', null, 1, 65535),
+      port: integerOption(options.port, 'port', null, 1, 65535),
+    });
+    return;
+  }
+  if (argv[0] === '--internal-model-egress') {
+    const options = parseOptions(argv.slice(1));
+    await runModelEgressBroker({
+      credentialPath: resolve(requiredOption(options['credential-file'], '--credential-file')),
+      serviceTokenPath: resolve(requiredOption(options['service-token-file'], '--service-token-file')),
+      readyFile: resolve(requiredOption(options['ready-file'], '--ready-file')),
+      runId: requiredOption(options['run-id'], '--run-id'),
       port: integerOption(options.port, 'port', null, 1, 65535),
     });
     return;

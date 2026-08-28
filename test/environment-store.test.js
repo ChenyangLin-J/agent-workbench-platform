@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,7 +8,9 @@ import {
   createDevelopmentIsolationProvider,
   createEnvironment,
   createEnvironmentRun,
+  defineIsolationProvider,
   inspectEnvironment,
+  launchEnvironmentRun,
   markRunStarted,
   markRunStopped,
 } from '../src/environment/index.js';
@@ -62,6 +64,21 @@ test('manifests never persist credential values and reject profile tampering', a
   });
 });
 
+test('an empty-capability Environment created before snapshot paths still creates a Run', async (t) => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'awb-env-legacy-'));
+  t.after(() => rm(storageRoot, { recursive: true, force: true }));
+  const environment = await createEnvironment({ storageRoot, profile: { id: 'legacy-empty' } });
+  const manifestPath = join(environment.paths.root, 'environment.json');
+  const legacyManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  delete legacyManifest.paths.capabilities;
+  delete legacyManifest.capabilities.snapshots;
+  await writeFile(manifestPath, `${JSON.stringify(legacyManifest, null, 2)}\n`, { mode: 0o600 });
+  await rm(environment.paths.capabilities, { recursive: true, force: true });
+  const run = await createEnvironmentRun(environment.paths.root);
+  assert.deepEqual(run.capabilities.snapshots, []);
+  await access(run.paths.capabilities);
+});
+
 test('Run lifecycle writes only safe process identity and clears provider state on stop', async (t) => {
   const storageRoot = await mkdtemp(join(tmpdir(), 'awb-env-'));
   t.after(() => rm(storageRoot, { recursive: true, force: true }));
@@ -77,4 +94,41 @@ test('Run lifecycle writes only safe process identity and clears provider state 
   const stopped = await markRunStopped(run.paths.root);
   assert.equal(stopped.status, 'stopped');
   assert.deepEqual(stopped.process, { pid: null, port: null, providerState: {} });
+});
+
+test('failed provider startup clears staged credentials and records only a safe failure', async (t) => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'awb-env-'));
+  t.after(() => rm(storageRoot, { recursive: true, force: true }));
+  const enforcement = Object.fromEntries([
+    'filesystem', 'process', 'environment', 'capabilities', 'credentials',
+    'network', 'externalEffects', 'crossRun', 'ephemeralIdentity',
+  ].map((name) => [name, { enforced: true, mode: `test-${name}` }]));
+  const provider = defineIsolationProvider({
+    id: 'failing',
+    async inspect() { return { available: true, enforcement }; },
+    async start({ manifest }) {
+      await writeFile(join(manifest.paths.credentials, 'transient-secret'), 'must-be-removed', { mode: 0o600 });
+      throw Object.assign(new Error('provider startup failed safely'), { code: 'PROVIDER_START_FAILED' });
+    },
+    async stop() {},
+  });
+  const environment = await createEnvironment({
+    storageRoot,
+    profile: { id: 'failed-start', isolation: { provider: 'failing', minimumLevel: 'ephemeral-machine' } },
+    providers: [provider],
+  });
+  const run = await createEnvironmentRun(environment.paths.root, { providers: [provider] });
+  await assert.rejects(() => launchEnvironmentRun(run.paths.root, {
+    provider,
+    executable: process.execPath,
+    internalHostScript: '/tmp/unused-host.js',
+  }), { code: 'PROVIDER_START_FAILED' });
+  assert.deepEqual(await readdir(run.paths.credentials), []);
+  const failed = await inspectEnvironment(run.paths.root);
+  assert.equal(failed.status, 'failed');
+  assert.deepEqual(failed.lifecycle.failure, {
+    code: 'PROVIDER_START_FAILED',
+    message: 'provider startup failed safely',
+  });
+  assert.equal(JSON.stringify(failed).includes('must-be-removed'), false);
 });

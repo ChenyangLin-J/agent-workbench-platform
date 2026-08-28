@@ -83,6 +83,8 @@ export {
 } from './subagents.js';
 
 export {
+  CHATGPT_CODEX_BASE_URL,
+  CODEX_NATIVE_CREDENTIAL_REFERENCE,
   ENFORCEMENT_FACETS,
   ENVIRONMENT_MANIFEST_SCHEMA,
   ENVIRONMENT_PROFILE_SCHEMA,
@@ -92,6 +94,8 @@ export {
   assertIsolationSatisfied,
   buildMinimalHostAssets,
   compareIsolationLevels,
+  codexModelBrokerRequest,
+  createCodexNativeCredentialBroker,
   createEnvironment,
   createEnvironmentRun,
   createMinimalHost,

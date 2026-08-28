@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { createDockerIsolationProvider } from './docker-provider.js';
+import { codexModelBrokerRequest, readStagedCodexCredential } from './codex-credential.js';
 import { environmentProfileHash } from './contracts.js';
 import {
   removeHostIdentity,
@@ -25,6 +26,8 @@ const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const DOCKERFILE = join(PACKAGE_ROOT, 'containers', 'minimal-host.Dockerfile');
 const CONTAINER_PORT = 4178;
 const INGRESS_PORT = 4180;
+const MODEL_EGRESS_PORT = 4190;
+const MODEL_BROKER_ENV_KEY = 'AGENT_WORKBENCH_MODEL_BROKER_TOKEN';
 
 export async function runDockerSupervisor(runTarget, {
   dockerCommand = process.env.AGENT_WORKBENCH_DOCKER_COMMAND || 'docker',
@@ -32,13 +35,35 @@ export async function runDockerSupervisor(runTarget, {
 } = {}) {
   const manifest = await readEnvironmentManifest(runTarget);
   if (manifest.kind !== 'run') throw new TypeError('Docker supervisor requires a Run target');
+  manifest.paths.capabilities ||= join(manifest.paths.root, 'capabilities');
+  manifest.capabilities.snapshots ||= [];
+  await mkdir(manifest.paths.capabilities, { recursive: true, mode: 0o700 });
   const profile = await readStoredEnvironmentProfile(manifest.paths.root);
-  const provider = createDockerIsolationProvider({ dockerCommand });
+  const stagedBrokerCredentialPath = join(manifest.paths.credentials, 'broker', 'model.json');
+  const provider = createDockerIsolationProvider({
+    dockerCommand,
+    credentialBroker: {
+      async inspect() {
+        if (!codexModelBrokerRequest(profile).requested) return { ready: true, requested: false };
+        try {
+          const credential = await readStagedCodexCredential(stagedBrokerCredentialPath);
+          return { ready: true, requested: true, target: credential.target, expiresAt: credential.expiresAt };
+        } catch {
+          return { ready: false, requested: true, reason: 'The staged Codex model credential is unavailable.' };
+        }
+      },
+      async stage() {
+        throw new Error('Docker supervisor cannot stage host credentials.');
+      },
+    },
+  });
   const inspection = await inspectIsolationProvider(provider, {
     phase: 'docker-supervisor',
     manifest,
     profile,
     paths: manifest.paths,
+    capabilitySnapshots: manifest.capabilities.snapshots,
+    capabilitySnapshotRoot: manifest.paths.capabilities,
   });
   if (!inspection.available || inspection.effectiveLevel !== 'ephemeral-machine') {
     throw supervisorError('ISOLATION_REQUIREMENT_UNSATISFIED', inspection.reason || 'Docker isolation is not enforceable.');
@@ -48,19 +73,47 @@ export async function runDockerSupervisor(runTarget, {
   const suffix = createHash('sha256').update(manifest.id).digest('hex').slice(0, 16);
   const containerName = `awb-${suffix}-workload`;
   const ingressName = `awb-${suffix}-ingress`;
+  const egressName = `awb-${suffix}-model-egress`;
   const networkName = `awb-net-${suffix}`;
   const image = await ensureImage(dockerCommand);
-  const configRoot = join(manifest.paths.credentials, 'container-config');
-  const tokenPath = join(manifest.paths.credentials, 'host-token');
+  const workloadSecretRoot = join(manifest.paths.credentials, 'workload');
+  const brokerSecretRoot = join(manifest.paths.credentials, 'broker');
+  const configRoot = join(workloadSecretRoot, 'config');
+  const tokenPath = join(workloadSecretRoot, 'host-token');
+  const brokerTokenPath = join(workloadSecretRoot, 'model-broker-token');
+  const brokerServiceTokenPath = join(brokerSecretRoot, 'service-token');
+  const brokerCredentialPath = stagedBrokerCredentialPath;
+  const brokerStateRoot = join(manifest.paths.state, 'model-broker');
+  const brokerReadyPath = join(brokerStateRoot, 'ready.json');
   const readyPath = join(manifest.paths.state, 'container-ready.json');
-  await rm(readyPath, { force: true });
+  const brokerRequest = codexModelBrokerRequest(profile);
+  const modelCredential = brokerRequest.requested
+    ? await readStagedCodexCredential(brokerCredentialPath)
+    : null;
+  const modelBroker = modelCredential ? {
+    baseUrl: `http://${egressName}:${MODEL_EGRESS_PORT}`,
+    envKey: MODEL_BROKER_ENV_KEY,
+    target: modelCredential.target,
+    expiresAt: modelCredential.expiresAt,
+  } : null;
+  const workloadProfile = containerProfile(profile);
+  await Promise.all([rm(readyPath, { force: true }), rm(brokerReadyPath, { force: true })]);
   await mkdir(configRoot, { recursive: true, mode: 0o700 });
+  if (modelBroker) await mkdir(brokerStateRoot, { recursive: true, mode: 0o700 });
   await writeFile(tokenPath, `${accessToken}\n`, { mode: 0o600, flag: 'wx' });
-  const containerManifest = containerRunManifest(manifest, profile, inspection);
+  if (modelBroker) {
+    const serviceToken = randomBytes(32).toString('base64url');
+    await Promise.all([
+      writeFile(brokerTokenPath, `${serviceToken}\n`, { mode: 0o600, flag: 'wx' }),
+      writeFile(brokerServiceTokenPath, `${serviceToken}\n`, { mode: 0o600, flag: 'wx' }),
+    ]);
+  }
+  const containerManifest = containerRunManifest(manifest, workloadProfile, inspection, { modelBroker });
   await writeFile(join(configRoot, 'manifest.json'), `${JSON.stringify(containerManifest, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
-  await writeFile(join(configRoot, 'profile.json'), `${JSON.stringify(profile, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+  await writeFile(join(configRoot, 'profile.json'), `${JSON.stringify(workloadProfile, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
   let containerId = null;
   let ingressId = null;
+  let egressId = null;
   let stopping = false;
   let failure = null;
 
@@ -69,6 +122,7 @@ export async function runDockerSupervisor(runTarget, {
     stopping = true;
     if (containerId) await stopOwnedContainer(dockerCommand, containerId, manifest.id).catch(() => {});
     if (ingressId) await stopOwnedContainer(dockerCommand, ingressId, manifest.id).catch(() => {});
+    if (egressId) await stopOwnedContainer(dockerCommand, egressId, manifest.id).catch(() => {});
     await removeOwnedNetwork(dockerCommand, networkName, manifest.id).catch(() => {});
     await removeTransientCredentials(manifest).catch(() => {});
     await removeHostIdentity(manifest).catch(() => {});
@@ -84,12 +138,32 @@ export async function runDockerSupervisor(runTarget, {
       '--label', `ai.agent-workbench.run=${manifest.id}`,
       networkName,
     ]);
+    if (modelBroker) {
+      egressId = (await dockerExec(dockerCommand, dockerModelEgressArguments({
+        image: image.tag,
+        egressName,
+        runId: manifest.id,
+        brokerSecretRoot,
+        brokerStateRoot,
+      }))).trim();
+      await dockerExec(dockerCommand, ['network', 'connect', networkName, egressId]);
+      await waitForModelBrokerReady({
+        readyPath: brokerReadyPath,
+        manifest,
+        credential: modelCredential,
+        dockerCommand,
+        egressId,
+      });
+    }
     const runArgs = dockerRunArguments({
       manifest,
-      profile,
+      profile: workloadProfile,
       image: image.tag,
       containerName,
       networkName,
+      workloadSecretRoot,
+      configRoot,
+      modelBroker,
     });
     containerId = (await dockerExec(dockerCommand, runArgs)).trim();
     ingressId = (await dockerExec(dockerCommand, dockerIngressArguments({
@@ -118,10 +192,15 @@ export async function runDockerSupervisor(runTarget, {
         containerName,
         ingressId,
         ingressName,
+        ...(egressId ? { egressId, egressName } : {}),
         networkName,
         networkMode: 'internal-with-fixed-ingress',
         image: image.tag,
         imageId: image.id,
+        ...(modelBroker ? {
+          modelBrokerTarget: modelBroker.target,
+          modelCredentialExpiresAt: modelBroker.expiresAt,
+        } : {}),
       },
     });
     const exitCode = Number((await dockerExec(dockerCommand, ['wait', containerId], { timeout: 0 })).trim());
@@ -134,7 +213,7 @@ export async function runDockerSupervisor(runTarget, {
   }
 }
 
-function containerRunManifest(manifest, profile, inspection) {
+function containerRunManifest(manifest, profile, inspection, { modelBroker = null } = {}) {
   const root = '/run/workbench';
   const paths = {
     root,
@@ -143,11 +222,20 @@ function containerRunManifest(manifest, profile, inspection) {
     workspace: `${root}/workspace`,
     temporary: `${root}/tmp`,
     credentials: '/run/credentials',
+    capabilities: `${root}/capabilities`,
   };
   return {
     ...manifest,
     status: 'created',
-    profile: { ...manifest.profile, hash: environmentProfileHash(profile) },
+    profile: {
+      id: manifest.profile.id,
+      hash: environmentProfileHash(profile),
+      source: { type: 'controller-snapshot' },
+    },
+    runtime: {
+      ...manifest.runtime,
+      ...(modelBroker ? { modelBroker: { baseUrl: modelBroker.baseUrl, envKey: modelBroker.envKey } } : {}),
+    },
     paths,
     isolation: {
       ...manifest.isolation,
@@ -155,7 +243,13 @@ function containerRunManifest(manifest, profile, inspection) {
       effectiveLevel: inspection.effectiveLevel,
       enforcement: inspection.enforcement,
       filesystem: {
-        readableRoots: [...new Set([...profile.isolation.filesystem.readableRoots, root, `${root}/config`, '/run/credentials'])],
+        readableRoots: [...new Set([
+          ...profile.isolation.filesystem.readableRoots,
+          root,
+          `${root}/config`,
+          paths.capabilities,
+          '/run/credentials',
+        ])],
         writableRoots: [...new Set([...profile.isolation.filesystem.writableRoots, paths.runtime, paths.state, paths.workspace, paths.temporary])],
       },
     },
@@ -164,7 +258,7 @@ function containerRunManifest(manifest, profile, inspection) {
   };
 }
 
-function dockerRunArguments({ manifest, profile, image, containerName, networkName }) {
+function dockerRunArguments({ manifest, profile, image, containerName, networkName, workloadSecretRoot, configRoot, modelBroker }) {
   const args = [
     'run', '--detach',
     '--name', containerName,
@@ -182,8 +276,9 @@ function dockerRunArguments({ manifest, profile, image, containerName, networkNa
     '--mount', mount(manifest.paths.runtime, '/run/workbench/runtime', false),
     '--mount', mount(manifest.paths.state, '/run/workbench/state', false),
     '--mount', mount(manifest.paths.workspace, '/run/workbench/workspace', false),
-    '--mount', mount(manifest.paths.credentials, '/run/credentials', true),
-    '--mount', mount(join(manifest.paths.credentials, 'container-config'), '/run/workbench/config', true),
+    '--mount', mount(manifest.paths.capabilities, '/run/workbench/capabilities', true),
+    '--mount', mount(workloadSecretRoot, '/run/credentials', true),
+    '--mount', mount(configRoot, '/run/workbench/config', true),
     '--env', 'HOME=/run/workbench/runtime/home',
     '--env', 'TMPDIR=/run/workbench/tmp',
     '--env', 'NODE_ENV=production',
@@ -194,6 +289,9 @@ function dockerRunArguments({ manifest, profile, image, containerName, networkNa
     '--env', 'AGENT_WORKBENCH_HOST_TOKEN_FILE=/run/credentials/host-token',
     '--env', 'AGENT_WORKBENCH_READY_FILE=/run/workbench/state/container-ready.json',
   ];
+  if (modelBroker) {
+    args.push('--env', 'AGENT_WORKBENCH_MODEL_BROKER_TOKEN_FILE=/run/credentials/model-broker-token');
+  }
   for (const path of profile.isolation.filesystem.readableRoots) {
     args.push('--mount', mount(path, path, true));
   }
@@ -205,6 +303,42 @@ function dockerRunArguments({ manifest, profile, image, containerName, networkNa
   }
   args.push(image, '--internal-host', '/run/workbench/config/manifest.json', '--port', String(CONTAINER_PORT));
   return args;
+}
+
+function containerProfile(profile) {
+  return {
+    ...profile,
+    capabilities: {
+      lock: profile.capabilities.lock,
+      sources: [],
+    },
+  };
+}
+
+function dockerModelEgressArguments({ image, egressName, runId, brokerSecretRoot, brokerStateRoot }) {
+  return [
+    'run', '--detach',
+    '--name', egressName,
+    '--label', `ai.agent-workbench.run=${runId}`,
+    '--network', 'bridge',
+    '--read-only',
+    '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges',
+    '--pids-limit', '64',
+    '--memory', '256m',
+    '--cpus', '0.5',
+    '--user', `${process.getuid?.() || 1000}:${process.getgid?.() || 1000}`,
+    '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m',
+    '--mount', mount(brokerSecretRoot, '/run/secrets', true),
+    '--mount', mount(brokerStateRoot, '/run/broker-state', false),
+    image,
+    '--internal-model-egress',
+    '--credential-file', '/run/secrets/model.json',
+    '--service-token-file', '/run/secrets/service-token',
+    '--ready-file', '/run/broker-state/ready.json',
+    '--run-id', runId,
+    '--port', String(MODEL_EGRESS_PORT),
+  ];
 }
 
 function dockerIngressArguments({ image, ingressName, runId, requestedPort, upstreamHost }) {
@@ -297,6 +431,28 @@ async function waitForPublishedPort(dockerCommand, containerName, containerPort)
     await delay(50);
   }
   throw supervisorError('DOCKER_PORT_UNAVAILABLE', 'Docker did not publish the fixed ingress port on loopback.');
+}
+
+async function waitForModelBrokerReady({ readyPath, manifest, credential, dockerCommand, egressId }) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const running = (await dockerExec(dockerCommand, ['inspect', '--format', '{{.State.Running}}', egressId])).trim();
+    if (running !== 'true') {
+      const logs = await dockerLogs(dockerCommand, egressId).catch(() => '');
+      if (logs) process.stderr.write(`${logs.slice(-12_000)}\n`);
+      throw supervisorError('MODEL_BROKER_EXITED', 'Fixed model egress broker exited during startup.');
+    }
+    try {
+      const ready = JSON.parse(await readFile(readyPath, 'utf8'));
+      if (ready.runId !== manifest.id || ready.target !== credential.target || ready.expiresAt !== credential.expiresAt) {
+        throw supervisorError('MODEL_BROKER_IDENTITY_MISMATCH', 'Model broker ready evidence does not match this Run.');
+      }
+      return;
+    } catch (error) {
+      if (error?.code && error.code !== 'ENOENT') throw error;
+    }
+    await delay(50);
+  }
+  throw supervisorError('MODEL_BROKER_START_TIMEOUT', 'Fixed model egress broker did not become ready.');
 }
 
 async function waitForContainerReady({ readyPath, manifest, hostPort, accessToken, dockerCommand, containerId, ingressId }) {

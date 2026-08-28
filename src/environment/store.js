@@ -24,6 +24,7 @@ import {
   inspectIsolationProvider,
 } from './providers.js';
 import { isPathContained, resolveContainedPath } from './paths.js';
+import { copyCapabilitySnapshots, stageCapabilitySnapshots } from './capability-snapshots.js';
 
 const PACKAGE_JSON_URL = new URL('../../package.json', import.meta.url);
 const PLATFORM_VERSION = JSON.parse(await readFile(PACKAGE_JSON_URL, 'utf8')).version;
@@ -60,34 +61,43 @@ export async function createEnvironment({
   const paths = {
     root: environmentRoot,
     runs: join(environmentRoot, 'runs'),
+    capabilities: join(environmentRoot, 'capabilities'),
   };
-  const inspection = await inspectIsolationProvider(provider, {
-    phase: 'create',
-    profile: normalizedProfile,
-    paths,
-  });
-  const manifest = environmentManifest({
-    id,
-    profile: normalizedProfile,
-    source,
-    paths,
-    inspection,
-    createdAt,
-    platformVersion,
-    runtimeVersion,
-  });
 
   await assertMissing(environmentRoot, `Environment already exists: ${id}`);
-  await mkdir(join(temporaryRoot, 'runs'), { recursive: true, mode: 0o700 });
+  await mkdir(temporaryRoot, { recursive: false, mode: 0o700 });
   try {
+    await mkdir(join(temporaryRoot, 'runs'), { mode: 0o700 });
+    const capabilitySnapshots = await stageCapabilitySnapshots({
+      profile: normalizedProfile,
+      targetRoot: join(temporaryRoot, 'capabilities'),
+    });
+    const inspection = await inspectIsolationProvider(provider, {
+      phase: 'create',
+      profile: normalizedProfile,
+      paths,
+      capabilitySnapshots,
+      capabilitySnapshotRoot: join(temporaryRoot, 'capabilities'),
+    });
+    const manifest = environmentManifest({
+      id,
+      profile: normalizedProfile,
+      source,
+      paths,
+      inspection,
+      capabilitySnapshots,
+      createdAt,
+      platformVersion,
+      runtimeVersion,
+    });
     await writeJsonExclusive(join(temporaryRoot, 'profile.json'), normalizedProfile);
     await writeJsonExclusive(join(temporaryRoot, ENVIRONMENT_FILE), manifest);
     await rename(temporaryRoot, environmentRoot);
+    return structuredClone(manifest);
   } catch (error) {
     await rm(temporaryRoot, { recursive: true, force: true });
     throw error;
   }
-  return structuredClone(manifest);
 }
 
 export async function createEnvironmentRun(environmentTarget, {
@@ -112,27 +122,45 @@ export async function createEnvironmentRun(environmentTarget, {
   const runRoot = join(runsRoot, id);
   const temporaryRoot = join(runsRoot, `.${id}.creating-${uuid()}`);
   const paths = runPaths(runRoot);
-  const inspection = await inspectIsolationProvider(provider, {
-    phase: 'run-create',
-    environment,
-    profile,
-    paths,
-  });
-  const manifest = runManifest({ environment, profile, id, paths, inspection, createdAt });
 
   await assertMissing(runRoot, `Run already exists: ${id}`);
   await mkdir(temporaryRoot, { recursive: false, mode: 0o700 });
   try {
-    for (const name of ['runtime', 'state', 'workspace', 'tmp', 'credentials']) {
+    for (const name of ['runtime', 'state', 'workspace', 'tmp', 'credentials', 'capabilities']) {
       await mkdir(join(temporaryRoot, name), { mode: 0o700 });
     }
+    const storedCapabilitySnapshots = environment.capabilities.snapshots || [];
+    const capabilitySnapshots = await copyCapabilitySnapshots({
+      sourceRoot: storedCapabilitySnapshots.length
+        ? await resolveContainedPath(environmentRoot, environment.paths.capabilities)
+        : null,
+      targetRoot: join(temporaryRoot, 'capabilities'),
+      snapshots: storedCapabilitySnapshots,
+    });
+    const inspection = await inspectIsolationProvider(provider, {
+      phase: 'run-create',
+      environment,
+      profile,
+      paths,
+      capabilitySnapshots,
+      capabilitySnapshotRoot: join(temporaryRoot, 'capabilities'),
+    });
+    const manifest = runManifest({
+      environment,
+      profile,
+      id,
+      paths,
+      inspection,
+      capabilitySnapshots,
+      createdAt,
+    });
     await writeJsonExclusive(join(temporaryRoot, RUN_FILE), manifest);
     await rename(temporaryRoot, runRoot);
+    return structuredClone(manifest);
   } catch (error) {
     await rm(temporaryRoot, { recursive: true, force: true });
     throw error;
   }
-  return structuredClone(manifest);
 }
 
 export async function readEnvironmentManifest(target) {
@@ -228,7 +256,17 @@ export async function findManifest(target) {
   throw environmentError('ENVIRONMENT_MANIFEST_NOT_FOUND', `No environment manifest found in ${absolute}.`);
 }
 
-function environmentManifest({ id, profile, source, paths, inspection, createdAt, platformVersion, runtimeVersion }) {
+function environmentManifest({
+  id,
+  profile,
+  source,
+  paths,
+  inspection,
+  capabilitySnapshots,
+  createdAt,
+  platformVersion,
+  runtimeVersion,
+}) {
   const manifest = {
     schema: ENVIRONMENT_MANIFEST_SCHEMA,
     kind: 'environment',
@@ -245,6 +283,7 @@ function environmentManifest({ id, profile, source, paths, inspection, createdAt
     capabilities: {
       lock: profile.capabilities.lock,
       hash: sha256(profile.capabilities.lock),
+      snapshots: capabilitySnapshots,
     },
     isolation: isolationManifest(profile, inspection, paths),
     paths,
@@ -255,7 +294,7 @@ function environmentManifest({ id, profile, source, paths, inspection, createdAt
   return manifest;
 }
 
-function runManifest({ environment, profile, id, paths, inspection, createdAt }) {
+function runManifest({ environment, profile, id, paths, inspection, capabilitySnapshots, createdAt }) {
   const manifest = {
     schema: ENVIRONMENT_MANIFEST_SCHEMA,
     kind: 'run',
@@ -266,7 +305,7 @@ function runManifest({ environment, profile, id, paths, inspection, createdAt })
     profile: environment.profile,
     runtime: environment.runtime,
     features: environment.features,
-    capabilities: environment.capabilities,
+    capabilities: { ...environment.capabilities, snapshots: capabilitySnapshots },
     isolation: isolationManifest(profile, inspection, paths),
     paths,
     process: { pid: null, port: null, providerState: {} },
@@ -288,11 +327,13 @@ function isolationManifest(profile, inspection, paths) {
     filesystem: {
       readableRoots: uniqueSorted([
         ...profile.isolation.filesystem.readableRoots,
-        paths.root,
+        ...['capabilities'].map((name) => paths[name]).filter(Boolean),
       ]),
       writableRoots: uniqueSorted([
         ...profile.isolation.filesystem.writableRoots,
-        ...Object.values(paths).filter((value) => typeof value === 'string'),
+        ...['runs', 'runtime', 'state', 'workspace', 'temporary', 'credentials']
+          .map((name) => paths[name])
+          .filter(Boolean),
       ]),
     },
     environmentKeys: profile.isolation.environmentKeys,
@@ -310,6 +351,7 @@ function runPaths(root) {
     workspace: join(root, 'workspace'),
     temporary: join(root, 'tmp'),
     credentials: join(root, 'credentials'),
+    capabilities: join(root, 'capabilities'),
   };
 }
 
