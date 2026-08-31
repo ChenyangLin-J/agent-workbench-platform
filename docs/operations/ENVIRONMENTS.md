@@ -39,7 +39,7 @@ For a strongly isolated offline Host, use Docker:
 }
 ```
 
-The Docker provider supports an empty Capability lock or immutable local `skill-source` snapshots. It rejects other Capability kinds, external effects, unsupported credential/network combinations, and noncanonical, symlinked, unavailable or sibling-state-exposing mount roots. A Skill Profile declares a portable lock plus a controller-only source path:
+The Docker provider supports an empty Capability lock, immutable local `skill-source` snapshots, and the built-in `read-only-adapter` kinds documented below. It rejects other Capability kinds, unsupported effect/credential/network combinations, and noncanonical, symlinked, unavailable or sibling-state-exposing mount roots. A Skill Profile declares a portable lock plus a controller-only source path:
 
 ```json
 {
@@ -60,7 +60,7 @@ The source must be a directory containing `SKILL.md`. Environment creation rejec
 
 `SKILL.md` must contain a valid lowercase frontmatter `name`. The snapshot records that name, and Session startup calls the Codex Skill inventory API before creating a thread. Startup fails if a locked Skill is missing or an enabled Skill outside the immutable lock remains visible; a read-only mount by itself is not treated as Runtime enablement evidence.
 
-The one supported networked profile is a fixed Codex model channel:
+Model access uses a fixed Codex channel:
 
 ```json
 {
@@ -81,7 +81,32 @@ The one supported networked profile is a fixed Codex model channel:
 
 Launch `env create` and `env run` with `CODEX_HOME` pointing at a logged-in Codex Runtime. The broker accepts only a private, unexpired ChatGPT `auth.json` whose access token has at least five minutes remaining. It deliberately rejects long-lived API keys. Only the access token, account id and expiry are staged into the broker-only secret mount; `auth.json` and the refresh token are never copied. The workload receives a per-Run service token for the fixed `/responses` and `/responses/compact` routes, and that token is excluded from Agent shell environments.
 
-The broker does not refresh an expiring token. Refresh the source Codex login before creating a new Run. OpenMetadata, BigQuery and other data/service access still require consumer-owned enforcing adapters before they may report strong isolation.
+The broker does not refresh an expiring token. Refresh the source Codex login before creating a new Run.
+
+## Read-only data adapters
+
+Version 0.9 adds two enforcing adapter kinds: `openmetadata-mcp-read` and `bigquery-read`. Each adapter has a matching `read-only-adapter` lock entry. The Profile declares only fixed targets, read effects, credential references and allowlists; credential locations live in a separate private bindings file.
+
+```json
+{
+  "schema": "agent-workbench.environment-bindings/v1",
+  "credentials": {
+    "credentials.openmetadata-pat": { "source": "environment", "key": "OPENMETADATA_PAT" },
+    "credentials.google-adc": { "source": "file", "path": "/private/controller/application_default_credentials.json" }
+  }
+}
+```
+
+The bindings file must be a `0600` regular file, not a symlink, and contains no credential values. OpenMetadata accepts only an environment binding; BigQuery accepts only a private ADC file binding. Pass the same file when the provider inspects or stages credentials:
+
+```bash
+agent-workbench env create --profile ./profile.json --bindings ./bindings.json
+agent-workbench env run <environment> --bindings ./bindings.json
+```
+
+OpenMetadata fixes one HTTPS target and a non-empty subset of `search_metadata`, `get_entity_details`, and `get_entity_lineage`. Its sidecar filters discovery and rejects every other tool call before upstream contact. BigQuery fixes a billing project, readable-project allowlist, `maximumBytesBilled`, and `maximumRows`. It exposes only `dry_run_query` and `run_query`; execution repeats the dry run, requires BigQuery to classify the exact SQL as `SELECT`, rejects referenced projects outside the allowlist, and then uses the fixed BigQuery REST endpoint. The workload receives neither PAT, ADC nor `bq`.
+
+The Profile's `credentialReferences`, `networkTargets`, and `externalEffects` must exactly equal the union required by the model broker and declared adapters. Surplus declarations fail closed like missing ones. Bindings and upstream values never enter the public manifest.
 
 If the launching host has `HTTPS_PROXY` or `HTTP_PROXY`, the Docker Supervisor does not copy that controller setting or its credentials into the workload. It starts a per-Run authenticated CONNECT relay that accepts only `chatgpt.com:443`, and gives only the model-egress sidecar a random short-lived relay credential. The relay and credential disappear on stop. The current relay accepts an `http://` upstream proxy; unsupported proxy schemes fail startup explicitly.
 
@@ -117,11 +142,11 @@ The Host does not create `policies/`, `evaluations/` or `gold/`. A consumer or s
 
 ## What to trust
 
-`env inspect` is the public evidence surface. Check `requestedLevel`, `effectiveLevel`, every enforcement facet, resolved paths, versions and Capability lock. Credential and network modes distinguish an offline Run from one enforced by the short-lived Codex credential and fixed model-egress brokers. Do not infer isolation from the provider name or from a successful process start.
+`env inspect` is the public evidence surface. Check `requestedLevel`, `effectiveLevel`, every enforcement facet, resolved paths, versions and Capability lock. Credential, network, Capability and external-effect modes distinguish offline, model-brokered and data-backed Runs. Do not infer isolation from the provider name or a successful process start.
 
-Docker Runs use a read-only workload container with dropped capabilities, no-new-privileges, process/memory/CPU limits, per-Run mounts, read-only Skill snapshots and a unique internal-only network. A constrained ingress sidecar exposes only the fixed Host upstream on `127.0.0.1`. When model access is enabled, a second broker sidecar owns the short-lived upstream credential and can reach only the fixed ChatGPT Codex base URL; the workload still has no published port or general egress path. The manifest records exact container, network, image and snapshot identities for owned cleanup and reproducibility without credential values or host Skill source paths.
+Docker Runs use a read-only workload container with dropped capabilities, no-new-privileges, process/memory/CPU limits, per-Run mounts, read-only Skill snapshots and a unique internal-only network. A constrained ingress sidecar exposes only the fixed Host upstream on `127.0.0.1`. The model broker and every data adapter use separate read-only sidecars, secret mounts, service tokens and fixed-target relays; the workload still has no published port or general egress path. The manifest records exact container, network, image, snapshot and safe adapter identities without credential values or host Skill source paths.
 
-For an `ephemeral-machine` Run with `no-external-effects`, Docker is the executable sandbox boundary. Codex therefore runs with `danger-full-access` and no per-command approval *inside that container*; nesting bubblewrap is not required and is not assumed to work on Docker Desktop. This does not grant host access: outer read-only mounts, the constructed environment, dropped capabilities, the internal network, fixed brokers and per-Run resource identity remain the enforcement facts. Development mode and any future profile with declared external effects keep interactive approval. Domain credentials must remain in enforcing sidecars/adapters rather than being added to the workload because of this policy.
+For an `ephemeral-machine` Run with `no-external-effects` or the enforced `read-only-data-adapter-allowlist`, Docker is the executable sandbox boundary. Codex therefore runs with `danger-full-access` and no per-command approval *inside that container*; nesting bubblewrap is not required and is not assumed to work on Docker Desktop. This does not grant host access: outer mounts, constructed environment, dropped capabilities, internal network, fixed brokers and per-Run identity remain the enforcement facts. Development mode and unenforced external effects keep interactive approval. Domain credentials must stay in enforcing sidecars.
 
 Stopping a Run removes its child resources and recreates an empty private transient-credential directory. It retains the manifest, Runtime and Session state. Retention or deletion of that state is consumer policy and is not an implicit part of `stop`.
 
@@ -130,6 +155,7 @@ Stopping a Run removes its child resources and recreates an empty private transi
 ```bash
 npm test
 npm run test:docker-environment
+npm run test:docker-data-adapters
 ```
 
-The second command requires a running Docker daemon. It verifies both the offline path and a brokered Skill-snapshot path using a fake unexpired JWT without contacting OpenAI. It checks immutable snapshot behavior, the read-only snapshot mount, source-path removal, real workload/ingress/egress container controls, secret-mount separation, Runtime config parsing, refresh-token exclusion and exact cleanup. A real model turn remains consumer canary evidence and is not run automatically against a user's account.
+The Docker commands require a running daemon. `test:docker-environment` verifies offline and brokered Skill-snapshot paths without contacting OpenAI. `test:docker-data-adapters` starts a BigQuery sidecar with fake ADC, proves the workload sees only `dry_run_query` / `run_query`, rejects an undeclared tool at the adapter boundary, checks mount separation and cleans every owned resource. Real model/data calls remain consumer canary evidence and are not run automatically against user accounts.

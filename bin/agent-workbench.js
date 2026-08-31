@@ -7,15 +7,18 @@ import { fileURLToPath } from 'node:url';
 
 import {
   IsolationProviderRegistry,
+  createDataAdapterCredentialBroker,
   createDevelopmentIsolationProvider,
   createDockerIsolationProvider,
   createEnvironment,
   createEnvironmentRun,
   inspectEnvironment,
+  runDataAdapterServer,
   runFixedIngressProxy,
   runModelEgressBroker,
   launchEnvironmentRun,
   listEnvironmentRuns,
+  readEnvironmentBindings,
   readEnvironmentManifest,
   readStoredEnvironmentProfile,
   resolveEnvironmentTarget,
@@ -77,6 +80,19 @@ async function main(argv) {
     });
     return;
   }
+  if (argv[0] === '--internal-data-adapter') {
+    const options = parseOptions(argv.slice(1));
+    const adapter = JSON.parse(await readFile(resolve(requiredOption(options['adapter-file'], '--adapter-file')), 'utf8'));
+    await runDataAdapterServer({
+      adapter,
+      credentialPath: resolve(requiredOption(options['credential-file'], '--credential-file')),
+      serviceTokenPath: resolve(requiredOption(options['service-token-file'], '--service-token-file')),
+      readyFile: resolve(requiredOption(options['ready-file'], '--ready-file')),
+      runId: requiredOption(options['run-id'], '--run-id'),
+      port: integerOption(options.port, 'port', null, 1, 65535),
+    });
+    return;
+  }
   if (!argv.length || ['help', '--help', '-h'].includes(argv[0])) {
     process.stdout.write(helpText());
     return;
@@ -85,9 +101,12 @@ async function main(argv) {
   const command = argv[1];
   const { positional, options } = parseCommandArguments(argv.slice(2));
   const storageRoot = resolve(options.root || DEFAULT_STORAGE_ROOT);
+  const bindings = options.bindings
+    ? await readEnvironmentBindings(resolve(options.bindings))
+    : { schema: 'agent-workbench.environment-bindings/v1', credentials: {} };
   const providers = new IsolationProviderRegistry([
     createDevelopmentIsolationProvider(),
-    createDockerIsolationProvider(),
+    createDockerIsolationProvider({ dataAdapterCredentialBroker: createDataAdapterCredentialBroker({ bindings }) }),
   ]);
 
   if (command === 'create') {
@@ -212,7 +231,7 @@ function print(value) {
 }
 
 function helpText() {
-  return `Agent Workbench runnable Minimal Host\n\nUsage:\n  agent-workbench env create --profile <profile.json> [--root <storage>] [--id <id>]\n  agent-workbench env run <environment-or-run> [--root <storage>] [--port <port>]\n  agent-workbench env inspect <environment-or-run> [--root <storage>]\n  agent-workbench env stop <environment-or-run> [--root <storage>]\n\nThe built-in development provider is explicitly non-isolated. A Profile that requires\nguarded-host or ephemeral-machine will fail at run time instead of downgrading.\n`;
+  return `Agent Workbench runnable Minimal Host\n\nUsage:\n  agent-workbench env create --profile <profile.json> [--bindings <private-bindings.json>] [--root <storage>] [--id <id>]\n  agent-workbench env run <environment-or-run> [--bindings <private-bindings.json>] [--root <storage>] [--port <port>]\n  agent-workbench env inspect <environment-or-run> [--root <storage>]\n  agent-workbench env stop <environment-or-run> [--root <storage>]\n\nThe built-in development provider is explicitly non-isolated. A Profile that requires\nguarded-host or ephemeral-machine will fail at run time instead of downgrading.\n`;
 }
 
 function cliError(code, message) {

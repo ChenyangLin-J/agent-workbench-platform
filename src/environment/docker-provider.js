@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 
 import { codexModelBrokerRequest, createCodexNativeCredentialBroker } from './codex-credential.js';
 import { capabilitySnapshotsReady, verifyCapabilitySnapshots } from './capability-snapshots.js';
+import { createDataAdapterCredentialBroker, dataAdapterRequest } from './data-adapters.js';
 import { defineIsolationProvider, providerError } from './providers.js';
 import { isPathContained } from './paths.js';
 
@@ -17,12 +18,14 @@ export function createDockerIsolationProvider({
   spawnProcess = spawn,
   inspectDocker = defaultDockerInspection,
   credentialBroker = createCodexNativeCredentialBroker(),
+  dataAdapterCredentialBroker = createDataAdapterCredentialBroker(),
 } = {}) {
   return defineIsolationProvider({
     id: 'docker',
     async inspect(context = {}) {
       const profile = context.profile;
       const broker = await credentialBroker.inspect({ profile });
+      const dataBroker = await dataAdapterCredentialBroker.inspect({ profile });
       let capabilitySnapshots = context.capabilitySnapshots || [];
       let capabilityReason = null;
       if (capabilitySnapshotsReady(profile, capabilitySnapshots) && capabilitySnapshots.length) {
@@ -38,6 +41,7 @@ export function createDockerIsolationProvider({
       }
       const facts = dockerProfileFacts(profile, {
         modelBrokerReady: broker.ready,
+        dataAdapterBrokerReady: dataBroker.ready,
         capabilitySnapshots,
       });
       const filesystem = await dockerFilesystemFacts(profile, context);
@@ -57,6 +61,7 @@ export function createDockerIsolationProvider({
               ...filesystem.reasons,
               ...(capabilityReason ? [capabilityReason] : []),
               ...(broker.reason ? [broker.reason] : []),
+              ...(dataBroker.reason ? [dataBroker.reason] : []),
             ].join(' ') }),
         enforcement: {
           filesystem: { enforced: enforced(filesystem.ready), mode: mode(filesystem.ready, 'canonical-container-mount-allowlist', 'invalid-mount-boundary') },
@@ -67,7 +72,9 @@ export function createDockerIsolationProvider({
             enforced: enforced(facts.credentials),
             mode: mode(
               facts.credentials,
-              facts.modelBroker ? 'short-lived-codex-credential-broker' : 'no-credentials',
+              facts.modelBroker && facts.dataAdapters ? 'isolated-model-and-data-credential-brokers'
+                : facts.modelBroker ? 'short-lived-codex-credential-broker'
+                  : facts.dataAdapters ? 'isolated-data-adapter-credentials' : 'no-credentials',
               'credential-broker-required',
             ),
           },
@@ -76,12 +83,19 @@ export function createDockerIsolationProvider({
             mode: mode(
               facts.network,
               facts.modelBroker
-                ? 'internal-network-with-fixed-ingress-and-model-egress-sidecars'
-                : 'internal-network-with-fixed-ingress-sidecar',
+                ? facts.dataAdapters
+                  ? 'internal-network-with-fixed-ingress-model-and-data-sidecars'
+                  : 'internal-network-with-fixed-ingress-and-model-egress-sidecars'
+                : facts.dataAdapters
+                  ? 'internal-network-with-fixed-ingress-and-data-sidecars'
+                  : 'internal-network-with-fixed-ingress-sidecar',
               'egress-proxy-required',
             ),
           },
-          externalEffects: { enforced: enforced(facts.externalEffects), mode: mode(facts.externalEffects, 'no-external-effects', 'effect-adapter-required') },
+          externalEffects: {
+            enforced: enforced(facts.externalEffects),
+            mode: mode(facts.externalEffects, facts.dataAdapters ? 'read-only-data-adapter-allowlist' : 'no-external-effects', 'effect-adapter-required'),
+          },
           crossRun: { enforced: enforced(), mode: mode(true, 'unique-container-network-and-run-mounts', 'docker-unavailable') },
           ephemeralIdentity: { enforced: enforced(), mode: mode(true, 'auto-removed-container', 'docker-unavailable') },
         },
@@ -94,19 +108,29 @@ export function createDockerIsolationProvider({
         throw providerError('DOCKER_SUPERVISOR_ENTRY_MISSING', 'Docker provider requires the internal container supervisor entry point.');
       }
       const brokerRequest = codexModelBrokerRequest(profile);
+      const adapterRequest = dataAdapterRequest(profile);
       let stagedBrokerDirectory = null;
-      if (brokerRequest.requested) {
-        const inspection = await credentialBroker.inspect({ profile });
-        if (!inspection.ready) {
-          throw providerError('CODEX_CREDENTIAL_BROKER_UNAVAILABLE', inspection.reason || 'Codex credential broker is unavailable.');
-        }
-        stagedBrokerDirectory = join(manifest.paths.credentials, 'broker');
-        await credentialBroker.stage({ profile, directory: stagedBrokerDirectory });
-      }
+      let stagedAdapterDirectory = null;
       let stdout;
       let stderr;
       let child;
       try {
+        if (brokerRequest.requested) {
+          const inspection = await credentialBroker.inspect({ profile });
+          if (!inspection.ready) {
+            throw providerError('CODEX_CREDENTIAL_BROKER_UNAVAILABLE', inspection.reason || 'Codex credential broker is unavailable.');
+          }
+          stagedBrokerDirectory = join(manifest.paths.credentials, 'broker');
+          await credentialBroker.stage({ profile, directory: stagedBrokerDirectory });
+        }
+        if (adapterRequest.requested) {
+          const inspection = await dataAdapterCredentialBroker.inspect({ profile });
+          if (!inspection.ready) {
+            throw providerError('DATA_ADAPTER_CREDENTIAL_BROKER_UNAVAILABLE', inspection.reason || 'Data adapter credential broker is unavailable.');
+          }
+          stagedAdapterDirectory = join(manifest.paths.credentials, 'data-adapters');
+          await dataAdapterCredentialBroker.stage({ profile, directory: stagedAdapterDirectory });
+        }
         stdout = openSync(launch.stdoutPath, 'a', 0o600);
         stderr = openSync(launch.stderrPath, 'a', 0o600);
         const dockerEnvironment = await resolveDockerEnvironment(dockerCommand);
@@ -126,7 +150,10 @@ export function createDockerIsolationProvider({
           throw providerError('DOCKER_SUPERVISOR_LAUNCH_FAILED', 'Docker supervisor did not return a valid process id.');
         }
       } catch (error) {
-        if (stagedBrokerDirectory) await rm(stagedBrokerDirectory, { recursive: true, force: true });
+        await Promise.all([
+          stagedBrokerDirectory ? rm(stagedBrokerDirectory, { recursive: true, force: true }) : null,
+          stagedAdapterDirectory ? rm(stagedAdapterDirectory, { recursive: true, force: true }) : null,
+        ]);
         throw error;
       } finally {
         if (stdout !== undefined) closeSync(stdout);
@@ -198,7 +225,10 @@ async function recoverOwnedDockerResources(dockerCommand, manifest) {
   const state = manifest?.process?.providerState;
   if (!state || manifest?.isolation?.provider !== 'docker') return false;
   let found = false;
-  for (const id of [state.containerId, state.ingressId, state.egressId].filter(Boolean)) {
+  const adapterContainerIds = Array.isArray(state.dataAdapters)
+    ? state.dataAdapters.map((adapter) => adapter?.containerId).filter(Boolean)
+    : [];
+  for (const id of [state.containerId, state.ingressId, state.egressId, ...adapterContainerIds].filter(Boolean)) {
     let label;
     try {
       ({ stdout: label } = await execFileAsync(dockerCommand, ['inspect', '--format', '{{index .Config.Labels "ai.agent-workbench.run"}}', id], {
@@ -257,6 +287,7 @@ async function resolveDockerEnvironment(dockerCommand) {
 
 export function dockerProfileFacts(profile = {}, {
   modelBrokerReady = false,
+  dataAdapterBrokerReady = false,
   capabilitySnapshots = [],
 } = {}) {
   const reasons = [];
@@ -264,29 +295,53 @@ export function dockerProfileFacts(profile = {}, {
   const unsafeEnvironmentKeys = environmentKeys.filter((key) => !SAFE_ENVIRONMENT_KEYS.has(key));
   const environment = unsafeEnvironmentKeys.length === 0;
   if (!environment) reasons.push(`Container environment keys require a secret-safe broker: ${unsafeEnvironmentKeys.join(', ')}.`);
-  const emptyCapabilityLock = (profile.capabilities?.lock?.capabilities || []).length === 0;
-  const capabilities = capabilitySnapshotsReady(profile, capabilitySnapshots);
+  const lockEntries = profile.capabilities?.lock?.capabilities || [];
+  const emptyCapabilityLock = lockEntries.length === 0;
+  const supportedCapabilityKinds = lockEntries.every((entry) => ['skill-source', 'read-only-adapter'].includes(entry.kind));
+  const capabilities = supportedCapabilityKinds && capabilitySnapshotsReady(profile, capabilitySnapshots);
   if (!capabilities) reasons.push('Container capability snapshots are not staged yet.');
   const brokerRequest = codexModelBrokerRequest(profile);
-  const credentials = (profile.isolation?.credentialReferences || []).length === 0
-    || (brokerRequest.supported && modelBrokerReady);
+  const adapterRequest = dataAdapterRequest(profile);
+  const expectedCredentials = [
+    ...(brokerRequest.requested ? [brokerRequest.credentialReference].filter(Boolean) : []),
+    ...adapterRequest.credentialReferences,
+  ];
+  const expectedNetwork = [
+    ...(brokerRequest.requested ? [brokerRequest.target].filter(Boolean) : []),
+    ...adapterRequest.networkTargets,
+  ];
+  const credentials = exactStringSet(profile.isolation?.credentialReferences, expectedCredentials)
+    && (!brokerRequest.requested || (brokerRequest.supported && modelBrokerReady))
+    && (!adapterRequest.requested || (adapterRequest.supported && dataAdapterBrokerReady));
   if (!credentials) reasons.push('Container credential references require the supported short-lived Codex credential broker.');
-  const network = (profile.isolation?.networkTargets || []).length === 0
-    || (brokerRequest.supported && modelBrokerReady);
+  const network = exactStringSet(profile.isolation?.networkTargets, expectedNetwork)
+    && (!brokerRequest.requested || (brokerRequest.supported && modelBrokerReady))
+    && (!adapterRequest.requested || adapterRequest.supported);
   if (!network) reasons.push('Container network targets require the supported fixed model egress broker.');
-  const externalEffects = ['read', 'write'].every((kind) => (profile.isolation?.externalEffects?.[kind] || []).length === 0);
+  const externalEffects = exactStringSet(profile.isolation?.externalEffects?.read, adapterRequest.externalEffects.read)
+    && exactStringSet(profile.isolation?.externalEffects?.write, []);
   if (!externalEffects) reasons.push('Declared external effects require an enforcing capability adapter.');
+  const hasSkill = lockEntries.some((entry) => entry.kind === 'skill-source');
   return {
     environment,
     capabilities,
-    capabilityMode: emptyCapabilityLock ? 'empty-capability-lock' : 'immutable-skill-snapshots',
+    capabilityMode: emptyCapabilityLock ? 'empty-capability-lock'
+      : adapterRequest.requested && hasSkill ? 'immutable-skill-snapshots-and-read-only-adapters'
+        : adapterRequest.requested ? 'locked-read-only-adapters' : 'immutable-skill-snapshots',
     credentials,
     network,
     externalEffects,
     modelBroker: brokerRequest.requested && brokerRequest.supported && modelBrokerReady,
+    dataAdapters: adapterRequest.requested && adapterRequest.supported && dataAdapterBrokerReady,
     ready: environment && capabilities && credentials && network && externalEffects,
     reasons,
   };
+}
+
+function exactStringSet(actual = [], expected = []) {
+  const left = [...new Set(actual || [])].sort();
+  const right = [...new Set(expected || [])].sort();
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 async function defaultDockerInspection(dockerCommand) {

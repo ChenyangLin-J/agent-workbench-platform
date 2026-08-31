@@ -74,6 +74,66 @@ test('profiles reject unknown fields and embedded credential values', () => {
   }), /not present in the lock/);
 });
 
+test('profile normalization binds locked read-only adapters without credential values', () => {
+  const profile = normalizeEnvironmentProfile({
+    id: 'read-only-data',
+    capabilities: {
+      lock: { capabilities: [
+        { id: 'adapters.metadata', kind: 'read-only-adapter', scope: 'data', version: '1' },
+        { id: 'adapters.warehouse', kind: 'read-only-adapter', scope: 'data', version: '1' },
+      ] },
+      adapters: [
+        {
+          id: 'adapters.metadata',
+          kind: 'openmetadata-mcp-read',
+          server: 'openmetadata',
+          target: 'https://metadata.example.test/mcp',
+          credentialReference: 'credentials.metadata-pat',
+          effect: 'metadata.read',
+          allowedTools: ['search_metadata', 'get_entity_details'],
+        },
+        {
+          id: 'adapters.warehouse',
+          kind: 'bigquery-read',
+          server: 'bigquery',
+          credentialReference: 'credentials.google-adc',
+          effect: 'warehouse.read',
+          billingProject: 'billing-project',
+          allowedProjects: ['source-project'],
+          maximumBytesBilled: 1024,
+          maximumRows: 20,
+        },
+      ],
+    },
+  });
+  assert.equal(profile.capabilities.adapters.length, 2);
+  assert.equal('sources' in profile.capabilities, false);
+  assert.equal(JSON.stringify(profile).includes('token-value'), false);
+  assert.throws(() => normalizeEnvironmentProfile({
+    id: 'missing-adapter',
+    capabilities: { lock: { capabilities: [
+      { id: 'adapters.missing', kind: 'read-only-adapter', scope: 'data', version: '1' },
+    ] } },
+  }), /has no adapter declaration/);
+  assert.throws(() => normalizeEnvironmentProfile({
+    id: 'write-tool',
+    capabilities: {
+      lock: { capabilities: [
+        { id: 'adapters.metadata', kind: 'read-only-adapter', scope: 'data', version: '1' },
+      ] },
+      adapters: [{
+        id: 'adapters.metadata',
+        kind: 'openmetadata-mcp-read',
+        server: 'openmetadata',
+        target: 'https://metadata.example.test/mcp',
+        credentialReference: 'credentials.metadata-pat',
+        effect: 'metadata.read',
+        allowedTools: ['patch_entity'],
+      }],
+    },
+  }), /built-in read allowlist/);
+});
+
 test('effective isolation is derived from every enforcement facet', () => {
   assert.equal(deriveEffectiveIsolationLevel(COMPLETE_GUARD), 'guarded-host');
   assert.equal(deriveEffectiveIsolationLevel({

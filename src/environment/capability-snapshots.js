@@ -25,17 +25,15 @@ const MAX_SNAPSHOT_BYTES = 20 * 1024 * 1024;
 export async function stageCapabilitySnapshots({ profile, targetRoot } = {}) {
   if (typeof targetRoot !== 'string' || !targetRoot.trim()) throw new TypeError('capability snapshot targetRoot is required');
   const lockEntries = profile?.capabilities?.lock?.capabilities || [];
+  const skillEntries = lockEntries.filter((entry) => entry.kind === 'skill-source');
   const sources = new Map((profile?.capabilities?.sources || []).map((source) => [source.id, source]));
-  if (!lockEntries.length) {
+  if (!skillEntries.length) {
     await mkdir(resolve(targetRoot), { recursive: true, mode: 0o700 });
     return [];
   }
   await mkdir(resolve(targetRoot), { recursive: true, mode: 0o700 });
   const snapshots = [];
-  for (const entry of lockEntries) {
-    if (entry.kind !== 'skill-source') {
-      throw snapshotError('CAPABILITY_SNAPSHOT_KIND_UNSUPPORTED', `Environment snapshot staging does not support ${entry.kind}: ${entry.id}.`);
-    }
+  for (const entry of skillEntries) {
     const source = sources.get(entry.id);
     if (!source) throw snapshotError('CAPABILITY_SNAPSHOT_SOURCE_MISSING', `Capability snapshot source is missing: ${entry.id}.`);
     const directory = createHash('sha256').update(entry.id).digest('hex').slice(0, 24);
@@ -117,15 +115,14 @@ async function canonicalSnapshotRoot(sourceRoot) {
 }
 
 export function capabilitySnapshotsReady(profile = {}, snapshots = []) {
-  const entries = profile.capabilities?.lock?.capabilities || [];
+  const entries = (profile.capabilities?.lock?.capabilities || []).filter((entry) => entry.kind === 'skill-source');
   if (!entries.length) return Array.isArray(snapshots) && snapshots.length === 0;
   if (!Array.isArray(snapshots) || snapshots.length !== entries.length) return false;
   const byId = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]));
   if (byId.size !== snapshots.length) return false;
   return entries.every((entry) => {
     const snapshot = byId.get(entry.id);
-    return entry.kind === 'skill-source'
-      && snapshot?.kind === entry.kind
+    return snapshot?.kind === entry.kind
       && snapshot.scope === entry.scope
       && snapshot.version === entry.version
       && validSkillName(snapshot.name)

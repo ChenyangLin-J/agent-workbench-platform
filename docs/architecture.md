@@ -37,7 +37,7 @@ Runtime and Feature contracts do not depend on DOM. React is the current shared 
 
 Solvely Workbench is a frozen compatibility reference, not an active migration target.
 
-Data Skill Lab currently incubates inside the Personal repository and still launches Personal host code. That source location is temporary implementation debt, not product ownership. Platform contracts used by the Lab must remain project-free; extracting its minimal host is a separate consumer task and does not move evaluation policy into Platform.
+Data Skill Lab currently incubates inside the Personal repository. Its strong-isolation modes are thin Profiles of the Core Minimal Host; the legacy Personal-host path remains only for comparison while adoption closes. That source location is not product ownership: Platform stays project-free, while Gold, scoring and evaluation policy remain outside Core.
 
 ## Ownership
 
@@ -49,7 +49,7 @@ Data Skill Lab currently incubates inside the Personal repository and still laun
 | Attachment metadata, limits, input and transcript envelopes | Attachment bytes, URLs, path authorization and file actions |
 | Shared Session/Feature React UI and extension slots | Page shell, theme, placement and business extensions |
 | Capability schema, common catalog, dependency resolution, plans and portable locks | Product Profile, custom catalog, host checks, install handlers and authentication |
-| Environment/Run schema, Minimal Host, lifecycle/provider enforcement, immutable Skill snapshots and the fixed Codex model broker | Profile selection, domain credentials/data adapters, retention and deployment |
+| Environment/Run schema, Minimal Host, lifecycle/provider enforcement, immutable Skill snapshots, fixed Codex model broker and built-in read-only adapter enforcement | Profile selection, data allowlists, credential bindings, evaluation policy, retention and deployment |
 | Browser Provider lifecycle primitives and product-neutral proxy behavior | Browser profile, MCP endpoint, authorization and user-facing controls |
 | Project-free and project-scoped contract fixtures | Consumer integration, end-to-end and manual acceptance evidence |
 
@@ -86,7 +86,7 @@ Platform never reads a product database, chooses a package manager, stores crede
 - Creating an Environment creates instance state, not source code. A consumer needs another repository only when it adds product-specific routes, adapters, UI, persistence or deployment.
 - The built-in Host runs Sessions without projects, tasks, memory, evaluation policy or a consumer checkout. `policies/`, `evaluations/` and `gold/` are optional consumer/evaluator assets and are never required Host directories.
 - Requested isolation is not evidence. The effective level is derived from provider enforcement facets and startup fails when it is below the Profile minimum.
-- Development mode is useful but explicitly non-isolated. The Docker provider proves strong isolation for offline Runs, immutable `skill-source` snapshots, and one fixed Codex model channel backed by an unexpired ChatGPT access token. A Skill source is copied at Environment creation, records its frontmatter name, and is hash-verified into each Run; only that Run copy is mounted read-only, the host source path is removed from the workload Profile, and Session startup fails unless Codex's enabled Skill inventory matches the lock. The workload never receives `auth.json`, the upstream access token, a refresh token, or controller proxy credentials; broker-only sidecars and a per-Run fixed-target host relay own those transport boundaries. For self-contained `ephemeral-machine` Runs, Docker is the executable sandbox and Codex command approvals are disabled inside it; development or externally effective profiles retain host-owned approval policy. Other Capability kinds, credentials, network targets and external effects still fail closed.
+- Development mode is useful but explicitly non-isolated. The Docker provider proves strong isolation for offline Runs, immutable `skill-source` snapshots, one fixed Codex model channel, and locked OpenMetadata/BigQuery read-only adapters. Skill sources are hash-verified, mounted read-only and Runtime-allowlisted. Model and data credentials stay in separate sidecars; the workload receives only Run-local service channels. BigQuery execution is dry-run gated by statement type, referenced-project allowlist and byte/row ceilings; OpenMetadata is tool-allowlisted before upstream contact. Exact credential, network and effect declarations fail closed. For self-contained `ephemeral-machine` Runs, including enforced read-only adapters, Docker is the executable sandbox and nested Codex command approvals are disabled.
 - Each Run owns its Runtime home, Session state, workspace, temporary paths and transient credential directory. Stop removes transient credentials and child resources while retaining the Run manifest and Session state.
 
 ## Placement test

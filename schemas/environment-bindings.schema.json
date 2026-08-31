@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workbench.local/schemas/environment-bindings.schema.json",
+  "title": "Agent Workbench Environment Bindings",
+  "type": "object",
+  "required": ["schema", "credentials"],
+  "properties": {
+    "$schema": { "const": "agent-workbench.environment-bindings/v1" },
+    "schema": { "const": "agent-workbench.environment-bindings/v1" },
+    "credentials": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["source", "key"],
+            "properties": {
+              "source": { "const": "environment" },
+              "key": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,126}$" }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["source", "path"],
+            "properties": {
+              "source": { "const": "file" },
+              "path": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}

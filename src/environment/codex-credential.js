@@ -11,24 +11,26 @@ const DEFAULT_MINIMUM_TTL_MS = 5 * 60_000;
 export function codexModelBrokerRequest(profile = {}) {
   const credentialReferences = profile.isolation?.credentialReferences || [];
   const networkTargets = profile.isolation?.networkTargets || [];
-  if (!credentialReferences.length && !networkTargets.length) {
+  const credentialRequested = credentialReferences.includes(CODEX_NATIVE_CREDENTIAL_REFERENCE);
+  const targetRequested = networkTargets.some((target) => normalizeTarget(target) === CHATGPT_CODEX_BASE_URL);
+  if (!credentialRequested && !targetRequested) {
     return { requested: false, supported: true, credentialReference: null, target: null, reasons: [] };
   }
   const reasons = [];
   if (profile.runtime?.provider !== 'codex' || !profile.runtime?.model) {
     reasons.push('The built-in model broker requires runtime.provider=codex and an explicit runtime.model.');
   }
-  if (credentialReferences.length !== 1 || credentialReferences[0] !== CODEX_NATIVE_CREDENTIAL_REFERENCE) {
-    reasons.push(`The built-in model broker requires only ${CODEX_NATIVE_CREDENTIAL_REFERENCE}.`);
+  if (!credentialRequested) {
+    reasons.push(`The built-in model broker requires ${CODEX_NATIVE_CREDENTIAL_REFERENCE}.`);
   }
-  if (networkTargets.length !== 1 || normalizeTarget(networkTargets[0]) !== CHATGPT_CODEX_BASE_URL) {
-    reasons.push(`The built-in model broker requires only ${CHATGPT_CODEX_BASE_URL}.`);
+  if (!targetRequested) {
+    reasons.push(`The built-in model broker requires ${CHATGPT_CODEX_BASE_URL}.`);
   }
   return {
     requested: true,
     supported: reasons.length === 0,
-    credentialReference: credentialReferences[0] || null,
-    target: networkTargets[0] ? normalizeTarget(networkTargets[0]) : null,
+    credentialReference: credentialRequested ? CODEX_NATIVE_CREDENTIAL_REFERENCE : null,
+    target: targetRequested ? CHATGPT_CODEX_BASE_URL : null,
     reasons,
   };
 }

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { isAbsolute, resolve } from 'node:path';
 
+import { normalizeDataAdapters } from './data-adapters.js';
+
 export const ENVIRONMENT_MANIFEST_SCHEMA = 'agent-workbench.environment/v1';
 export const ENVIRONMENT_PROFILE_SCHEMA = 'agent-workbench.environment-profile/v1';
 export const ISOLATION_LEVELS = Object.freeze([
@@ -75,6 +77,7 @@ export function normalizeEnvironmentProfile(profile, { baseDirectory = process.c
   const features = normalizeFeatures(profile.features);
   const capabilityLock = normalizeCapabilityLock(profile.capabilities?.lock ?? profile.capabilities);
   const capabilitySources = normalizeCapabilitySources(profile.capabilities?.sources, capabilityLock, baseDirectory);
+  const capabilityAdapters = normalizeDataAdapters(profile.capabilities?.adapters, capabilityLock);
   const isolation = normalizeIsolation(profile.isolation, { baseDirectory });
   const extensions = normalizeExtensions(profile.extensions);
   const normalized = {
@@ -86,6 +89,7 @@ export function normalizeEnvironmentProfile(profile, { baseDirectory = process.c
     capabilities: {
       lock: capabilityLock,
       ...(capabilitySources.length ? { sources: capabilitySources } : {}),
+      ...(capabilityAdapters.length ? { adapters: capabilityAdapters } : {}),
     },
     isolation,
     extensions,
@@ -175,13 +179,13 @@ function normalizeCapabilityLock(lock = {}) {
 function normalizeCapabilitySources(value, lock, baseDirectory) {
   if (value == null) return [];
   if (!Array.isArray(value)) throw new TypeError('environment capability sources must be an array');
-  const locked = new Set(lock.capabilities.map((entry) => entry.id));
+  const locked = new Set(lock.capabilities.filter((entry) => entry.kind === 'skill-source').map((entry) => entry.id));
   const seen = new Set();
   return value.map((candidate) => {
     if (!plainObject(candidate)) throw new TypeError('environment capability source must be an object');
     rejectUnknownKeys(candidate, new Set(['id', 'path']), 'environment capability source');
     const id = nonEmptyString(candidate.id, 'environment capability source id');
-    if (!locked.has(id)) throw new TypeError(`capability source is not present in the lock: ${id}`);
+    if (!locked.has(id)) throw new TypeError(`capability source is not present in the lock as skill-source: ${id}`);
     if (seen.has(id)) throw new TypeError(`duplicate capability source id: ${id}`);
     seen.add(id);
     const path = nonEmptyString(candidate.path, `capability source ${id} path`);

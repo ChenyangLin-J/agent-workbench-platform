@@ -189,7 +189,8 @@ function runtimeAttachOptions(manifest) {
 
 function selfContainedEphemeralRun(manifest) {
   return manifest.isolation?.effectiveLevel === 'ephemeral-machine'
-    && manifest.isolation?.enforcement?.externalEffects?.mode === 'no-external-effects';
+    && ['no-external-effects', 'read-only-data-adapter-allowlist']
+      .includes(manifest.isolation?.enforcement?.externalEffects?.mode);
 }
 
 function normalizeTurnInput(body) {

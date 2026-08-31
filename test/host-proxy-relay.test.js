@@ -55,6 +55,52 @@ test('host proxy relay requires per-Run auth and permits only the fixed ChatGPT 
   assert.equal(observedUpstreamRequest.includes(authToken), false);
 });
 
+test('host proxy relay can enforce a small explicit target set', async (t) => {
+  const observedTargets = [];
+  const upstreamProxy = createServer((socket) => {
+    socket.once('data', (chunk) => {
+      observedTargets.push(chunk.toString('latin1').split('\r\n', 1)[0]);
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\nREADY');
+    });
+  });
+  const upstreamPort = await listen(upstreamProxy);
+  t.after(() => close(upstreamProxy));
+  const authToken = 'b'.repeat(43);
+  const relay = await startFixedTargetProxyRelay({
+    upstreamProxyUrl: `http://127.0.0.1:${upstreamPort}`,
+    authToken,
+    host: '127.0.0.1',
+    targets: [
+      { host: 'bigquery.googleapis.com', port: 443 },
+      { host: 'oauth2.googleapis.com', port: 443 },
+    ],
+  });
+  t.after(() => relay.stop());
+  const authorization = `Basic ${Buffer.from(`agent-workbench:${authToken}`).toString('base64')}`;
+  for (const host of ['bigquery.googleapis.com', 'oauth2.googleapis.com']) {
+    const accepted = await connectRequest(relay.port, [
+      `CONNECT ${host}:443 HTTP/1.1`,
+      `Host: ${host}:443`,
+      `Proxy-Authorization: ${authorization}`,
+      '',
+      '',
+    ].join('\r\n'), { waitFor: 'READY' });
+    assert.match(accepted, /^HTTP\/1\.1 200 Connection Established/);
+  }
+  const forbidden = await connectRequest(relay.port, [
+    'CONNECT storage.googleapis.com:443 HTTP/1.1',
+    'Host: storage.googleapis.com:443',
+    `Proxy-Authorization: ${authorization}`,
+    '',
+    '',
+  ].join('\r\n'));
+  assert.match(forbidden, /^HTTP\/1\.1 403 Forbidden/);
+  assert.deepEqual(observedTargets, [
+    'CONNECT bigquery.googleapis.com:443 HTTP/1.1',
+    'CONNECT oauth2.googleapis.com:443 HTTP/1.1',
+  ]);
+});
+
 async function listen(server) {
   await new Promise((resolve, reject) => {
     server.once('error', reject);

@@ -152,6 +152,48 @@ test('brokered Runtime config contains only the Run-local endpoint and hides its
   assert.equal(config.includes('run-service-token'), false);
 });
 
+test('read-only adapter Runtime config exposes only Run-local MCP channels and hides service tokens from shells', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-data-runtime-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runtime = join(root, 'runtime');
+  const credentials = join(root, 'credentials');
+  const directory = 'aa11';
+  const tokenFile = join(credentials, 'data-adapters', directory, 'service-token');
+  await mkdir(join(runtime, 'codex-home'), { recursive: true, mode: 0o700 });
+  await mkdir(join(credentials, 'data-adapters', directory), { recursive: true, mode: 0o700 });
+  await writeFile(tokenFile, 'adapter-service-token\n', { mode: 0o600 });
+  const prepared = await prepareMinimalRuntimeConfiguration({
+    manifest: {
+      runtime: {
+        provider: 'codex',
+        dataAdapters: [{
+          id: 'adapters.metadata',
+          kind: 'openmetadata-mcp-read',
+          server: 'openmetadata',
+          url: 'http://awb-0123456789abcdef-data-1:4200/mcp',
+          tokenEnvKey: 'AGENT_WORKBENCH_DATA_ADAPTER_1_TOKEN',
+          tokenFile,
+          enabledTools: ['search_metadata', 'get_entity_details'],
+        }],
+      },
+      capabilities: {
+        lock: { capabilities: [
+          { id: 'adapters.metadata', kind: 'read-only-adapter', scope: 'data', version: '1' },
+        ] },
+        snapshots: [],
+      },
+      paths: { runtime, capabilities: join(root, 'capabilities'), credentials },
+    },
+  });
+  const config = await readFile(prepared.configPath, 'utf8');
+  assert.match(config, /\[mcp_servers\."openmetadata"\]/);
+  assert.match(config, /url = "http:\/\/awb-0123456789abcdef-data-1:4200\/mcp"/);
+  assert.match(config, /enabled_tools = \["search_metadata", "get_entity_details"\]/);
+  assert.match(config, /exclude = \["AGENT_WORKBENCH_DATA_ADAPTER_1_TOKEN"\]/);
+  assert.deepEqual(prepared.environment, { AGENT_WORKBENCH_DATA_ADAPTER_1_TOKEN: 'adapter-service-token' });
+  assert.equal(config.includes('adapter-service-token'), false);
+});
+
 function brokerProfile() {
   return normalizeEnvironmentProfile({
     id: 'brokered-model',

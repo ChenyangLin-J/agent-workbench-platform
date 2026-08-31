@@ -9,6 +9,15 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createDockerIsolationProvider } from './docker-provider.js';
 import { codexModelBrokerRequest, readStagedCodexCredential } from './codex-credential.js';
 import { environmentProfileHash } from './contracts.js';
+import {
+  BIGQUERY_API_TARGET,
+  BIGQUERY_READ_ADAPTER_KIND,
+  GOOGLE_OAUTH_TARGET,
+  OPENMETADATA_READ_ADAPTER_KIND,
+  adapterDirectoryName,
+  dataAdapterRequest,
+  readStagedDataAdapterCredential,
+} from './data-adapters.js';
 import { startFixedTargetProxyRelay } from './host-proxy-relay.js';
 import {
   removeHostIdentity,
@@ -28,6 +37,7 @@ const DOCKERFILE = join(PACKAGE_ROOT, 'containers', 'minimal-host.Dockerfile');
 const CONTAINER_PORT = 4178;
 const INGRESS_PORT = 4180;
 const MODEL_EGRESS_PORT = 4190;
+const DATA_ADAPTER_PORT = 4200;
 const MODEL_BROKER_ENV_KEY = 'AGENT_WORKBENCH_MODEL_BROKER_TOKEN';
 
 export async function runDockerSupervisor(runTarget, {
@@ -40,7 +50,9 @@ export async function runDockerSupervisor(runTarget, {
   manifest.capabilities.snapshots ||= [];
   await mkdir(manifest.paths.capabilities, { recursive: true, mode: 0o700 });
   const profile = await readStoredEnvironmentProfile(manifest.paths.root);
+  const adapterRequest = dataAdapterRequest(profile);
   const stagedBrokerCredentialPath = join(manifest.paths.credentials, 'broker', 'model.json');
+  const stagedAdapterCredentialRoot = join(manifest.paths.credentials, 'data-adapters');
   const provider = createDockerIsolationProvider({
     dockerCommand,
     credentialBroker: {
@@ -51,6 +63,25 @@ export async function runDockerSupervisor(runTarget, {
           return { ready: true, requested: true, target: credential.target, expiresAt: credential.expiresAt };
         } catch {
           return { ready: false, requested: true, reason: 'The staged Codex model credential is unavailable.' };
+        }
+      },
+      async stage() {
+        throw new Error('Docker supervisor cannot stage host credentials.');
+      },
+    },
+    dataAdapterCredentialBroker: {
+      async inspect() {
+        if (!adapterRequest.requested) return { ready: true, requested: false, adapters: [] };
+        try {
+          for (const adapter of adapterRequest.adapters) {
+            await readStagedDataAdapterCredential(
+              join(stagedAdapterCredentialRoot, adapterDirectoryName(adapter.id), 'credential.json'),
+              adapter,
+            );
+          }
+          return { ready: true, requested: true, adapters: adapterRequest.adapters.map(({ id, kind, server }) => ({ id, kind, server })) };
+        } catch {
+          return { ready: false, requested: true, reason: 'The staged data adapter credentials are unavailable.' };
         }
       },
       async stage() {
@@ -97,10 +128,43 @@ export async function runDockerSupervisor(runTarget, {
     target: modelCredential.target,
     expiresAt: modelCredential.expiresAt,
   } : null;
-  const hostHttpsProxy = modelBroker ? configuredHostHttpsProxy(process.env) : null;
+  const dataAdapters = adapterRequest.adapters.map((adapter, index) => {
+    const directory = adapterDirectoryName(adapter.id);
+    const number = index + 1;
+    return {
+      adapter,
+      directory,
+      containerName: `awb-${suffix}-data-${number}`,
+      url: `http://awb-${suffix}-data-${number}:${DATA_ADAPTER_PORT}/mcp`,
+      tokenEnvKey: `AGENT_WORKBENCH_DATA_ADAPTER_${number}_TOKEN`,
+      tokenFile: `/run/credentials/data-adapters/${directory}/service-token`,
+      enabledTools: adapter.kind === OPENMETADATA_READ_ADAPTER_KIND
+        ? [...adapter.allowedTools]
+        : ['dry_run_query', 'run_query'],
+      credentialRoot: join(stagedAdapterCredentialRoot, directory),
+      workloadTokenRoot: join(workloadSecretRoot, 'data-adapters', directory),
+      configPath: join(manifest.paths.state, 'data-adapter-config', `${directory}.json`),
+      stateRoot: join(manifest.paths.state, 'data-adapters', directory),
+      readyPath: join(manifest.paths.state, 'data-adapters', directory, 'ready.json'),
+      containerId: null,
+      proxyRelay: null,
+    };
+  });
+  const hostHttpsProxy = modelBroker || dataAdapters.length ? configuredHostHttpsProxy(process.env) : null;
   const workloadProfile = containerProfile(profile);
-  await Promise.all([rm(readyPath, { force: true }), rm(brokerReadyPath, { force: true })]);
-  await mkdir(configRoot, { recursive: true, mode: 0o700 });
+  await Promise.all([
+    rm(readyPath, { force: true }),
+    rm(brokerReadyPath, { force: true }),
+    ...dataAdapters.map((entry) => rm(entry.readyPath, { force: true })),
+  ]);
+  await Promise.all([
+    mkdir(configRoot, { recursive: true, mode: 0o700 }),
+    mkdir(join(manifest.paths.state, 'data-adapter-config'), { recursive: true, mode: 0o700 }),
+    ...dataAdapters.flatMap((entry) => [
+      mkdir(entry.workloadTokenRoot, { recursive: true, mode: 0o700 }),
+      mkdir(entry.stateRoot, { recursive: true, mode: 0o700 }),
+    ]),
+  ]);
   if (modelBroker) await mkdir(brokerStateRoot, { recursive: true, mode: 0o700 });
   await writeFile(tokenPath, `${accessToken}\n`, { mode: 0o600, flag: 'wx' });
   if (modelBroker) {
@@ -110,7 +174,27 @@ export async function runDockerSupervisor(runTarget, {
       writeFile(brokerServiceTokenPath, `${serviceToken}\n`, { mode: 0o600, flag: 'wx' }),
     ]);
   }
-  const containerManifest = containerRunManifest(manifest, workloadProfile, inspection, { modelBroker });
+  for (const entry of dataAdapters) {
+    const serviceToken = randomBytes(32).toString('base64url');
+    await Promise.all([
+      writeFile(join(entry.credentialRoot, 'service-token'), `${serviceToken}\n`, { mode: 0o600, flag: 'wx' }),
+      writeFile(join(entry.workloadTokenRoot, 'service-token'), `${serviceToken}\n`, { mode: 0o600, flag: 'wx' }),
+      writeFile(entry.configPath, `${JSON.stringify(entry.adapter, null, 2)}\n`, { mode: 0o600, flag: 'wx' }),
+    ]);
+  }
+  const runtimeDataAdapters = dataAdapters.map((entry) => ({
+    id: entry.adapter.id,
+    kind: entry.adapter.kind,
+    server: entry.adapter.server,
+    url: entry.url,
+    tokenEnvKey: entry.tokenEnvKey,
+    tokenFile: entry.tokenFile,
+    enabledTools: entry.enabledTools,
+  }));
+  const containerManifest = containerRunManifest(manifest, workloadProfile, inspection, {
+    modelBroker,
+    dataAdapters: runtimeDataAdapters,
+  });
   await writeFile(join(configRoot, 'manifest.json'), `${JSON.stringify(containerManifest, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
   await writeFile(join(configRoot, 'profile.json'), `${JSON.stringify(workloadProfile, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
   let containerId = null;
@@ -126,8 +210,14 @@ export async function runDockerSupervisor(runTarget, {
     if (containerId) await stopOwnedContainer(dockerCommand, containerId, manifest.id).catch(() => {});
     if (ingressId) await stopOwnedContainer(dockerCommand, ingressId, manifest.id).catch(() => {});
     if (egressId) await stopOwnedContainer(dockerCommand, egressId, manifest.id).catch(() => {});
+    for (const entry of dataAdapters) {
+      if (entry.containerId) await stopOwnedContainer(dockerCommand, entry.containerId, manifest.id).catch(() => {});
+    }
     await removeOwnedNetwork(dockerCommand, networkName, manifest.id).catch(() => {});
     if (hostProxyRelay) await hostProxyRelay.stop().catch(() => {});
+    for (const entry of dataAdapters) {
+      if (entry.proxyRelay) await entry.proxyRelay.stop().catch(() => {});
+    }
     await removeTransientCredentials(manifest).catch(() => {});
     await removeHostIdentity(manifest).catch(() => {});
     await markRunStopped(manifest.paths.root, { failure }).catch(() => {});
@@ -138,10 +228,19 @@ export async function runDockerSupervisor(runTarget, {
   process.once('SIGINT', onSignal);
   try {
     if (hostHttpsProxy) {
-      hostProxyRelay = await startFixedTargetProxyRelay({
-        upstreamProxyUrl: hostHttpsProxy,
-        authToken: randomBytes(32).toString('base64url'),
-      });
+      if (modelBroker) {
+        hostProxyRelay = await startFixedTargetProxyRelay({
+          upstreamProxyUrl: hostHttpsProxy,
+          authToken: randomBytes(32).toString('base64url'),
+        });
+      }
+      for (const entry of dataAdapters) {
+        entry.proxyRelay = await startFixedTargetProxyRelay({
+          upstreamProxyUrl: hostHttpsProxy,
+          authToken: randomBytes(32).toString('base64url'),
+          targets: adapterProxyTargets(entry.adapter),
+        });
+      }
     }
     await dockerExec(dockerCommand, [
       'network', 'create', '--internal',
@@ -165,6 +264,16 @@ export async function runDockerSupervisor(runTarget, {
         dockerCommand,
         egressId,
       });
+    }
+    for (const entry of dataAdapters) {
+      entry.containerId = (await dockerExec(dockerCommand, dockerDataAdapterArguments({
+        image: image.tag,
+        entry,
+        runId: manifest.id,
+        proxyUrl: entry.proxyRelay?.containerProxyUrl || null,
+      }))).trim();
+      await dockerExec(dockerCommand, ['network', 'connect', networkName, entry.containerId]);
+      await waitForDataAdapterReady({ entry, manifest, dockerCommand });
     }
     const runArgs = dockerRunArguments({
       manifest,
@@ -204,6 +313,15 @@ export async function runDockerSupervisor(runTarget, {
         ingressId,
         ingressName,
         ...(egressId ? { egressId, egressName } : {}),
+        ...(dataAdapters.length ? {
+          dataAdapters: dataAdapters.map((entry) => ({
+            id: entry.adapter.id,
+            kind: entry.adapter.kind,
+            server: entry.adapter.server,
+            containerId: entry.containerId,
+            containerName: entry.containerName,
+          })),
+        } : {}),
         networkName,
         networkMode: 'internal-with-fixed-ingress',
         image: image.tag,
@@ -224,7 +342,7 @@ export async function runDockerSupervisor(runTarget, {
   }
 }
 
-function containerRunManifest(manifest, profile, inspection, { modelBroker = null } = {}) {
+function containerRunManifest(manifest, profile, inspection, { modelBroker = null, dataAdapters = [] } = {}) {
   const root = '/run/workbench';
   const paths = {
     root,
@@ -246,6 +364,7 @@ function containerRunManifest(manifest, profile, inspection, { modelBroker = nul
     runtime: {
       ...manifest.runtime,
       ...(modelBroker ? { modelBroker: { baseUrl: modelBroker.baseUrl, envKey: modelBroker.envKey } } : {}),
+      ...(dataAdapters.length ? { dataAdapters } : {}),
     },
     paths,
     isolation: {
@@ -322,6 +441,7 @@ function containerProfile(profile) {
     capabilities: {
       lock: profile.capabilities.lock,
       sources: [],
+      ...(profile.capabilities.adapters?.length ? { adapters: profile.capabilities.adapters } : {}),
     },
   };
 }
@@ -360,6 +480,54 @@ function dockerModelEgressArguments({ image, egressName, runId, brokerSecretRoot
     '--port', String(MODEL_EGRESS_PORT),
   );
   return args;
+}
+
+function dockerDataAdapterArguments({ image, entry, runId, proxyUrl = null }) {
+  const args = [
+    'run', '--detach',
+    '--name', entry.containerName,
+    '--label', `ai.agent-workbench.run=${runId}`,
+    '--network', 'bridge',
+    '--read-only',
+    '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges',
+    '--pids-limit', '64',
+    '--memory', '256m',
+    '--cpus', '0.5',
+    '--user', `${process.getuid?.() || 1000}:${process.getgid?.() || 1000}`,
+    '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m',
+    '--mount', mount(entry.credentialRoot, '/run/secrets', true),
+    '--mount', mount(entry.configPath, '/run/config/adapter.json', true),
+    '--mount', mount(entry.stateRoot, '/run/adapter-state', false),
+  ];
+  if (proxyUrl) {
+    args.push(
+      '--add-host', 'host.docker.internal:host-gateway',
+      '--env', `HTTPS_PROXY=${proxyUrl}`,
+      '--env', `HTTP_PROXY=${proxyUrl}`,
+    );
+  }
+  args.push(
+    image,
+    '--internal-data-adapter',
+    '--adapter-file', '/run/config/adapter.json',
+    '--credential-file', '/run/secrets/credential.json',
+    '--service-token-file', '/run/secrets/service-token',
+    '--ready-file', '/run/adapter-state/ready.json',
+    '--run-id', runId,
+    '--port', String(DATA_ADAPTER_PORT),
+  );
+  return args;
+}
+
+function adapterProxyTargets(adapter) {
+  if (adapter.kind === OPENMETADATA_READ_ADAPTER_KIND) {
+    return [{ host: new URL(adapter.target).hostname, port: 443 }];
+  }
+  if (adapter.kind === BIGQUERY_READ_ADAPTER_KIND) {
+    return [BIGQUERY_API_TARGET, GOOGLE_OAUTH_TARGET].map((target) => ({ host: new URL(target).hostname, port: 443 }));
+  }
+  throw supervisorError('DATA_ADAPTER_KIND_UNSUPPORTED', `Unsupported data adapter kind: ${adapter.kind}.`);
 }
 
 function configuredHostHttpsProxy(environment) {
@@ -489,6 +657,30 @@ async function waitForModelBrokerReady({ readyPath, manifest, credential, docker
     await delay(50);
   }
   throw supervisorError('MODEL_BROKER_START_TIMEOUT', 'Fixed model egress broker did not become ready.');
+}
+
+async function waitForDataAdapterReady({ entry, manifest, dockerCommand }) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const running = (await dockerExec(dockerCommand, ['inspect', '--format', '{{.State.Running}}', entry.containerId])).trim();
+    if (running !== 'true') {
+      const logs = await dockerLogs(dockerCommand, entry.containerId).catch(() => '');
+      if (logs) process.stderr.write(`${logs.slice(-12_000)}\n`);
+      throw supervisorError('DATA_ADAPTER_EXITED', `Data adapter exited during startup: ${entry.adapter.id}.`);
+    }
+    try {
+      const ready = JSON.parse(await readFile(entry.readyPath, 'utf8'));
+      if (ready.runId !== manifest.id || ready.adapter?.id !== entry.adapter.id
+        || ready.adapter?.kind !== entry.adapter.kind || ready.adapter?.server !== entry.adapter.server
+        || ready.port !== DATA_ADAPTER_PORT) {
+        throw supervisorError('DATA_ADAPTER_IDENTITY_MISMATCH', `Data adapter ready evidence does not match this Run: ${entry.adapter.id}.`);
+      }
+      return;
+    } catch (error) {
+      if (error?.code && error.code !== 'ENOENT') throw error;
+    }
+    await delay(50);
+  }
+  throw supervisorError('DATA_ADAPTER_START_TIMEOUT', `Data adapter did not become ready: ${entry.adapter.id}.`);
 }
 
 async function waitForContainerReady({ readyPath, manifest, hostPort, accessToken, dockerCommand, containerId, ingressId }) {

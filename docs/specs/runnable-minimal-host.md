@@ -1,6 +1,6 @@
 # Runnable Minimal Host and Isolated Environments
 
-Lifecycle: active adoption spec. The project-free Host, offline strong-isolation base, immutable Runtime-enforced Skill allowlist, fixed Codex model broker and a real isolated model canary are implemented; domain data/effect adapters and Data Skill Lab adoption remain open. This spec does not define a Data Skill evaluation product.
+Lifecycle: active adoption spec. The project-free Host, offline strong-isolation base, immutable Runtime-enforced Skill allowlist, fixed Codex model broker, read-only OpenMetadata/BigQuery adapters, and real Personal Data Skill Lab canaries are implemented. Legacy Lab retirement and Candidate/Baseline evaluation parity remain open. This spec does not define a Data Skill evaluation product.
 
 ## Objective
 
@@ -62,16 +62,17 @@ Implemented in Platform:
 - a fixed model egress sidecar that stages only an unexpired ChatGPT access token, never copies `auth.json` or refresh tokens, and exposes only Codex Responses routes to the workload;
 - an authenticated fixed-target host proxy relay for Docker hosts that require `HTTP(S)_PROXY`, without copying controller proxy credentials into the workload or manifest;
 - Environment-time Skill snapshot staging, frontmatter-name capture, per-Run hash verification, a read-only workload mount and a fail-closed Codex Runtime allowlist that exposes no host source path;
+- controller-only Environment Bindings plus isolated OpenMetadata and BigQuery sidecars that enforce fixed targets, exact read effects, tool/query allowlists and resource ceilings without exposing data credentials to the workload;
 - an explicit non-isolated development provider for trusted local work.
 
 Deliberately blocked rather than downgraded:
 
-- Capability kinds other than `skill-source`;
-- read/write external effects and domain data adapters.
+- Capability kinds other than `skill-source` and the two built-in `read-only-adapter` kinds;
+- write effects, arbitrary data targets and undeclared adapter implementations.
 
-Short-lived Codex model access is enforceable for the exact `credentials.codex-native` plus `https://chatgpt.com/backend-api/codex` pairing. Long-lived API keys, arbitrary targets and refresh-token transfer remain rejected. Local `skill-source` locks are enforceable through immutable snapshots plus Runtime inventory validation; domain data/effect adapters are still required before Data Skill Lab can use the strong provider for a real data-backed Candidate/Baseline run.
+Short-lived Codex model access is enforceable for the exact `credentials.codex-native` plus `https://chatgpt.com/backend-api/codex` pairing. Long-lived API keys, arbitrary model targets and refresh-token transfer remain rejected. Local `skill-source` locks are enforceable through immutable snapshots plus Runtime inventory validation. The two built-in data adapter kinds now enforce real read-only data-backed Runs; other data services and effect kinds remain unsupported and fail closed.
 
-On 2026-08-31, an independently defined one-Skill Profile completed a real `gpt-5.6-sol` Session in the Docker `ephemeral-machine` provider and returned the immutable Skill marker `CORE_V080_CANARY_OK`. The canary also verified zero browser console errors/warnings, a 390 px viewport without horizontal overflow, exact stopped-resource cleanup, an empty transient-credential directory after stop, and a manifest containing no access, refresh, service-token or proxy values. This closes the project-free real-model and Minimal Host browser gates. Data Skill Lab's data-backed consumer acceptance remains open because its domain data/effect adapters do not yet exist.
+On 2026-08-31, an independently defined one-Skill Profile completed a real `gpt-5.6-sol` Session in the Docker `ephemeral-machine` provider and returned the immutable Skill marker `CORE_V080_CANARY_OK`. The canary also verified zero browser console errors/warnings, a 390 px viewport without horizontal overflow, exact stopped-resource cleanup, an empty transient-credential directory after stop, and a manifest containing no access, refresh, service-token or proxy values. This closed the project-free real-model and Minimal Host browser gates. A later Personal Data Skill Lab Candidate canary closed the data-backed Host gate with real OpenMetadata search, BigQuery dry-run/execution, negative write-tool checks, credential non-disclosure and exact cleanup; Candidate/Baseline evaluation parity remains separate consumer work.
 
 ## Environment manifest
 
@@ -138,6 +139,19 @@ The current Personal implementation is an incubation source. Its environment bui
 
 Existing Personal Lab Runs are not moved wholesale. Runtime homes and authentication copies remain quarantined until a separate retention decision; only explicitly sanitized manifests and evidence may be imported.
 
+### Read-only adapter contract
+
+The first data-backed Profile supports exactly two built-in, read-only adapter kinds. It is not an arbitrary URL, command or MCP proxy facility.
+
+- `openmetadata-mcp-read` owns the upstream bearer credential, fixed HTTPS target and explicit tool allowlist. It exposes a Run-local MCP endpoint, filters `tools/list`, and rejects every non-allowlisted `tools/call` before contacting the upstream server.
+- `bigquery-read` owns Google ADC and exposes only `dry_run_query` and `run_query`. Every execution first performs a BigQuery dry-run, requires `statementType = SELECT`, checks all `referencedTables` against the Profile project allowlist, and applies fixed byte and row ceilings. The workload never receives `bq`, ADC or a general Google API channel.
+
+Each adapter is a `read-only-adapter` entry in the portable Capability lock and has one matching safe declaration under `capabilities.adapters`. The Profile must declare the exact credential references, fixed network targets and read-effect names required by those adapters; undeclared or surplus credentials, targets, write effects and adapter definitions fail closed.
+
+Credential values are supplied separately through a controller-only Environment Bindings document. Bindings may point to an environment variable or a private regular file, but values and source paths never enter the Profile, Environment/Run manifest or workload. The Docker provider stages a private per-Run copy into the corresponding adapter secret mount, and stop removes it with all other transient credentials.
+
+Each adapter runs in its own read-only, capability-dropped sidecar. The workload can reach only the Run-local MCP endpoint on the unique internal network. The adapter sidecar alone has an external network leg; when the host requires an HTTP proxy, it receives its own per-Run authenticated relay credential restricted to that adapter's fixed target hosts. Model and data adapters never share relay credentials.
+
 ## Implementation order
 
 1. Checkpoint active Platform and Personal work; do not extract from a changing worktree.
@@ -147,11 +161,11 @@ Existing Personal Lab Runs are not moved wholesale. Runtime homes and authentica
 5. Implement the offline ephemeral container provider required as the strong-isolation base.
 6. Add the fixed short-lived Codex credential/egress broker without weakening effective-isolation reporting.
 7. Add immutable `skill-source` snapshot staging without exposing controller paths to the workload.
-8. Define consumer-owned effect/data adapter contracts.
-9. Port Data Skill Lab as a thin Profile and run Candidate/Baseline parity against the existing implementation.
+8. Define and implement product-neutral read-only effect/data adapter contracts.
+9. Port Data Skill Lab data access as a thin Profile and run Candidate/Baseline parity against the existing implementation.
 10. After acceptance, remove Personal's Lab host integration while preserving the chosen historical evidence boundary.
 
-Do not pre-emptively move Personal adapter code into Platform. Add a shared abstraction only when the Minimal Host implementation demonstrates the product-neutral contract and tests it without Personal fixtures.
+Do not move Personal evaluation policy or legacy host integration into Platform. New adapter kinds require a product-neutral enforcement contract, Platform-only fixtures, a real Docker boundary test, and an independent consumer canary.
 
 ## Acceptance
 
@@ -164,11 +178,10 @@ Do not pre-emptively move Personal adapter code into Platform. Add a shared abst
 - Stopping removes transient credentials and child processes without deleting retained Session/evidence state.
 - The same Minimal Host passes project-free Platform tests and at least one independently defined Consumer Profile.
 
-The project-free canary now satisfies these Host-level acceptance items. Data-backed acceptance is intentionally tracked under Data Skill Lab adoption rather than being inferred from the marker canary.
+The project-free and data-backed canaries satisfy these Host-level acceptance items. Personal's real canary proved OpenMetadata search, BigQuery dry-run/execution, write-tool rejection, credential non-disclosure and exact cleanup. Candidate/Baseline result parity remains consumer evaluation work, not a Platform isolation claim.
 
 ## Open decisions
 
 - Whether a guarded-host provider has enough value to support before the broker-backed Docker path.
-- Domain data/effect adapter contracts and whether a second Capability kind proves a shared staging abstraction.
 - Default Run retention and the boundary between retained Session state and disposable credentials.
 - Whether evidence export becomes a generic optional extension after a second consumer demonstrates the same contract.

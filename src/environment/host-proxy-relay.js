@@ -9,6 +9,7 @@ export async function startFixedTargetProxyRelay({
   authToken,
   targetHost = 'chatgpt.com',
   targetPort = 443,
+  targets = null,
   host = '0.0.0.0',
   port = 0,
   connect = connectSocket,
@@ -17,10 +18,7 @@ export async function startFixedTargetProxyRelay({
   if (typeof authToken !== 'string' || authToken.length < 32) {
     throw new TypeError('Host proxy relay requires a strong per-Run auth token');
   }
-  if (!validHostname(targetHost) || !Number.isSafeInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
-    throw new TypeError('Host proxy relay target is invalid');
-  }
-  const expectedTarget = `${targetHost}:${targetPort}`;
+  const allowedTargets = normalizeTargets(targets || [{ host: targetHost, port: targetPort }]);
   const expectedAuthorization = `Basic ${Buffer.from(`agent-workbench:${authToken}`).toString('base64')}`;
   const sockets = new Set();
   const server = createServer((client) => {
@@ -28,7 +26,8 @@ export async function startFixedTargetProxyRelay({
     client.once('close', () => sockets.delete(client));
     readHeaders(client).then(({ head, remainder }) => {
       const request = parseConnectRequest(head);
-      if (!request || request.target !== expectedTarget) {
+      const selectedTarget = request ? allowedTargets.get(request.target) : null;
+      if (!selectedTarget) {
         return reject(client, 403, 'Forbidden');
       }
       if (!safeEqual(request.authorization, expectedAuthorization)) {
@@ -36,8 +35,8 @@ export async function startFixedTargetProxyRelay({
       }
       return openTunnel(client, remainder, {
         proxy,
-        targetHost,
-        targetPort,
+        targetHost: selectedTarget.host,
+        targetPort: selectedTarget.port,
         connect,
       });
     }).catch(() => reject(client, 400, 'Bad Request'));
@@ -61,6 +60,18 @@ export async function startFixedTargetProxyRelay({
       await new Promise((resolve, rejectPromise) => server.close((error) => error ? rejectPromise(error) : resolve()));
     },
   };
+}
+
+function normalizeTargets(targets) {
+  if (!Array.isArray(targets) || !targets.length) throw new TypeError('Host proxy relay requires at least one fixed target');
+  const normalized = new Map();
+  for (const target of targets) {
+    if (!target || !validHostname(target.host) || !Number.isSafeInteger(target.port) || target.port < 1 || target.port > 65535) {
+      throw new TypeError('Host proxy relay target is invalid');
+    }
+    normalized.set(`${target.host}:${target.port}`, { host: target.host, port: target.port });
+  }
+  return normalized;
 }
 
 async function openTunnel(client, initialClientData, { proxy, targetHost, targetPort, connect }) {

@@ -41,9 +41,25 @@ export {
   readStagedCodexCredential,
 } from './codex-credential.js';
 export { runModelEgressBroker } from './model-egress.js';
+export { createDataAdapterRpcHandler, runDataAdapterServer } from './data-adapter-server.js';
 export { runDockerSupervisor } from './docker-supervisor.js';
 export { runFixedIngressProxy } from './ingress-proxy.js';
 export { runInternalMinimalHost } from './internal-host.js';
+export {
+  BIGQUERY_API_TARGET,
+  BIGQUERY_READ_ADAPTER_KIND,
+  ENVIRONMENT_BINDINGS_SCHEMA,
+  GOOGLE_OAUTH_TARGET,
+  OPENMETADATA_READ_ADAPTER_KIND,
+  OPENMETADATA_READ_TOOLS,
+  adapterDirectoryName,
+  createDataAdapterCredentialBroker,
+  dataAdapterRequest,
+  normalizeDataAdapters,
+  normalizeEnvironmentBindings,
+  readEnvironmentBindings,
+  readStagedDataAdapterCredential,
+} from './data-adapters.js';
 export {
   launchEnvironmentRun,
   listEnvironmentRuns,
