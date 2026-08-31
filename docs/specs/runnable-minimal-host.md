@@ -1,6 +1,6 @@
 # Runnable Minimal Host and Isolated Environments
 
-Lifecycle: active implementation and adoption spec. The project-free Host, offline strong-isolation base, immutable Skill snapshots and fixed Codex model broker are implemented; domain data/effect adapters and Data Skill Lab adoption remain open. This spec does not define a Data Skill evaluation product.
+Lifecycle: active adoption spec. The project-free Host, offline strong-isolation base, immutable Runtime-enforced Skill allowlist, fixed Codex model broker and a real isolated model canary are implemented; domain data/effect adapters and Data Skill Lab adoption remain open. This spec does not define a Data Skill evaluation product.
 
 ## Objective
 
@@ -60,7 +60,8 @@ Implemented in Platform:
 - effective isolation derived from nine enforcement facets rather than provider self-report;
 - a real Docker ephemeral provider for offline Profiles and immutable `skill-source` snapshots, including exact owned-resource cleanup and a repeatable Docker smoke test;
 - a fixed model egress sidecar that stages only an unexpired ChatGPT access token, never copies `auth.json` or refresh tokens, and exposes only Codex Responses routes to the workload;
-- Environment-time Skill snapshot staging, per-Run hash verification, a read-only workload mount and Runtime configuration that exposes no host source path;
+- an authenticated fixed-target host proxy relay for Docker hosts that require `HTTP(S)_PROXY`, without copying controller proxy credentials into the workload or manifest;
+- Environment-time Skill snapshot staging, frontmatter-name capture, per-Run hash verification, a read-only workload mount and a fail-closed Codex Runtime allowlist that exposes no host source path;
 - an explicit non-isolated development provider for trusted local work.
 
 Deliberately blocked rather than downgraded:
@@ -68,7 +69,9 @@ Deliberately blocked rather than downgraded:
 - Capability kinds other than `skill-source`;
 - read/write external effects and domain data adapters.
 
-Short-lived Codex model access is enforceable for the exact `credentials.codex-native` plus `https://chatgpt.com/backend-api/codex` pairing. Long-lived API keys, arbitrary targets and refresh-token transfer remain rejected. Local `skill-source` locks are enforceable through immutable snapshots; domain data/effect adapters are still required before Data Skill Lab can use the strong provider for a real data-backed Candidate/Baseline run. Platform automated tests and offline/fake-token Docker smoke are complete; independent consumer canary and manual browser acceptance remain release gates.
+Short-lived Codex model access is enforceable for the exact `credentials.codex-native` plus `https://chatgpt.com/backend-api/codex` pairing. Long-lived API keys, arbitrary targets and refresh-token transfer remain rejected. Local `skill-source` locks are enforceable through immutable snapshots plus Runtime inventory validation; domain data/effect adapters are still required before Data Skill Lab can use the strong provider for a real data-backed Candidate/Baseline run.
+
+On 2026-08-31, an independently defined one-Skill Profile completed a real `gpt-5.6-sol` Session in the Docker `ephemeral-machine` provider and returned the immutable Skill marker `CORE_V080_CANARY_OK`. The canary also verified zero browser console errors/warnings, a 390 px viewport without horizontal overflow, exact stopped-resource cleanup, an empty transient-credential directory after stop, and a manifest containing no access, refresh, service-token or proxy values. This closes the project-free real-model and Minimal Host browser gates. Data Skill Lab's data-backed consumer acceptance remains open because its domain data/effect adapters do not yet exist.
 
 ## Environment manifest
 
@@ -160,6 +163,8 @@ Do not pre-emptively move Personal adapter code into Platform. Add a shared abst
 - Startup fails when required filesystem, network, credential or command enforcement cannot be installed.
 - Stopping removes transient credentials and child processes without deleting retained Session/evidence state.
 - The same Minimal Host passes project-free Platform tests and at least one independently defined Consumer Profile.
+
+The project-free canary now satisfies these Host-level acceptance items. Data-backed acceptance is intentionally tracked under Data Skill Lab adoption rather than being inferred from the marker canary.
 
 ## Open decisions
 

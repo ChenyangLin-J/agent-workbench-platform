@@ -10,6 +10,7 @@ import {
   CodexAppServerProvider,
   WebSocketAppServerConnection,
   bundledCodexLaunch,
+  configureCodexSkillRoots,
 } from '../runtime/core/index.js';
 
 const SUPPORTED_REQUEST_TYPES = new Set([
@@ -78,7 +79,10 @@ export function createMinimalCodexRuntime({
     await ensureAppServer();
     return originalConnectStart();
   };
-  const provider = new CodexAppServerProvider({ connection });
+  const provider = new CodexAppServerProvider({
+    connection,
+    prepareConnection: capabilitySkillPreparation(manifest),
+  });
   const kernel = new AgentSessionKernel({
     provider,
     bindingStore,
@@ -108,6 +112,50 @@ export function createMinimalCodexRuntime({
       ]);
     },
   };
+}
+
+function capabilitySkillPreparation(manifest) {
+  const snapshots = manifest.capabilities?.snapshots || [];
+  if (!snapshots.length) return null;
+  return (connection) => prepareMinimalCapabilitySkills(connection, manifest);
+}
+
+export async function prepareMinimalCapabilitySkills(connection, manifest) {
+  const snapshots = manifest.capabilities?.snapshots || [];
+  if (!snapshots.length) return { ready: true, roots: [], skills: [], expected: [], missing: [] };
+  const expectedSkills = snapshots.map((snapshot) => snapshot.name);
+  const allowedPaths = new Set(snapshots.map((snapshot) => join(
+    manifest.paths.capabilities,
+    snapshot.directory,
+    'SKILL.md',
+  )));
+  let prepared = await configureCodexSkillRoots(connection, {
+    extraRoots: [manifest.paths.capabilities],
+    cwds: [manifest.paths.workspace],
+    expectedSkills,
+  });
+  const unexpected = prepared.skills.filter((skill) => !allowedPaths.has(skill.path));
+  for (const skill of unexpected) {
+    await connection.request('skills/config/write', { path: skill.path, enabled: false });
+  }
+  if (unexpected.length) {
+    prepared = await configureCodexSkillRoots(connection, {
+      extraRoots: [manifest.paths.capabilities],
+      cwds: [manifest.paths.workspace],
+      expectedSkills,
+    });
+  }
+  const remainingUnexpected = prepared.skills.filter((skill) => !allowedPaths.has(skill.path));
+  if (!prepared.ready || remainingUnexpected.length) {
+    throw runtimeError(
+      'CAPABILITY_SKILL_ALLOWLIST_UNSATISFIED',
+      `Runtime Skill allowlist is not enforceable (${[
+        ...prepared.missing,
+        ...remainingUnexpected.map((skill) => skill.name),
+      ].join(', ') || 'unknown'}).`,
+    );
+  }
+  return prepared;
 }
 
 export function runtimeEnvironment(manifest, source = process.env, overrides = {}) {

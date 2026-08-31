@@ -144,6 +144,8 @@ function MinimalHostApp() {
 
   const isolationSatisfied = environment?.isolation?.effectiveLevel === environment?.isolation?.requestedLevel
     || environment?.isolation?.effectiveLevel === 'ephemeral-machine';
+  const runtimeError = session?.status === 'error' ? session.runtimeBinding?.lastError : '';
+  const visibleError = error || runtimeError;
 
   return (
     <main className="awb-minimal-host">
@@ -183,7 +185,7 @@ function MinimalHostApp() {
           refresh: 'Refresh',
         }}
       />
-      {error ? <div className="awb-host-error" role="alert">{error}</div> : null}
+      {visibleError ? <div className="awb-host-error" role="alert">{visibleError}</div> : null}
     </main>
   );
 }

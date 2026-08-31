@@ -42,6 +42,7 @@ export async function stageCapabilitySnapshots({ profile, targetRoot } = {}) {
     const result = await snapshotDirectory(source.path, join(resolve(targetRoot), directory));
     snapshots.push({
       id: entry.id,
+      name: result.skillName,
       kind: entry.kind,
       scope: entry.scope,
       version: entry.version,
@@ -64,7 +65,8 @@ export async function copyCapabilitySnapshots({ sourceRoot, targetRoot, snapshot
     const source = join(canonicalSourceRoot, snapshot.directory);
     const target = join(resolve(targetRoot), snapshot.directory);
     const result = await snapshotDirectory(source, target);
-    if (result.sha256 !== snapshot.sha256 || result.files !== snapshot.files || result.bytes !== snapshot.bytes) {
+    if (result.sha256 !== snapshot.sha256 || result.files !== snapshot.files || result.bytes !== snapshot.bytes
+      || result.skillName !== snapshot.name) {
       throw snapshotError('CAPABILITY_SNAPSHOT_HASH_MISMATCH', `Capability snapshot changed after Environment creation: ${snapshot.id}.`);
     }
   }
@@ -87,7 +89,8 @@ export async function verifyCapabilitySnapshots({ sourceRoot, snapshots = [] } =
       throw snapshotError('CAPABILITY_SNAPSHOT_SOURCE_UNSAFE', 'Capability snapshot must be a directory and not a symlink.');
     }
     const result = await summarizeDirectory(source);
-    if (result.sha256 !== snapshot.sha256 || result.files !== snapshot.files || result.bytes !== snapshot.bytes) {
+    if (result.sha256 !== snapshot.sha256 || result.files !== snapshot.files || result.bytes !== snapshot.bytes
+      || result.skillName !== snapshot.name) {
       throw snapshotError('CAPABILITY_SNAPSHOT_HASH_MISMATCH', `Capability snapshot no longer matches its manifest: ${snapshot.id}.`);
     }
   }
@@ -125,6 +128,7 @@ export function capabilitySnapshotsReady(profile = {}, snapshots = []) {
       && snapshot?.kind === entry.kind
       && snapshot.scope === entry.scope
       && snapshot.version === entry.version
+      && validSkillName(snapshot.name)
       && /^[a-f0-9]{24}$/.test(snapshot.directory || '')
       && typeof snapshot.sha256 === 'string'
       && /^[a-f0-9]{64}$/.test(snapshot.sha256)
@@ -179,7 +183,12 @@ async function summarizeDirectory(root) {
     }
     hash.update('\0');
   }
-  return { files, bytes, sha256: hash.digest('hex') };
+  return {
+    files,
+    bytes,
+    sha256: hash.digest('hex'),
+    skillName: await readSkillName(join(root, 'SKILL.md')),
+  };
 }
 
 async function inventoryDirectory(root) {
@@ -224,10 +233,26 @@ function validateSnapshotMetadata(snapshot) {
   if (!snapshot || typeof snapshot !== 'object' || !/^[a-f0-9]{24}$/.test(snapshot.directory || '')
     || !/^[a-f0-9]{64}$/.test(snapshot.sha256 || '')
     || typeof snapshot.id !== 'string' || !snapshot.id
+    || !validSkillName(snapshot.name)
     || !Number.isSafeInteger(snapshot.files) || snapshot.files < 1
     || !Number.isSafeInteger(snapshot.bytes) || snapshot.bytes < 0) {
     throw snapshotError('CAPABILITY_SNAPSHOT_METADATA_INVALID', 'Capability snapshot metadata is invalid.');
   }
+}
+
+async function readSkillName(path) {
+  const source = await readFile(path, 'utf8');
+  const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] || '';
+  const value = frontmatter.match(/^name:\s*([^\r\n]+?)\s*$/m)?.[1] || '';
+  const name = value.replace(/^(?:"([^"]+)"|'([^']+)')$/, '$1$2').trim();
+  if (!validSkillName(name)) {
+    throw snapshotError('CAPABILITY_SNAPSHOT_MANIFEST_INVALID', 'Skill capability snapshot requires a valid frontmatter name.');
+  }
+  return name;
+}
+
+function validSkillName(value) {
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9._:-]{0,127}$/.test(value);
 }
 
 function snapshotError(code, message) {

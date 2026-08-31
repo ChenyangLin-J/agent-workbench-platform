@@ -24,6 +24,8 @@ test('Docker provider proves ephemeral isolation only for enforceable offline Pr
   assert.equal(inspection.available, true);
   assert.equal(inspection.effectiveLevel, 'ephemeral-machine');
   assert.equal(Object.values(inspection.enforcement).every((facet) => facet.enforced), true);
+  assert.equal(inspection.enforcement.credentials.mode, 'no-credentials');
+  assert.equal(inspection.enforcement.network.mode, 'internal-network-with-fixed-ingress-sidecar');
 });
 
 test('Docker provider reports no effective isolation when the daemon is unavailable', async () => {
@@ -56,6 +58,8 @@ test('Docker provider accepts only a ready fixed Codex model broker', async () =
   }), { profile });
   assert.equal(ready.available, true);
   assert.equal(ready.effectiveLevel, 'ephemeral-machine');
+  assert.equal(ready.enforcement.credentials.mode, 'short-lived-codex-credential-broker');
+  assert.equal(ready.enforcement.network.mode, 'internal-network-with-fixed-ingress-and-model-egress-sidecars');
   const unavailable = await inspectIsolationProvider(createDockerIsolationProvider({
     inspectDocker: async () => ({ available: true, version: 'test', reasons: [] }),
     credentialBroker: { inspect: async () => ({ ready: false, requested: true, reason: 'credential expired' }), stage: async () => {} },
@@ -102,6 +106,7 @@ test('Docker provider accepts an exact immutable Skill snapshot set', () => {
   const facts = dockerProfileFacts(profile, {
     capabilitySnapshots: [{
       id: 'skills.data',
+      name: 'data-skill',
       kind: 'skill-source',
       scope: 'custom',
       version: '1',

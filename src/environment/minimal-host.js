@@ -175,15 +175,21 @@ function subscribeStore(kernel, sessionStore) {
 }
 
 function runtimeAttachOptions(manifest) {
+  const selfContained = selfContainedEphemeralRun(manifest);
   return {
     cwd: manifest.paths.workspace,
     settings: {
       ...(manifest.runtime?.model ? { model: manifest.runtime.model } : {}),
       ...(manifest.runtime?.reasoningEffort ? { reasoningEffort: manifest.runtime.reasoningEffort } : {}),
-      sandbox: 'workspace-write',
-      approvalPolicy: 'on-request',
+      sandbox: selfContained ? 'danger-full-access' : 'workspace-write',
+      approvalPolicy: selfContained ? 'never' : 'on-request',
     },
   };
+}
+
+function selfContainedEphemeralRun(manifest) {
+  return manifest.isolation?.effectiveLevel === 'ephemeral-machine'
+    && manifest.isolation?.enforcement?.externalEffects?.mode === 'no-external-effects';
 }
 
 function normalizeTurnInput(body) {
@@ -235,13 +241,22 @@ async function readJsonBody(request) {
 
 async function serveAsset(response, assetsRoot, pathname) {
   const relativePath = pathname === '/' ? 'index.html' : pathname.replace(/^\//, '');
-  const path = await resolveContainedPath(assetsRoot, relativePath);
-  const body = await readFile(path);
+  let path;
+  let body;
+  try {
+    path = await resolveContainedPath(assetsRoot, relativePath);
+    body = await readFile(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENVIRONMENT_PATH_NOT_FOUND') {
+      throw hostError('HOST_ASSET_NOT_FOUND', 'Asset not found.', 404);
+    }
+    throw error;
+  }
   response.writeHead(200, {
     'content-type': contentType(path),
     'cache-control': path.endsWith('.html') ? 'no-store' : 'public, max-age=31536000, immutable',
     'x-content-type-options': 'nosniff',
-    'content-security-policy': "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'",
+    'content-security-policy': "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'",
   });
   response.end(body);
 }

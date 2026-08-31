@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createDockerIsolationProvider } from './docker-provider.js';
 import { codexModelBrokerRequest, readStagedCodexCredential } from './codex-credential.js';
 import { environmentProfileHash } from './contracts.js';
+import { startFixedTargetProxyRelay } from './host-proxy-relay.js';
 import {
   removeHostIdentity,
   removeTransientCredentials,
@@ -96,6 +97,7 @@ export async function runDockerSupervisor(runTarget, {
     target: modelCredential.target,
     expiresAt: modelCredential.expiresAt,
   } : null;
+  const hostHttpsProxy = modelBroker ? configuredHostHttpsProxy(process.env) : null;
   const workloadProfile = containerProfile(profile);
   await Promise.all([rm(readyPath, { force: true }), rm(brokerReadyPath, { force: true })]);
   await mkdir(configRoot, { recursive: true, mode: 0o700 });
@@ -114,6 +116,7 @@ export async function runDockerSupervisor(runTarget, {
   let containerId = null;
   let ingressId = null;
   let egressId = null;
+  let hostProxyRelay = null;
   let stopping = false;
   let failure = null;
 
@@ -124,6 +127,7 @@ export async function runDockerSupervisor(runTarget, {
     if (ingressId) await stopOwnedContainer(dockerCommand, ingressId, manifest.id).catch(() => {});
     if (egressId) await stopOwnedContainer(dockerCommand, egressId, manifest.id).catch(() => {});
     await removeOwnedNetwork(dockerCommand, networkName, manifest.id).catch(() => {});
+    if (hostProxyRelay) await hostProxyRelay.stop().catch(() => {});
     await removeTransientCredentials(manifest).catch(() => {});
     await removeHostIdentity(manifest).catch(() => {});
     await markRunStopped(manifest.paths.root, { failure }).catch(() => {});
@@ -133,6 +137,12 @@ export async function runDockerSupervisor(runTarget, {
   process.once('SIGTERM', onSignal);
   process.once('SIGINT', onSignal);
   try {
+    if (hostHttpsProxy) {
+      hostProxyRelay = await startFixedTargetProxyRelay({
+        upstreamProxyUrl: hostHttpsProxy,
+        authToken: randomBytes(32).toString('base64url'),
+      });
+    }
     await dockerExec(dockerCommand, [
       'network', 'create', '--internal',
       '--label', `ai.agent-workbench.run=${manifest.id}`,
@@ -145,6 +155,7 @@ export async function runDockerSupervisor(runTarget, {
         runId: manifest.id,
         brokerSecretRoot,
         brokerStateRoot,
+        proxyUrl: hostProxyRelay?.containerProxyUrl || null,
       }))).trim();
       await dockerExec(dockerCommand, ['network', 'connect', networkName, egressId]);
       await waitForModelBrokerReady({
@@ -315,8 +326,8 @@ function containerProfile(profile) {
   };
 }
 
-function dockerModelEgressArguments({ image, egressName, runId, brokerSecretRoot, brokerStateRoot }) {
-  return [
+function dockerModelEgressArguments({ image, egressName, runId, brokerSecretRoot, brokerStateRoot, proxyUrl = null }) {
+  const args = [
     'run', '--detach',
     '--name', egressName,
     '--label', `ai.agent-workbench.run=${runId}`,
@@ -331,6 +342,15 @@ function dockerModelEgressArguments({ image, egressName, runId, brokerSecretRoot
     '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m',
     '--mount', mount(brokerSecretRoot, '/run/secrets', true),
     '--mount', mount(brokerStateRoot, '/run/broker-state', false),
+  ];
+  if (proxyUrl) {
+    args.push(
+      '--add-host', 'host.docker.internal:host-gateway',
+      '--env', `HTTPS_PROXY=${proxyUrl}`,
+      '--env', `HTTP_PROXY=${proxyUrl}`,
+    );
+  }
+  args.push(
     image,
     '--internal-model-egress',
     '--credential-file', '/run/secrets/model.json',
@@ -338,7 +358,23 @@ function dockerModelEgressArguments({ image, egressName, runId, brokerSecretRoot
     '--ready-file', '/run/broker-state/ready.json',
     '--run-id', runId,
     '--port', String(MODEL_EGRESS_PORT),
-  ];
+  );
+  return args;
+}
+
+function configuredHostHttpsProxy(environment) {
+  const value = environment.AGENT_WORKBENCH_HOST_HTTPS_PROXY;
+  if (!value) return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw supervisorError('HOST_HTTPS_PROXY_INVALID', 'The configured host HTTPS proxy URL is invalid.');
+  }
+  if (url.protocol !== 'http:') {
+    throw supervisorError('HOST_HTTPS_PROXY_UNSUPPORTED', 'The model egress relay currently supports only an http:// host HTTPS proxy.');
+  }
+  return url.toString();
 }
 
 function dockerIngressArguments({ image, ingressName, runId, requestedPort, upstreamHost }) {

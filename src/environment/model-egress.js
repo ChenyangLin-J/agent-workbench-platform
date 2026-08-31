@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { lstat, readFile, realpath, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { request as httpsRequest } from 'node:https';
+import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { resolve } from 'node:path';
 
 import { readStagedCodexCredential } from './codex-credential.js';
@@ -16,7 +16,7 @@ export async function runModelEgressBroker({
   readyFile = null,
   runId = null,
   now = () => new Date(),
-  requestUpstream = httpsRequest,
+  requestUpstream = null,
 } = {}) {
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError('Model broker port is invalid');
   const credential = await readStagedCodexCredential(credentialPath, { now });
@@ -31,8 +31,11 @@ export async function runModelEgressBroker({
   }
   const serviceToken = (await readFile(canonicalServiceTokenPath, 'utf8')).trim();
   if (!serviceToken) throw new TypeError('Model broker service token is empty');
+  const proxyAwareAgent = requestUpstream ? null : new HttpsAgent({ proxyEnv: process.env });
+  const upstreamRequest = requestUpstream
+    || ((options, callback) => httpsRequest({ ...options, agent: proxyAwareAgent }, callback));
   const server = createServer((incoming, outgoing) => {
-    void proxyModelRequest(incoming, outgoing, { credential, serviceToken, now, requestUpstream });
+    void proxyModelRequest(incoming, outgoing, { credential, serviceToken, now, requestUpstream: upstreamRequest });
   });
   await new Promise((resolvePromise, reject) => {
     server.once('error', reject);

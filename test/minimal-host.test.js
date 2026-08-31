@@ -39,6 +39,8 @@ test('Minimal Host creates and runs project-free Sessions through the Core Kerne
   const created = (await createdResponse.json()).session;
   assert.equal(created.contextId, 'environment');
   assert.equal(provider.createdSessions[0].cwd, join(root, 'workspace'));
+  assert.equal(provider.createdSessions[0].settings.approvalPolicy, 'never');
+  assert.equal(provider.createdSessions[0].settings.sandbox, 'danger-full-access');
   const turnResponse = await fetch(`${listening.url}/api/sessions/${created.sessionId}/turns`, {
     method: 'POST',
     headers,
@@ -72,8 +74,27 @@ test('Minimal Host assets build without consumer source', async (t) => {
     readFile(assets.stylesheet, 'utf8'),
   ]);
   assert.match(indexResponse, /minimal-host\.js/);
+  assert.match(indexResponse, /rel="icon" href="data:image\/svg\+xml/);
+  assert.match(scriptResponse, /runtimeBinding/);
+  assert.match(scriptResponse, /awb-host-error/);
   assert.ok(scriptResponse.length > 1_000);
   assert.ok(stylesheetResponse.length > 0);
+
+  const runRoot = join(root, 'run');
+  const store = new EnvironmentSessionStore({ stateRoot: join(runRoot, 'state') });
+  const provider = new FakeRuntimeProvider({ capabilities: { steer: true } });
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({
+    manifest: runManifest(runRoot),
+    kernel,
+    sessionStore: store,
+    assetsRoot: root,
+  });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const servedIndex = await fetch(listening.url);
+  assert.match(servedIndex.headers.get('content-security-policy'), /style-src 'self' 'unsafe-inline'/);
+  assert.equal((await fetch(`${listening.url}/favicon.ico`)).status, 404);
 });
 
 test('Codex Runtime constructs an allowlisted environment without inherited secrets', () => {
@@ -104,7 +125,11 @@ function runManifest(root) {
     runtime: { provider: 'fake' },
     features: { sessionWorkspace: true },
     capabilities: { lock: { capabilities: [] }, hash: 'hash' },
-    isolation: { requestedLevel: 'development', effectiveLevel: 'development' },
+    isolation: {
+      requestedLevel: 'ephemeral-machine',
+      effectiveLevel: 'ephemeral-machine',
+      enforcement: { externalEffects: { enforced: true, mode: 'no-external-effects' } },
+    },
     paths: {
       root,
       runtime: join(root, 'runtime'),

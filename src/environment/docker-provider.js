@@ -63,8 +63,24 @@ export function createDockerIsolationProvider({
           process: { enforced: enforced(), mode: mode(true, 'container-pid-namespace-and-limits', 'docker-unavailable') },
           environment: { enforced: enforced(facts.environment), mode: mode(facts.environment, 'constructed-container-env', 'unsupported-env-injection') },
           capabilities: { enforced: enforced(facts.capabilities), mode: mode(facts.capabilities, facts.capabilityMode, 'capability-staging-required') },
-          credentials: { enforced: enforced(facts.credentials), mode: mode(facts.credentials, 'no-credentials', 'credential-broker-required') },
-          network: { enforced: enforced(facts.network), mode: mode(facts.network, 'internal-network-with-fixed-ingress-sidecar', 'egress-proxy-required') },
+          credentials: {
+            enforced: enforced(facts.credentials),
+            mode: mode(
+              facts.credentials,
+              facts.modelBroker ? 'short-lived-codex-credential-broker' : 'no-credentials',
+              'credential-broker-required',
+            ),
+          },
+          network: {
+            enforced: enforced(facts.network),
+            mode: mode(
+              facts.network,
+              facts.modelBroker
+                ? 'internal-network-with-fixed-ingress-and-model-egress-sidecars'
+                : 'internal-network-with-fixed-ingress-sidecar',
+              'egress-proxy-required',
+            ),
+          },
           externalEffects: { enforced: enforced(facts.externalEffects), mode: mode(facts.externalEffects, 'no-external-effects', 'effect-adapter-required') },
           crossRun: { enforced: enforced(), mode: mode(true, 'unique-container-network-and-run-mounts', 'docker-unavailable') },
           ephemeralIdentity: { enforced: enforced(), mode: mode(true, 'auto-removed-container', 'docker-unavailable') },
@@ -99,6 +115,7 @@ export function createDockerIsolationProvider({
           env: {
             ...launch.environment,
             ...dockerEnvironment,
+            ...controllerProxyEnvironment(process.env),
             AGENT_WORKBENCH_DOCKER_COMMAND: dockerCommand,
           },
           detached: true,
@@ -142,6 +159,11 @@ export function createDockerIsolationProvider({
       throw providerError('ISOLATION_PROCESS_UNOWNED', `Refusing to stop unverified Docker supervisor ${pid}.`);
     },
   });
+}
+
+function controllerProxyEnvironment(environment) {
+  const proxy = environment.HTTPS_PROXY || environment.https_proxy || environment.HTTP_PROXY || environment.http_proxy;
+  return proxy ? { AGENT_WORKBENCH_HOST_HTTPS_PROXY: proxy } : {};
 }
 
 async function dockerFilesystemFacts(profile = {}, context = {}) {

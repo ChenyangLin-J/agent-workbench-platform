@@ -90,6 +90,7 @@ function validateCapabilitySnapshots(snapshots, lockEntries, capabilityRoot) {
     const entry = locked.get(snapshot?.id);
     if (!snapshot || snapshot.kind !== 'skill-source'
       || typeof snapshot.id !== 'string' || !snapshot.id
+      || !/^[a-z0-9][a-z0-9._:-]{0,127}$/.test(snapshot.name || '')
       || !/^[a-f0-9]{24}$/.test(snapshot.directory || '')
       || !/^[a-f0-9]{64}$/.test(snapshot.sha256 || '')
       || entry?.kind !== snapshot.kind
