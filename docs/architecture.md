@@ -37,7 +37,7 @@ Runtime and Feature contracts do not depend on DOM. React is the current shared 
 
 Solvely Workbench is a frozen compatibility reference, not an active migration target.
 
-Data Skill Lab currently incubates inside the Personal repository. Its strong-isolation modes are thin Profiles of the Core Minimal Host; the legacy Personal-host path remains only for comparison while adoption closes. That source location is not product ownership: Platform stays project-free, while Gold, scoring and evaluation policy remain outside Core.
+Data Skill Lab currently incubates inside the Personal repository, but all of its modes are thin Profiles of the Core Minimal Host. The former Personal-host execution path was removed after Candidate/Baseline comparison. Source location is not product ownership: Platform stays project-free, while Gold, scoring and evaluation policy remain outside Core.
 
 ## Ownership
 

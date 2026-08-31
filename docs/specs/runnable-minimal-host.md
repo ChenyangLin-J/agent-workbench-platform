@@ -1,6 +1,6 @@
 # Runnable Minimal Host and Isolated Environments
 
-Lifecycle: active adoption spec. The project-free Host, offline strong-isolation base, immutable Runtime-enforced Skill allowlist, fixed Codex model broker, read-only OpenMetadata/BigQuery adapters, and real Personal Data Skill Lab canaries are implemented. Legacy Lab retirement and Candidate/Baseline evaluation parity remain open. This spec does not define a Data Skill evaluation product.
+Lifecycle: implemented contract with unresolved provider/retention decisions. The project-free Host, offline strong-isolation base, immutable Runtime-enforced Skill allowlist, fixed Codex model broker, read-only OpenMetadata/BigQuery adapters, Personal Data Skill Lab Candidate/Baseline parity, and legacy-host retirement are complete. This spec does not define a Data Skill evaluation product.
 
 ## Objective
 
@@ -72,7 +72,7 @@ Deliberately blocked rather than downgraded:
 
 Short-lived Codex model access is enforceable for the exact `credentials.codex-native` plus `https://chatgpt.com/backend-api/codex` pairing. Long-lived API keys, arbitrary model targets and refresh-token transfer remain rejected. Local `skill-source` locks are enforceable through immutable snapshots plus Runtime inventory validation. The two built-in data adapter kinds now enforce real read-only data-backed Runs; other data services and effect kinds remain unsupported and fail closed.
 
-On 2026-08-31, an independently defined one-Skill Profile completed a real `gpt-5.6-sol` Session in the Docker `ephemeral-machine` provider and returned the immutable Skill marker `CORE_V080_CANARY_OK`. The canary also verified zero browser console errors/warnings, a 390 px viewport without horizontal overflow, exact stopped-resource cleanup, an empty transient-credential directory after stop, and a manifest containing no access, refresh, service-token or proxy values. This closed the project-free real-model and Minimal Host browser gates. A later Personal Data Skill Lab Candidate canary closed the data-backed Host gate with real OpenMetadata search, BigQuery dry-run/execution, negative write-tool checks, credential non-disclosure and exact cleanup; Candidate/Baseline evaluation parity remains separate consumer work.
+On 2026-08-31, an independently defined one-Skill Profile completed a real `gpt-5.6-sol` Session in the Docker `ephemeral-machine` provider and returned the immutable Skill marker `CORE_V080_CANARY_OK`. The canary also verified zero browser console errors/warnings, a 390 px viewport without horizontal overflow, exact stopped-resource cleanup, an empty transient-credential directory after stop, and a manifest containing no access, refresh, service-token or proxy values. This closed the project-free real-model and Minimal Host browser gates. Personal later ran released v0.9 Candidate and no-Skill Baseline Profiles with the same OpenMetadata/BigQuery prompt; both returned the same table and query result with exact cleanup. The former host-process implementation matched the neutral business result only by exposing `bq` to the Agent, and was removed after the comparison.
 
 ## Environment manifest
 
@@ -137,7 +137,7 @@ Data Skill Lab becomes a thin Consumer Profile of the runnable host:
 
 The current Personal implementation is an incubation source. Its environment builder, atomic Run creation, snapshot hashing and tests can be ported; its Personal server, project store, full page shell, `PAW_*` contract and inherited host environment are not the target architecture.
 
-Existing Personal Lab Runs are not moved wholesale. Runtime homes and authentication copies remain quarantined until a separate retention decision; only explicitly sanitized manifests and evidence may be imported.
+Historical Personal host-process Lab Runs are not moved or restarted. Their Runtime homes and authentication copies remain quarantined local evidence until a separate retention decision; only explicitly sanitized manifests and evidence may be imported.
 
 ### Read-only adapter contract
 
@@ -165,7 +165,7 @@ Each adapter runs in its own read-only, capability-dropped sidecar. The workload
 9. Port Data Skill Lab data access as a thin Profile and run Candidate/Baseline parity against the existing implementation.
 10. After acceptance, remove Personal's Lab host integration while preserving the chosen historical evidence boundary.
 
-Do not move Personal evaluation policy or legacy host integration into Platform. New adapter kinds require a product-neutral enforcement contract, Platform-only fixtures, a real Docker boundary test, and an independent consumer canary.
+Do not move Personal evaluation policy into Platform or reintroduce its removed host integration. New adapter kinds require a product-neutral enforcement contract, Platform-only fixtures, a real Docker boundary test, and an independent consumer canary.
 
 ## Acceptance
 
@@ -178,7 +178,7 @@ Do not move Personal evaluation policy or legacy host integration into Platform.
 - Stopping removes transient credentials and child processes without deleting retained Session/evidence state.
 - The same Minimal Host passes project-free Platform tests and at least one independently defined Consumer Profile.
 
-The project-free and data-backed canaries satisfy these Host-level acceptance items. Personal's real canary proved OpenMetadata search, BigQuery dry-run/execution, write-tool rejection, credential non-disclosure and exact cleanup. Candidate/Baseline result parity remains consumer evaluation work, not a Platform isolation claim.
+The project-free and data-backed canaries satisfy these Host-level acceptance items. Personal's released-package Candidate/Baseline runs proved OpenMetadata search, BigQuery dry-run/execution, write-tool rejection, credential non-disclosure, result parity and exact cleanup. Domain answer quality remains consumer evaluation work, not a Platform isolation claim.
 
 ## Open decisions
 
