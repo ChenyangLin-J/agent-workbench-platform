@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import test from 'node:test';
@@ -144,9 +144,149 @@ test('FilesystemResourceStore keeps external handles private and collection plan
     bytes: 5,
     class: 'draft',
     state: 'staged',
+    ageMs: 2,
     reason: 'draft-expired',
   }]);
   assert.equal((await store.get(staged.id, { sessionId: 'session-a' })).lifecycle.state, 'staged');
+});
+
+test('FilesystemResourceStore promotes transient output atomically and idempotently', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-resources-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let currentTime = new Date('2026-09-01T00:00:00.000Z');
+  const store = new FilesystemResourceStore({
+    root,
+    now: () => currentTime,
+    uuid: () => 'transient-0001',
+  });
+  const bytes = Buffer.from('GENERATED_ARTIFACT');
+  const transient = await store.stageTransient({
+    owner: { runId: 'run-a' },
+    display: { name: 'result.txt', mimeType: 'text/plain', size: bytes.length },
+    bytes,
+    originType: 'browser',
+  });
+
+  assert.equal(transient.kind, 'transient-output');
+  assert.equal(transient.lifecycle.class, 'transient');
+  assert.equal(transient.lifecycle.state, 'ready');
+  assert.deepEqual(transient.capabilities, {
+    preview: false,
+    download: false,
+    openInWorkspace: false,
+  });
+  assert.equal('path' in transient, false);
+  await assert.rejects(
+    store.commit(transient.id, { turnId: 'turn-a' }),
+    (error) => error.code === 'RESOURCE_PROMOTION_REQUIRED' && error.status === 409,
+  );
+  await assert.rejects(
+    store.promote(transient.id, { runId: 'run-b', sessionId: 'session-a', turnId: 'turn-a' }),
+    (error) => error.code === 'RESOURCE_RUN_MISMATCH' && error.status === 403,
+  );
+
+  currentTime = new Date('2026-09-01T00:01:00.000Z');
+  const promoted = await store.promote(transient.id, {
+    runId: 'run-a',
+    sessionId: 'session-a',
+    turnId: 'turn-a',
+  });
+  assert.equal(promoted.id, transient.id);
+  assert.equal(promoted.kind, 'session-artifact');
+  assert.equal(promoted.owner.runId, 'run-a');
+  assert.equal(promoted.owner.sessionId, 'session-a');
+  assert.equal(promoted.owner.turnId, 'turn-a');
+  assert.equal(promoted.lifecycle.class, 'session-durable');
+  assert.equal(promoted.lifecycle.state, 'promoted');
+  assert.equal(promoted.integrity.digest, transient.integrity.digest);
+  assert.deepEqual((await store.read(promoted.id, { sessionId: 'session-a' })).bytes, bytes);
+  const retries = await Promise.all(Array.from({ length: 4 }, () => store.promote(transient.id, {
+    runId: ' run-a ',
+    sessionId: ' session-a ',
+    turnId: ' turn-a ',
+  })));
+  assert.deepEqual(retries, [promoted, promoted, promoted, promoted]);
+  await assert.rejects(
+    store.promote(transient.id, {
+      runId: 'run-a',
+      sessionId: 'session-a',
+      turnId: 'turn-b',
+    }),
+    (error) => error.code === 'RESOURCE_PROMOTION_CONFLICT' && error.status === 409,
+  );
+  assert.deepEqual(await store.inspectUsage(), {
+    resources: 1,
+    bytes: bytes.length,
+    byClass: { 'session-durable': 1 },
+    byState: { promoted: 1 },
+  });
+});
+
+test('FilesystemResourceStore plans expired transient collection without selecting promoted output', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-resources-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let sequence = 0;
+  const store = new FilesystemResourceStore({
+    root,
+    now: () => new Date('2026-09-01T00:00:00.000Z'),
+    uuid: () => `transient-${String(++sequence).padStart(4, '0')}`,
+  });
+  const display = { name: 'output.png', mimeType: 'image/png', size: 3 };
+  const expired = await store.stageTransient({
+    owner: { runId: 'run-a' },
+    display,
+    bytes: Buffer.from('one'),
+    originType: 'browser',
+  });
+  const durable = await store.stageTransient({
+    owner: { sessionId: 'session-a', runId: 'run-a' },
+    display,
+    bytes: Buffer.from('two'),
+    originType: 'browser',
+  });
+  await store.promote(durable.id, {
+    runId: 'run-a',
+    sessionId: 'session-a',
+    kind: 'visualization',
+  });
+
+  const plan = await store.planCollection({
+    transientMaxAgeMs: 1,
+    now: new Date('2026-09-01T00:00:00.002Z'),
+  });
+  assert.deepEqual(plan.resources, [{
+    id: expired.id,
+    sessionId: null,
+    bytes: 3,
+    class: 'transient',
+    state: 'ready',
+    ageMs: 2,
+    reason: 'transient-expired',
+  }]);
+  assert.equal((await store.get(expired.id)).lifecycle.state, 'ready');
+  assert.equal((await store.get(durable.id, { sessionId: 'session-a' })).lifecycle.state, 'promoted');
+});
+
+test('FilesystemResourceStore refuses promotion when managed transient content changed', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-resources-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new FilesystemResourceStore({
+    root,
+    uuid: () => 'transient-0001',
+  });
+  const transient = await store.stageTransient({
+    owner: { sessionId: 'session-a' },
+    display: { name: 'result.txt', mimeType: 'text/plain', size: 4 },
+    bytes: Buffer.from('safe'),
+  });
+  const opened = await store.open(transient.id);
+  await writeFile(opened.path, 'risk');
+
+  await assert.rejects(
+    store.promote(transient.id, { sessionId: 'session-a' }),
+    (error) => error.code === 'RESOURCE_CONTENT_INVALID' && error.status === 409,
+  );
+  assert.equal((await store.get(transient.id)).lifecycle.state, 'ready');
 });
 
 test('FilesystemResourceStore never removes an existing blob when an id collision is rejected', async (t) => {

@@ -20,6 +20,17 @@ import {
 const RESOURCE_RECORD_SCHEMA = 'agent-workbench.resource-record/v1';
 const DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
 const DEFAULT_DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_TRANSIENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const TRANSIENT_CAPABILITIES = Object.freeze({
+  preview: false,
+  download: false,
+  openInWorkspace: false,
+});
+const PROMOTED_CAPABILITIES = Object.freeze({
+  preview: true,
+  download: true,
+  openInWorkspace: false,
+});
 
 export class FilesystemResourceStore {
   constructor({
@@ -48,6 +59,50 @@ export class FilesystemResourceStore {
     originType = 'upload',
     capabilities = { preview: true, download: true, openInWorkspace: false },
   } = {}) {
+    return this.#stageManaged({
+      kind,
+      owner,
+      display,
+      bytes,
+      originType,
+      lifecycleClass: 'draft',
+      lifecycleState: 'staged',
+      capabilities,
+    });
+  }
+
+  async stageTransient({
+    owner,
+    display,
+    bytes,
+    originType = 'tool',
+    capabilities = TRANSIENT_CAPABILITIES,
+  } = {}) {
+    if (!owner?.sessionId && !owner?.runId) {
+      throw new TypeError('Transient resource owner requires sessionId or runId');
+    }
+    return this.#stageManaged({
+      kind: 'transient-output',
+      owner,
+      display,
+      bytes,
+      originType,
+      lifecycleClass: 'transient',
+      lifecycleState: 'ready',
+      capabilities,
+    });
+  }
+
+  async #stageManaged({
+    kind,
+    owner,
+    display,
+    bytes,
+    originType,
+    lifecycleClass,
+    lifecycleState,
+    capabilities,
+  }) {
     await this.ready;
     const content = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
     if (!content.length) throw resourceError('RESOURCE_EMPTY', 'Resource cannot be empty.', 400);
@@ -72,7 +127,7 @@ export class FilesystemResourceStore {
         digest: createHash('sha256').update(content).digest('hex'),
       },
       origin: { type: originType, createdAt: timestamp },
-      lifecycle: { class: 'draft', state: 'staged', updatedAt: timestamp },
+      lifecycle: { class: lifecycleClass, state: lifecycleState, updatedAt: timestamp },
       capabilities,
     });
     const record = { schema: RESOURCE_RECORD_SCHEMA, descriptor, storage: { key: storageKey } };
@@ -127,6 +182,14 @@ export class FilesystemResourceStore {
     return this.#writeQueued(async () => {
       await this.ready;
       const record = await this.#readOwnedRecord(id, { sessionId });
+      if (record.descriptor.kind === 'transient-output'
+        || record.descriptor.lifecycle.class === 'transient') {
+        throw resourceError(
+          'RESOURCE_PROMOTION_REQUIRED',
+          'Transient output must be promoted before it can be bound to a Turn.',
+          409,
+        );
+      }
       const currentTurnId = record.descriptor.owner.turnId || null;
       if (record.descriptor.lifecycle.state === 'ready') {
         if (turnId && currentTurnId && currentTurnId !== turnId) {
@@ -156,6 +219,66 @@ export class FilesystemResourceStore {
           ...(turnId ? { turnId } : {}),
         },
         lifecycle: { class: 'session-durable', state: 'ready', updatedAt: timestamp },
+      });
+      await writeJsonAtomic(this.#recordPath(record.descriptor.id), record);
+      return structuredClone(record.descriptor);
+    });
+  }
+
+  async promote(id, {
+    runId = null,
+    sessionId,
+    turnId = null,
+    kind = 'session-artifact',
+    capabilities = PROMOTED_CAPABILITIES,
+  } = {}) {
+    if (!['session-artifact', 'visualization'].includes(kind)) {
+      throw new TypeError('Promotion kind must be session-artifact or visualization');
+    }
+    const targetSessionId = resourceIdentity(sessionId, 'Promotion sessionId');
+    const targetTurnId = turnId == null || turnId === ''
+      ? null
+      : resourceIdentity(turnId, 'Promotion turnId');
+    const sourceRunId = runId == null || runId === ''
+      ? null
+      : resourceIdentity(runId, 'Promotion runId');
+    return this.#writeQueued(async () => {
+      await this.ready;
+      const record = await this.#readRecord(id);
+      this.#authorizePromotion(record.descriptor, {
+        runId: sourceRunId,
+        sessionId: targetSessionId,
+      });
+      if (record.descriptor.lifecycle.state === 'promoted') {
+        const currentTurnId = record.descriptor.owner.turnId || null;
+        if (record.descriptor.kind !== kind
+          || record.descriptor.owner.sessionId !== targetSessionId
+          || currentTurnId !== targetTurnId) {
+          throw resourceError(
+            'RESOURCE_PROMOTION_CONFLICT',
+            'Resource was already promoted with a different durable target.',
+            409,
+          );
+        }
+        return structuredClone(record.descriptor);
+      }
+      if (record.descriptor.mode !== 'managed'
+        || record.descriptor.kind !== 'transient-output'
+        || record.descriptor.lifecycle.class !== 'transient'
+        || !['ready', 'promotable'].includes(record.descriptor.lifecycle.state)) {
+        throw resourceError('RESOURCE_STATE_INVALID', 'Resource is not available for promotion.', 409);
+      }
+      await this.#verifyManagedContent(record);
+      record.descriptor = normalizeResourceDescriptor({
+        ...record.descriptor,
+        kind,
+        owner: {
+          ...record.descriptor.owner,
+          sessionId: targetSessionId,
+          ...(targetTurnId ? { turnId: targetTurnId } : {}),
+        },
+        lifecycle: { class: 'session-durable', state: 'promoted', updatedAt: this.#time() },
+        capabilities,
       });
       await writeJsonAtomic(this.#recordPath(record.descriptor.id), record);
       return structuredClone(record.descriptor);
@@ -224,25 +347,65 @@ export class FilesystemResourceStore {
     return { resources: records.length, bytes, byClass, byState };
   }
 
-  async planCollection({ draftMaxAgeMs = DEFAULT_DRAFT_MAX_AGE_MS, now = this.now() } = {}) {
+  async planCollection({
+    draftMaxAgeMs = DEFAULT_DRAFT_MAX_AGE_MS,
+    transientMaxAgeMs = DEFAULT_TRANSIENT_MAX_AGE_MS,
+    now = this.now(),
+  } = {}) {
     if (!Number.isFinite(draftMaxAgeMs) || draftMaxAgeMs < 0) throw new TypeError('draftMaxAgeMs must be non-negative');
-    const cutoff = new Date(now).getTime() - draftMaxAgeMs;
-    if (!Number.isFinite(cutoff)) throw new TypeError('collection time must be valid');
+    if (!Number.isFinite(transientMaxAgeMs) || transientMaxAgeMs < 0) throw new TypeError('transientMaxAgeMs must be non-negative');
+    const collectionTime = new Date(now).getTime();
+    if (!Number.isFinite(collectionTime)) throw new TypeError('collection time must be valid');
+    const draftCutoff = collectionTime - draftMaxAgeMs;
+    const transientCutoff = collectionTime - transientMaxAgeMs;
     const records = await this.#readAllRecordsAfterQueue();
     return {
       generatedAt: new Date(now).toISOString(),
       resources: records
-        .filter(({ descriptor }) => descriptor.lifecycle.state === 'staged'
-          && Date.parse(descriptor.lifecycle.updatedAt || descriptor.origin.createdAt) <= cutoff)
-        .map(({ descriptor }) => ({
-          id: descriptor.id,
-          sessionId: descriptor.owner.sessionId || null,
-          bytes: descriptor.mode === 'managed' ? descriptor.display.size : 0,
-          class: descriptor.lifecycle.class,
-          state: descriptor.lifecycle.state,
-          reason: 'draft-expired',
-        })),
+        .map(({ descriptor }) => {
+          const updatedAt = Date.parse(descriptor.lifecycle.updatedAt || descriptor.origin.createdAt);
+          const isDraft = descriptor.lifecycle.class === 'draft'
+            && descriptor.lifecycle.state === 'staged'
+            && updatedAt <= draftCutoff;
+          const isTransient = descriptor.lifecycle.class === 'transient'
+            && ['ready', 'promotable'].includes(descriptor.lifecycle.state)
+            && updatedAt <= transientCutoff;
+          if (!isDraft && !isTransient) return null;
+          return {
+            id: descriptor.id,
+            sessionId: descriptor.owner.sessionId || null,
+            bytes: descriptor.mode === 'managed' ? descriptor.display.size : 0,
+            class: descriptor.lifecycle.class,
+            state: descriptor.lifecycle.state,
+            ageMs: Math.max(0, collectionTime - updatedAt),
+            reason: isDraft ? 'draft-expired' : 'transient-expired',
+          };
+        })
+        .filter(Boolean),
     };
+  }
+
+  #authorizePromotion(descriptor, { runId, sessionId }) {
+    const targetSessionId = String(sessionId);
+    if (descriptor.owner.sessionId && descriptor.owner.sessionId !== targetSessionId) {
+      throw resourceError('RESOURCE_SESSION_MISMATCH', 'Resource does not belong to this Session.', 403);
+    }
+    if (descriptor.owner.runId && descriptor.owner.runId !== String(runId || '')) {
+      throw resourceError('RESOURCE_RUN_MISMATCH', 'Resource does not belong to this Run.', 403);
+    }
+  }
+
+  async #verifyManagedContent(record) {
+    if (record.descriptor.mode !== 'managed' || !record.storage?.key) {
+      throw resourceError('RESOURCE_CONTENT_INVALID', 'Resource content is not managed by this store.', 409);
+    }
+    const path = await this.#resolveStoredContent(record.storage.key);
+    const content = await readFile(path);
+    const digest = createHash('sha256').update(content).digest('hex');
+    if (content.length !== record.descriptor.display.size
+      || digest !== record.descriptor.integrity?.digest) {
+      throw resourceError('RESOURCE_CONTENT_INVALID', 'Resource content does not match its record.', 409);
+    }
   }
 
   async #initialize() {
@@ -400,6 +563,14 @@ function validResourceId(value) {
 function safeExtension(value) {
   const extension = extname(String(value || '')).toLowerCase();
   return /^\.[a-z0-9]{1,10}$/.test(extension) ? extension : '';
+}
+
+function resourceIdentity(value, label) {
+  const identity = String(value || '').trim();
+  if (!identity || identity.length > 240 || /[\u0000-\u001f\u007f]/.test(identity)) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return identity;
 }
 
 function isContained(root, candidate) {
