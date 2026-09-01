@@ -1,6 +1,6 @@
 # Runnable Minimal Host and Isolated Environments
 
-Lifecycle: implemented contract with unresolved provider/retention decisions. The project-free Host, offline strong-isolation base, immutable Runtime-enforced Skill allowlist, fixed Codex model broker, read-only OpenMetadata/BigQuery adapters, Personal Data Skill Lab Candidate/Baseline parity, and legacy-host retirement are complete. This spec does not define a Data Skill evaluation product.
+Lifecycle: implemented contract with unresolved provider/retention decisions. The project-free Host, offline strong-isolation base, immutable Runtime-enforced Skill allowlist, immutable trusted read-only MCP packages, fixed Codex model broker, read-only adapter sidecars, Personal Data Skill Lab Candidate/Baseline parity, and legacy-host retirement are complete. This spec does not define a Data Skill evaluation product.
 
 ## Objective
 
@@ -63,14 +63,15 @@ Implemented in Platform:
 - an authenticated fixed-target host proxy relay for Docker hosts that require `HTTP(S)_PROXY`, without copying controller proxy credentials into the workload or manifest;
 - Environment-time Skill snapshot staging, frontmatter-name capture, per-Run hash verification, a read-only workload mount and a fail-closed Codex Runtime allowlist that exposes no host source path;
 - controller-only Environment Bindings plus isolated OpenMetadata and BigQuery sidecars that enforce fixed targets, exact read effects, tool/query allowlists and resource ceilings without exposing data credentials to the workload;
+- a product-neutral `module-mcp-read` loader that snapshots a consumer-owned dependency-free ESM package, runs it in its own read-only sidecar, stages only its declared credentials, restricts its injected HTTP client to declared HTTPS targets and exposes only the exact startup-verified tool allowlist;
 - an explicit non-isolated development provider for trusted local work.
 
 Deliberately blocked rather than downgraded:
 
-- Capability kinds other than `skill-source` and the two built-in `read-only-adapter` kinds;
+- Capability kinds other than `skill-source`, trusted `mcp-server` snapshots and the supported read-only adapter kinds;
 - write effects, arbitrary data targets and undeclared adapter implementations.
 
-Codex model access is enforceable either through the exact `credentials.codex-native` plus `https://chatgpt.com/backend-api/codex` pairing, or through a Profile-declared OpenAI-compatible Responses gateway whose key comes from a private consumer binding. Arbitrary workload egress, embedded Profile credentials and refresh-token transfer remain rejected. Local `skill-source` locks are enforceable through immutable snapshots plus Runtime inventory validation. The two built-in data adapter kinds now enforce real read-only data-backed Runs; other data services and effect kinds remain unsupported and fail closed.
+Codex model access is enforceable either through the exact `credentials.codex-native` plus `https://chatgpt.com/backend-api/codex` pairing, or through a Profile-declared OpenAI-compatible Responses gateway whose key comes from a private consumer binding. Arbitrary workload egress, embedded Profile credentials and refresh-token transfer remain rejected. Local `skill-source` locks are enforceable through immutable snapshots plus Runtime inventory validation. Built-in adapters and reviewed consumer-owned `module-mcp-read` packages support read-only data-backed Runs; write effects and undeclared services still fail closed.
 
 On 2026-08-31, an independently defined one-Skill Profile completed a real `gpt-5.6-sol` Session in the Docker `ephemeral-machine` provider and returned the immutable Skill marker `CORE_V080_CANARY_OK`. The canary also verified zero browser console errors/warnings, a 390 px viewport without horizontal overflow, exact stopped-resource cleanup, an empty transient-credential directory after stop, and a manifest containing no access, refresh, service-token or proxy values. This closed the project-free real-model and Minimal Host browser gates. Personal later ran released v0.9 Candidate and no-Skill Baseline Profiles with the same OpenMetadata/BigQuery prompt; both returned the same table and query result with exact cleanup. The former host-process implementation matched the neutral business result only by exposing `bq` to the Agent, and was removed after the comparison.
 
@@ -80,7 +81,7 @@ The resolved manifest records only reproducibility and enforcement facts:
 
 - schema, Platform and Runtime versions;
 - source Profile identity and hash;
-- Runtime, state, workspace and temporary paths;
+- Runtime, state, managed-resource, workspace and temporary paths;
 - feature configuration, resolved Capability lock and content-addressed snapshot metadata;
 - isolation provider, requested level and effective enforcement;
 - allowed filesystem roots, environment keys, network targets and credential references;
@@ -123,6 +124,8 @@ The first host includes only:
 
 Run identity, isolation evidence and lifecycle controls remain available through `env inspect` and `env stop`; they are operational concerns and are not shown in the default user-facing Session surface. The host automatically opens the newest available Session and renders only controls backed by an available action.
 
+When `features.attachments` is enabled, the Minimal Host stages uploaded files through the Platform `ResourceStore` under the current Run's private `resources` root. A Turn may reference only resources previously uploaded to that same Session; Runtime acceptance commits them as Session-durable resources and the persisted transcript contains normalized descriptors, not host paths. A rejected Turn leaves its staged resources recoverable for retry. The first accepted user message also replaces the default Session title while preserving titles explicitly supplied by a consumer.
+
 Projects, tasks, assets, memory, Side Chat, Subagents, Browser, Capability mutation and evidence dashboards are hidden unless the Profile explicitly enables an existing Platform feature or a consumer extension. The built-in host does not invent fallback domain objects to satisfy its UI.
 
 ## Data Skill Lab adoption
@@ -141,12 +144,13 @@ Historical Personal host-process Lab Runs are not moved or restarted. Their Runt
 
 ### Read-only adapter contract
 
-The first data-backed Profile supports exactly two built-in, read-only adapter kinds. It is not an arbitrary URL, command or MCP proxy facility.
+The first data-backed Profile supports two built-in read-only adapter kinds and one trusted consumer-module kind. It is not an arbitrary URL, command or MCP proxy facility.
 
 - `openmetadata-mcp-read` owns the upstream bearer credential, fixed HTTPS target and explicit tool allowlist. It exposes a Run-local MCP endpoint, filters `tools/list`, and rejects every non-allowlisted `tools/call` before contacting the upstream server.
 - `bigquery-read` owns Google ADC and exposes only `dry_run_query` and `run_query`. Every execution first performs a BigQuery dry-run, requires `statementType = SELECT`, checks all `referencedTables` against the Profile project allowlist, and applies fixed byte and row ceilings. The workload never receives `bq`, ADC or a general Google API channel.
+- `module-mcp-read` loads one immutable `mcp-server` ESM snapshot into its own sidecar. The package must export `createMcpHandler`, have no staged `node_modules`, use the Platform-supplied target-restricted fetch function, and return exactly the tool catalog declared by the Profile. Platform handles only `initialize`, `ping`, `tools/list` and allowlisted `tools/call`; the consumer-reviewed module remains responsible for proving that each allowed tool is semantically read-only.
 
-Each adapter is a `read-only-adapter` entry in the portable Capability lock and has one matching safe declaration under `capabilities.adapters`. The Profile must declare the exact credential references, fixed network targets and read-effect names required by those adapters; undeclared or surplus credentials, targets, write effects and adapter definitions fail closed.
+Each built-in adapter is a `read-only-adapter` lock entry; each module adapter is an `mcp-server` lock entry with a matching immutable source. Every adapter has one matching safe declaration under `capabilities.adapters`. The Profile must declare the exact credential references, fixed network targets and read-effect names required by those adapters; undeclared or surplus credentials, targets, write effects and adapter definitions fail closed.
 
 Credential values are supplied separately through a controller-only Environment Bindings document. Bindings may point to an environment variable or a private regular file, but values and source paths never enter the Profile, Environment/Run manifest or workload. The Docker provider stages a private per-Run copy into the corresponding adapter secret mount, and stop removes it with all other transient credentials.
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,11 +10,29 @@ import {
   adapterDirectoryName,
   createDataAdapterCredentialBroker,
   createDataAdapterRpcHandler,
+  createModuleMcpRpcHandler,
   dataAdapterRequest,
   normalizeEnvironmentBindings,
   normalizeEnvironmentProfile,
   readStagedDataAdapterCredential,
 } from '../src/environment/index.js';
+import { createBufferedFetchResponse } from '../src/environment/data-adapter-server.js';
+
+test('adapter network responses implement the standard Fetch body contract', async () => {
+  const response = createBufferedFetchResponse(Buffer.from('{"ok":true}'), {
+    status: 200,
+    statusText: 'OK',
+    headers: { 'content-type': 'application/json', 'x-test': 'present' },
+  });
+  assert.equal(response.ok, true);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-test'), 'present');
+  assert.deepEqual(JSON.parse(Buffer.from(await response.arrayBuffer()).toString('utf8')), { ok: true });
+
+  const empty = createBufferedFetchResponse(Buffer.alloc(0), { status: 204 });
+  assert.equal(empty.status, 204);
+  assert.equal(await empty.text(), '');
+});
 
 test('data adapter requirements are exact, additive, and read-only', () => {
   const profile = adapterProfile();
@@ -182,6 +200,67 @@ test('BigQuery adapter dry-runs every query and executes only allowlisted SELECT
   assert.equal(JSON.parse(execution.options.body).maxResults, '20');
 });
 
+test('module MCP adapter stages named credentials and enforces tool and network allowlists', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-module-mcp-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const capabilityRoot = join(root, 'solver-read');
+  await mkdir(capabilityRoot, { mode: 0o700 });
+  await writeFile(join(capabilityRoot, 'package.json'), '{"name":"solver-read","type":"module"}\n', { mode: 0o600 });
+  await writeFile(join(capabilityRoot, 'adapter.mjs'), `
+export async function createMcpHandler({ environment, fetchImpl }) {
+  return async (request) => {
+    if (request.method === 'tools/list') return { jsonrpc: '2.0', id: request.id, result: { tools: [
+      { name: 'query_solver_engine', inputSchema: { type: 'object' } },
+    ] } };
+    if (request.method === 'tools/call') {
+      const response = await fetchImpl(request.params.arguments.url, {
+        headers: { authorization: 'Bearer ' + environment.SOLVER_TOKEN },
+      });
+      return { jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: await response.text() }] } };
+    }
+  };
+}
+`, { mode: 0o600 });
+  const profile = moduleAdapterProfile(capabilityRoot);
+  const adapter = profile.capabilities.adapters[0];
+  const broker = createDataAdapterCredentialBroker({
+    bindings: { credentials: { 'credentials.solver-token': { source: 'environment', key: 'SOLVER_PRIVATE_TOKEN' } } },
+    environment: { SOLVER_PRIVATE_TOKEN: 'private-solver-token' },
+  });
+  const staged = await broker.stage({ profile, directory: join(root, 'staged') });
+  const credentialPath = join(staged.directory, adapterDirectoryName(adapter.id), 'credential.json');
+  const credential = await readStagedDataAdapterCredential(credentialPath, adapter);
+  assert.deepEqual(credential.environment, { SOLVER_TOKEN: 'private-solver-token' });
+  assert.equal(JSON.stringify(staged).includes('private-solver-token'), false);
+
+  const requests = [];
+  const rpc = await createModuleMcpRpcHandler({
+    adapter,
+    credential,
+    capabilityRoot,
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return new Response('solver-ok');
+    },
+  });
+  const tools = await rpc(rpcRequest(1, 'tools/list'));
+  assert.deepEqual(tools.result.tools.map((tool) => tool.name), ['query_solver_engine']);
+  const rejectedTool = await rpc(rpcRequest(2, 'tools/call', { name: 'create_experiment', arguments: {} }));
+  assert.match(rejectedTool.error.message, /outside the read-only allowlist/);
+  const result = await rpc(rpcRequest(3, 'tools/call', {
+    name: 'query_solver_engine',
+    arguments: { url: 'https://solver.example.test/api/experiments' },
+  }));
+  assert.equal(result.result.content[0].text, 'solver-ok');
+  assert.equal(requests[0].options.headers.authorization, 'Bearer private-solver-token');
+  const rejectedNetwork = await rpc(rpcRequest(4, 'tools/call', {
+    name: 'query_solver_engine',
+    arguments: { url: 'https://other.example.test/api/experiments' },
+  }));
+  assert.match(rejectedNetwork.error.message, /outside its network allowlist/);
+  assert.equal(requests.length, 1);
+});
+
 function adapterProfile() {
   return normalizeEnvironmentProfile({
     id: 'adapter-test',
@@ -212,6 +291,28 @@ function adapterProfile() {
           maximumRows: 20,
         },
       ],
+    },
+  });
+}
+
+function moduleAdapterProfile(source) {
+  return normalizeEnvironmentProfile({
+    id: 'module-adapter-test',
+    capabilities: {
+      lock: { capabilities: [
+        { id: 'adapters.solver', kind: 'mcp-server', scope: 'experiment', version: '1' },
+      ] },
+      sources: [{ id: 'adapters.solver', path: source }],
+      adapters: [{
+        id: 'adapters.solver',
+        kind: 'module-mcp-read',
+        server: 'solver',
+        entrypoint: 'adapter.mjs',
+        credentialEnvironment: { SOLVER_TOKEN: 'credentials.solver-token' },
+        networkTargets: ['https://solver.example.test/api'],
+        effect: 'experiment.read',
+        allowedTools: ['query_solver_engine'],
+      }],
     },
   });
 }

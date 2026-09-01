@@ -1,3 +1,5 @@
+import { normalizeResourceDescriptor } from './resources.js';
+
 export const MAX_SESSION_ATTACHMENTS = 5;
 export const MAX_SESSION_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 export const MAX_INLINE_TEXT_ATTACHMENT_BYTES = 512 * 1024;
@@ -5,7 +7,8 @@ export const MAX_INLINE_TEXT_ATTACHMENT_BYTES = 512 * 1024;
 const ATTACHMENT_ENVELOPE_TAG = 'agent-workbench-attachment';
 const ATTACHMENT_ENVELOPE_TAGS = '(?:agent-workbench|personal-workbench)-attachment';
 
-export function sessionAttachmentKind({ mimeType = '', name = '', path = '' } = {}) {
+export function sessionAttachmentKind({ mimeType = '', name = '', path = '', resourceKind = '' } = {}) {
+  if (resourceKind === 'workspace-directory') return 'directory';
   const normalizedMime = String(mimeType || '').trim().toLowerCase();
   const fileName = String(name || path || '').trim();
   if (isAudioAttachment(normalizedMime, fileName)) return 'audio';
@@ -14,21 +17,29 @@ export function sessionAttachmentKind({ mimeType = '', name = '', path = '' } = 
 }
 
 export function normalizeSessionAttachment(value = {}, fallbackId = 'attachment') {
-  const name = String(value.name || '附件');
-  const mimeType = String(value.mimeType || 'application/octet-stream').toLowerCase();
-  const kind = sessionAttachmentKind({ mimeType, name, path: value.path || value.storedPath });
+  const resource = normalizedResource(value.resource);
+  const name = String(resource?.display.name || value.name || '附件');
+  const mimeType = String(resource?.display.mimeType || value.mimeType || 'application/octet-stream').toLowerCase();
+  const size = resource?.display.size ?? value.size;
+  const kind = sessionAttachmentKind({
+    mimeType,
+    name,
+    path: value.path || value.storedPath,
+    resourceKind: resource?.kind,
+  });
   const progress = value.progress == null ? Number.NaN : Number(value.progress);
   return {
-    id: String(value.id || fallbackId),
+    id: String(resource?.id || value.id || fallbackId),
     name,
     mimeType,
-    size: nonNegativeNumber(value.size),
+    size: nonNegativeNumber(size),
     kind,
     inputType: value.inputType || inputTypeForKind(kind),
     status: ['uploading', 'ready', 'error'].includes(value.status) ? value.status : 'ready',
     ...(Number.isFinite(progress) ? { progress: Math.min(100, Math.max(0, progress)) } : {}),
     ...(value.error ? { error: String(value.error) } : {}),
     ...(value.previewUrl ? { previewUrl: String(value.previewUrl) } : {}),
+    ...(resource ? { resource } : {}),
   };
 }
 
@@ -119,6 +130,15 @@ function isAudioAttachment(mimeType, fileName) {
 function nonNegativeNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : 0;
+}
+
+function normalizedResource(value) {
+  if (value == null) return null;
+  try {
+    return normalizeResourceDescriptor(value);
+  } catch {
+    return null;
+  }
 }
 
 function positiveInteger(value, fallback) {

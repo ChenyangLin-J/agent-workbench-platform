@@ -30,6 +30,19 @@ export {
 } from './attachments.js';
 
 export {
+  RESOURCE_KINDS,
+  RESOURCE_LIFECYCLE_CLASSES,
+  RESOURCE_LIFECYCLE_STATES,
+  RESOURCE_MODES,
+  RESOURCE_SCHEMA,
+  isResourceDescriptor,
+  normalizeResourceDescriptor,
+  resourceDescriptorAttachment,
+} from './resources.js';
+
+export { FilesystemResourceStore } from './filesystem-resource-store.js';
+
+export {
   normalizeSessionFeatures,
   normalizeSideChatMode,
   normalizeSubagentMode,

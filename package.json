@@ -1,6 +1,6 @@
 {
   "name": "@agent-workbench/platform",
-  "version": "0.10.0",
+  "version": "0.13.1",
   "description": "Shared Codex runtime, Session UI, Sub Agent, Realtime, runnable environments, browser, and capability primitives for independent agent workbench products.",
   "license": "MIT",
   "repository": {
@@ -38,6 +38,8 @@
     "./session": "./src/session.js",
     "./subagents": "./src/subagents.js",
     "./attachments": "./src/attachments.js",
+    "./resources": "./src/resources.js",
+    "./filesystem-resource-store": "./src/filesystem-resource-store.js",
     "./capabilities": "./src/capabilities.js",
     "./plugins": "./src/plugins.js",
     "./capability-registry": "./src/capability-registry.js",
@@ -58,6 +60,7 @@
     "test": "node --test test/*.test.js",
     "test:docker-environment": "node scripts/smoke-docker-environment.mjs",
     "test:docker-data-adapters": "node scripts/smoke-docker-data-adapters.mjs",
+    "test:minimal-host-browser": "node scripts/smoke-minimal-host-browser.mjs",
     "update:playwright-tools": "node scripts/update-playwright-tools.mjs"
   },
   "peerDependencies": {

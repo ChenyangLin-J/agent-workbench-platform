@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 export const ENVIRONMENT_BINDINGS_SCHEMA = 'agent-workbench.environment-bindings/v1';
 export const OPENMETADATA_READ_ADAPTER_KIND = 'openmetadata-mcp-read';
 export const BIGQUERY_READ_ADAPTER_KIND = 'bigquery-read';
+export const MODULE_MCP_READ_ADAPTER_KIND = 'module-mcp-read';
 export const BIGQUERY_API_TARGET = 'https://bigquery.googleapis.com/bigquery/v2';
 export const GOOGLE_OAUTH_TARGET = 'https://oauth2.googleapis.com/token';
 export const OPENMETADATA_READ_TOOLS = Object.freeze([
@@ -13,7 +14,8 @@ export const OPENMETADATA_READ_TOOLS = Object.freeze([
   'search_metadata',
 ]);
 
-const ADAPTER_LOCK_KIND = 'read-only-adapter';
+const BUILTIN_ADAPTER_LOCK_KIND = 'read-only-adapter';
+const MODULE_ADAPTER_LOCK_KIND = 'mcp-server';
 const OPENMETADATA_EFFECT = 'metadata.read';
 const BIGQUERY_EFFECT = 'warehouse.read';
 const DEFAULT_MAXIMUM_BYTES_BILLED = 100 * 1024 * 1024 * 1024;
@@ -24,26 +26,37 @@ export function normalizeDataAdapters(value, lock) {
   if (!Array.isArray(value)) throw new TypeError('environment capability adapters must be an array');
   const lockEntries = lock?.capabilities || [];
   const adapterLock = new Map(lockEntries
-    .filter((entry) => entry.kind === ADAPTER_LOCK_KIND)
+    .filter((entry) => [BUILTIN_ADAPTER_LOCK_KIND, MODULE_ADAPTER_LOCK_KIND].includes(entry.kind))
     .map((entry) => [entry.id, entry]));
   const seenIds = new Set();
   const seenServers = new Set();
   const normalized = value.map((candidate) => {
     if (!plainObject(candidate)) throw new TypeError('environment capability adapter must be an object');
     const id = nonEmptyString(candidate.id, 'environment capability adapter id');
-    if (!adapterLock.has(id)) throw new TypeError(`capability adapter is not present in the read-only adapter lock: ${id}`);
+    const locked = adapterLock.get(id);
+    if (!locked) throw new TypeError(`capability adapter is not present in the adapter lock: ${id}`);
     if (seenIds.has(id)) throw new TypeError(`duplicate capability adapter id: ${id}`);
     seenIds.add(id);
     const kind = nonEmptyString(candidate.kind, `capability adapter ${id} kind`);
     const server = mcpServerName(candidate.server, `capability adapter ${id} server`);
     if (seenServers.has(server)) throw new TypeError(`duplicate capability adapter server: ${server}`);
     seenServers.add(server);
-    if (kind === OPENMETADATA_READ_ADAPTER_KIND) return normalizeOpenMetadataAdapter(candidate, { id, kind, server });
-    if (kind === BIGQUERY_READ_ADAPTER_KIND) return normalizeBigQueryAdapter(candidate, { id, kind, server });
+    if (kind === OPENMETADATA_READ_ADAPTER_KIND) {
+      if (locked.kind !== BUILTIN_ADAPTER_LOCK_KIND) throw new TypeError(`built-in adapter ${id} must use a read-only-adapter lock entry`);
+      return normalizeOpenMetadataAdapter(candidate, { id, kind, server });
+    }
+    if (kind === BIGQUERY_READ_ADAPTER_KIND) {
+      if (locked.kind !== BUILTIN_ADAPTER_LOCK_KIND) throw new TypeError(`built-in adapter ${id} must use a read-only-adapter lock entry`);
+      return normalizeBigQueryAdapter(candidate, { id, kind, server });
+    }
+    if (kind === MODULE_MCP_READ_ADAPTER_KIND) {
+      if (locked.kind !== MODULE_ADAPTER_LOCK_KIND) throw new TypeError(`module MCP adapter ${id} must use an mcp-server lock entry`);
+      return normalizeModuleMcpAdapter(candidate, { id, kind, server });
+    }
     throw new TypeError(`unsupported read-only adapter kind: ${kind}`);
   }).sort((left, right) => left.id.localeCompare(right.id));
   for (const id of adapterLock.keys()) {
-    if (!seenIds.has(id)) throw new TypeError(`read-only adapter lock entry has no adapter declaration: ${id}`);
+    if (!seenIds.has(id)) throw new TypeError(`adapter lock entry has no adapter declaration: ${id}`);
   }
   return normalized;
 }
@@ -54,14 +67,23 @@ export function dataAdapterRequest(profile = {}) {
   const networkTargets = [];
   const readEffects = [];
   for (const adapter of adapters) {
-    credentialReferences.push(adapter.credentialReference);
+    if (adapter.kind === MODULE_MCP_READ_ADAPTER_KIND) {
+      credentialReferences.push(...Object.values(adapter.credentialEnvironment));
+      networkTargets.push(...adapter.networkTargets);
+    } else {
+      credentialReferences.push(adapter.credentialReference);
+    }
     readEffects.push(adapter.effect);
     if (adapter.kind === OPENMETADATA_READ_ADAPTER_KIND) networkTargets.push(adapter.target);
     if (adapter.kind === BIGQUERY_READ_ADAPTER_KIND) networkTargets.push(BIGQUERY_API_TARGET, GOOGLE_OAUTH_TARGET);
   }
   return {
     requested: adapters.length > 0,
-    supported: adapters.every((adapter) => [OPENMETADATA_READ_ADAPTER_KIND, BIGQUERY_READ_ADAPTER_KIND].includes(adapter.kind)),
+    supported: adapters.every((adapter) => [
+      OPENMETADATA_READ_ADAPTER_KIND,
+      BIGQUERY_READ_ADAPTER_KIND,
+      MODULE_MCP_READ_ADAPTER_KIND,
+    ].includes(adapter.kind)),
     adapters: structuredClone(adapters),
     credentialReferences: uniqueSorted(credentialReferences),
     networkTargets: uniqueSorted(networkTargets),
@@ -186,6 +208,16 @@ export async function readStagedDataAdapterCredential(path, adapter) {
       || credential.credentialReference !== adapter.credentialReference) {
       throw adapterError('DATA_ADAPTER_CREDENTIAL_INVALID', 'Staged BigQuery credential is invalid.');
     }
+  } else if (adapter.kind === MODULE_MCP_READ_ADAPTER_KIND) {
+    const expected = adapter.credentialEnvironment;
+    if (credential?.schemaVersion !== 1 || credential.kind !== 'module-mcp-environment'
+      || credential.adapterId !== adapter.id || !plainObject(credential.environment)
+      || !plainObject(credential.credentialReferences)
+      || !exactObject(credential.credentialReferences, expected)
+      || !sameKeys(credential.environment, expected)
+      || Object.values(credential.environment).some((value) => typeof value !== 'string' || !value.trim())) {
+      throw adapterError('DATA_ADAPTER_CREDENTIAL_INVALID', 'Staged module MCP credential environment is invalid.');
+    }
   } else {
     throw adapterError('DATA_ADAPTER_KIND_UNSUPPORTED', `Unsupported staged data adapter kind: ${adapter.kind}.`);
   }
@@ -234,7 +266,63 @@ function normalizeBigQueryAdapter(candidate, base) {
   };
 }
 
+function normalizeModuleMcpAdapter(candidate, base) {
+  rejectUnknownKeys(candidate, new Set([
+    'id', 'kind', 'server', 'entrypoint', 'credentialEnvironment', 'networkTargets', 'effect', 'allowedTools',
+  ]), `capability adapter ${base.id}`);
+  const entrypoint = safeRelativeModulePath(candidate.entrypoint, `capability adapter ${base.id} entrypoint`);
+  if (!plainObject(candidate.credentialEnvironment) || !Object.keys(candidate.credentialEnvironment).length) {
+    throw new TypeError(`module MCP adapter ${base.id} requires credentialEnvironment`);
+  }
+  const credentialEnvironment = {};
+  for (const [key, reference] of Object.entries(candidate.credentialEnvironment).sort(([left], [right]) => left.localeCompare(right))) {
+    if (!/^[A-Z][A-Z0-9_]{1,126}$/.test(key)) throw new TypeError(`module MCP adapter ${base.id} credential environment key is invalid`);
+    credentialEnvironment[key] = normalizeCredentialReference(reference, base.id);
+  }
+  const networkTargets = stringList(candidate.networkTargets, `capability adapter ${base.id} networkTargets`)
+    .map((target) => httpsTarget(target, `capability adapter ${base.id} network target`));
+  if (!networkTargets.length) throw new TypeError(`module MCP adapter ${base.id} requires networkTargets`);
+  const effect = nonEmptyString(candidate.effect, `capability adapter ${base.id} effect`);
+  if (!/^[a-z][a-z0-9.-]{1,126}\.read$/.test(effect)) {
+    throw new TypeError(`module MCP adapter ${base.id} effect must be a namespaced read effect`);
+  }
+  const allowedTools = stringList(candidate.allowedTools, `capability adapter ${base.id} allowedTools`);
+  if (!allowedTools.length || allowedTools.some((tool) => !/^[a-z][a-z0-9_]{1,62}$/.test(tool))) {
+    throw new TypeError(`module MCP adapter ${base.id} allowedTools are invalid`);
+  }
+  return {
+    ...base,
+    entrypoint,
+    credentialEnvironment,
+    networkTargets: uniqueSorted(networkTargets),
+    effect,
+    allowedTools,
+  };
+}
+
 async function resolveAdapterCredential(adapter, bindings, environment) {
+  if (adapter.kind === MODULE_MCP_READ_ADAPTER_KIND) {
+    const environmentValues = {};
+    for (const [key, reference] of Object.entries(adapter.credentialEnvironment)) {
+      const binding = bindings.credentials[reference];
+      if (!binding) throw adapterError('DATA_ADAPTER_BINDING_MISSING', `binding ${reference} is missing.`);
+      if (binding.source !== 'environment') {
+        throw adapterError('DATA_ADAPTER_BINDING_SOURCE_INVALID', `Module MCP binding ${reference} must come from an environment binding.`);
+      }
+      const value = environment[binding.key];
+      if (typeof value !== 'string' || !value.trim()) {
+        throw adapterError('DATA_ADAPTER_CREDENTIAL_MISSING', `environment key ${binding.key} is empty.`);
+      }
+      environmentValues[key] = value.trim();
+    }
+    return {
+      schemaVersion: 1,
+      kind: 'module-mcp-environment',
+      adapterId: adapter.id,
+      credentialReferences: adapter.credentialEnvironment,
+      environment: environmentValues,
+    };
+  }
   const binding = bindings.credentials[adapter.credentialReference];
   if (!binding) throw adapterError('DATA_ADAPTER_BINDING_MISSING', `binding ${adapter.credentialReference} is missing.`);
   if (adapter.kind === OPENMETADATA_READ_ADAPTER_KIND) {
@@ -284,13 +372,37 @@ function validateGoogleCredential(credential) {
 }
 
 function safeAdapterDescriptor(adapter) {
-  return {
+  const descriptor = {
     id: adapter.id,
     kind: adapter.kind,
     server: adapter.server,
-    credentialReference: adapter.credentialReference,
     effect: adapter.effect,
   };
+  if (adapter.kind === MODULE_MCP_READ_ADAPTER_KIND) {
+    descriptor.credentialReferences = uniqueSorted(Object.values(adapter.credentialEnvironment));
+  } else {
+    descriptor.credentialReference = adapter.credentialReference;
+  }
+  return descriptor;
+}
+
+function safeRelativeModulePath(value, label) {
+  const path = nonEmptyString(value, label);
+  if (path.startsWith('/') || path.includes('\\') || path.split('/').some((part) => !part || part === '.' || part === '..')
+    || !/\.(?:mjs|js)$/.test(path)) {
+    throw new TypeError(`${label} must be a safe relative JavaScript module path`);
+  }
+  return path;
+}
+
+function sameKeys(left, right) {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index]);
+}
+
+function exactObject(left, right) {
+  return sameKeys(left, right) && Object.keys(left).every((key) => left[key] === right[key]);
 }
 
 function httpsTarget(value, label) {

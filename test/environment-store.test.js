@@ -43,6 +43,8 @@ test('environment and Run manifests are created atomically with private instance
   assert.equal(run.kind, 'run');
   assert.equal(run.environmentId, environment.id);
   assert.equal(run.process.pid, null);
+  assert.equal(run.paths.resources, join(run.paths.root, 'resources'));
+  assert.equal(run.isolation.filesystem.writableRoots.includes(run.paths.resources), true);
   for (const path of Object.values(run.paths)) await access(path);
   assert.deepEqual(await inspectEnvironment(run.paths.root), run);
 });

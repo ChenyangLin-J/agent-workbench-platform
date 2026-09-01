@@ -420,6 +420,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /actions\.onDraftChange\?\.\(event\.target\.value\)/);
   assert.match(source, /handleAttachmentDrop/);
   assert.match(source, /actions\.onResolveDroppedDirectories/);
+  assert.match(source, /result\?\.resources/);
+  assert.match(source, /attachment\.kind === 'directory'/);
   assert.match(source, /composerDropPayload\(event\.dataTransfer\)/);
   assert.match(source, /labels\.directoryDrop \|\| '松开以引用文件夹'/);
   assert.match(source, /actions\.onExecutionProfileChange/);

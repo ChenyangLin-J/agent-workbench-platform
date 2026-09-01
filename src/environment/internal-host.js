@@ -55,6 +55,7 @@ export async function runInternalMinimalHost(runTarget, {
   for (const path of [
     manifest.paths.runtime,
     manifest.paths.state,
+    manifest.paths.resources || join(manifest.paths.root, 'resources'),
     manifest.paths.workspace,
     manifest.paths.temporary,
     join(manifest.paths.runtime, 'home'),
@@ -93,6 +94,7 @@ export async function runInternalMinimalHost(runTarget, {
     port,
     socketPath,
     accessToken: await hostAccessToken(),
+    sessionOwnerHeader: manifest.extensions?.['ai.ddit.agent-workbench.minimal-host']?.sessionOwnerHeader || null,
     onStopRequested: async () => {
       await shutdown();
       process.exit(0);

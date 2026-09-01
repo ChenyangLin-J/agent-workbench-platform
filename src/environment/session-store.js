@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
+import { normalizeSessionAttachment } from '../attachments.js';
+
 const STORE_VERSION = 1;
 const MAX_MESSAGES_PER_SESSION = 2_000;
 const MAX_TECHNICAL_ITEMS_PER_SESSION = 2_000;
@@ -17,19 +19,22 @@ export class EnvironmentSessionStore {
     this.ready = this.#initialize();
   }
 
-  async list() {
+  async list({ ownerId = null } = {}) {
     const document = await this.#readQueued();
     return Object.values(document.sessions)
+      .filter((session) => ownerId == null || session.ownerId === ownerId)
       .map(publicSession)
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   }
 
-  async create({ title = '新对话' } = {}) {
+  async create({ title = '新对话', ownerId = null } = {}) {
     const sessionId = `session-${this.uuid()}`;
     const timestamp = this.#time();
+    const normalizedOwnerId = ownerId == null ? null : nonEmptyString(ownerId, 'Session owner');
     await this.#mutate((document) => {
       document.sessions[sessionId] = {
         id: sessionId,
+        ownerId: normalizedOwnerId,
         title: nonEmptyString(title, 'Session title'),
         status: 'idle',
         createdAt: timestamp,
@@ -43,10 +48,10 @@ export class EnvironmentSessionStore {
     return this.get(sessionId);
   }
 
-  async get(sessionId) {
+  async get(sessionId, { ownerId = null } = {}) {
     const document = await this.#readQueued();
     const session = document.sessions[sessionId];
-    if (!session) throw storeError('SESSION_NOT_FOUND', `Session not found: ${sessionId}`, 404);
+    requireOwnedSession(session, sessionId, ownerId);
     return sessionView(session, document.bindings[sessionId]);
   }
 
@@ -76,20 +81,33 @@ export class EnvironmentSessionStore {
     return structuredClone(binding);
   }
 
-  async recordUserInput(sessionId, input) {
+  async recordUserInput(sessionId, input, { attachments = [], ownerId = null, turnId = null } = {}) {
     const content = inputText(input);
     if (!content) throw new TypeError('Session input cannot be empty');
+    const normalizedAttachments = Array.isArray(attachments)
+      ? attachments.map((attachment, index) => normalizeSessionAttachment(attachment, `attachment-${index}`))
+      : [];
     await this.#mutate((document) => {
       const session = requireSession(document, sessionId);
-      session.messages.push({
+      requireOwnedSession(session, sessionId, ownerId);
+      if (!session.messages.length && defaultSessionTitle(session.title)) {
+        session.title = titleFromUserInput(content, normalizedAttachments);
+      }
+      const message = {
         id: `message-${this.uuid()}`,
         role: 'user',
         phase: 'answer',
         content,
-        turnId: null,
+        attachments: normalizedAttachments,
+        turnId: turnId == null ? null : nonEmptyString(turnId, 'Runtime Turn id'),
         turnStatus: null,
         createdAt: this.#time(),
-      });
+      };
+      const existingTurnIndex = message.turnId == null
+        ? -1
+        : session.messages.findIndex((candidate) => candidate.turnId === message.turnId);
+      if (existingTurnIndex === -1) session.messages.push(message);
+      else session.messages.splice(existingTurnIndex, 0, message);
       session.messages = session.messages.slice(-MAX_MESSAGES_PER_SESSION);
       session.updatedAt = this.#time();
     });
@@ -311,9 +329,28 @@ function inputText(input) {
   return input.map((part) => part?.text || part?.content || '').filter(Boolean).join('\n').trim();
 }
 
+function defaultSessionTitle(value) {
+  return ['新对话', 'New Session', '新 Session'].includes(String(value || '').trim());
+}
+
+function titleFromUserInput(content, attachments) {
+  const text = String(content || '').replace(/\s+/g, ' ').trim();
+  const fallback = attachments.length
+    ? `附件：${attachments.map((attachment) => attachment.name).join('、')}`
+    : '新对话';
+  return [...(text || fallback)].slice(0, 60).join('');
+}
+
 function requireSession(document, sessionId) {
   const session = document.sessions[sessionId];
   if (!session) throw storeError('SESSION_NOT_FOUND', `Session not found: ${sessionId}`, 404);
+  return session;
+}
+
+function requireOwnedSession(session, sessionId, ownerId) {
+  if (!session || (ownerId != null && session.ownerId !== ownerId)) {
+    throw storeError('SESSION_NOT_FOUND', `Session not found: ${sessionId}`, 404);
+  }
   return session;
 }
 

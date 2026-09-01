@@ -39,7 +39,7 @@ For a strongly isolated offline Host, use Docker:
 }
 ```
 
-The Docker provider supports an empty Capability lock, immutable local `skill-source` snapshots, and the built-in `read-only-adapter` kinds documented below. It rejects other Capability kinds, unsupported effect/credential/network combinations, and noncanonical, symlinked, unavailable or sibling-state-exposing mount roots. A Skill Profile declares a portable lock plus a controller-only source path:
+The Docker provider supports an empty Capability lock, immutable local `skill-source` snapshots, immutable trusted `mcp-server` snapshots, and the read-only adapter kinds documented below. It rejects other Capability kinds, unsupported effect/credential/network combinations, and noncanonical, symlinked, unavailable or sibling-state-exposing mount roots. A Skill Profile declares a portable lock plus a controller-only source path:
 
 ```json
 {
@@ -59,6 +59,8 @@ The Docker provider supports an empty Capability lock, immutable local `skill-so
 The source must be a directory containing `SKILL.md`. Environment creation rejects symlinks, package/VCS cache directories, common credential filenames and private-key formats, and enforces size limits. It copies the source once into an Environment snapshot; later source edits do not change that Environment. Every Run receives a new hash-verified copy. Docker mounts only the Run copy read-only, and removes `capabilities.sources` from the workload Profile. The host-side stored Profile remains private controller state.
 
 `SKILL.md` must contain a valid lowercase frontmatter `name`. The snapshot records that name, and Session startup calls the Codex Skill inventory API before creating a thread. Startup fails if a locked Skill is missing or an enabled Skill outside the immutable lock remains visible; a read-only mount by itself is not treated as Runtime enablement evidence.
+
+An `mcp-server` source is also copied once at Environment creation and hash-verified for every Run. It must be a dependency-free ESM package with a lowercase `package.json` name and `type: "module"`. MCP snapshots are mounted only into their adapter sidecar and are never registered as Codex Skills.
 
 Model access uses a fixed Codex channel:
 
@@ -111,6 +113,12 @@ Bind `credentials.model-gateway` to a private environment key in the same bindin
 
 Version 0.9 adds two enforcing adapter kinds: `openmetadata-mcp-read` and `bigquery-read`. Each adapter has a matching `read-only-adapter` lock entry. The Profile declares only fixed targets, read effects, credential references and allowlists; credential locations live in a separate private bindings file.
 
+Version 0.13 adds `module-mcp-read` for a consumer's reviewed, dependency-free read-only integration. Its matching lock entry is `mcp-server`; the adapter declares one snapshot entrypoint, an exact tool allowlist, fixed HTTPS targets, a namespaced read effect and the environment names mapped to private credential references. Platform snapshots the package, stages its credentials only into its sidecar, passes it a target-restricted fetch function, verifies that its startup tool catalog exactly matches the Profile, and rejects all other MCP methods and tool names before dispatch.
+
+The injected fetch function follows the standard Fetch `Response` body contract (`body`, `text()`, `json()`, and `arrayBuffer()`) and observes the caller's `AbortSignal`. Consumer modules should still bound response size and timeout at their semantic layer.
+
+This is a trusted-code extension, not an arbitrary plugin sandbox: the reviewed module is part of the adapter's enforcement boundary and must use the injected fetch function rather than opening its own sockets or child processes. Business packages and their account configuration remain in the consumer repository; Platform contains only the loader, isolation and validation contract.
+
 ```json
 {
   "schema": "agent-workbench.environment-bindings/v1",
@@ -157,6 +165,7 @@ The generated layout is:
     ├── manifest.json
     ├── runtime/
     ├── state/
+    ├── resources/
     ├── workspace/
     ├── tmp/
     └── credentials/
@@ -172,7 +181,7 @@ Docker Runs use a read-only workload container with dropped capabilities, no-new
 
 For an `ephemeral-machine` Run with `no-external-effects` or the enforced `read-only-data-adapter-allowlist`, Docker is the executable sandbox boundary. Codex therefore runs with `danger-full-access` and no per-command approval *inside that container*; nesting bubblewrap is not required and is not assumed to work on Docker Desktop. This does not grant host access: outer mounts, constructed environment, dropped capabilities, internal network, fixed brokers and per-Run identity remain the enforcement facts. Development mode and unenforced external effects keep interactive approval. Domain credentials must stay in enforcing sidecars.
 
-Stopping a Run removes its child resources and recreates an empty private transient-credential directory. It retains the manifest, Runtime and Session state. Retention or deletion of that state is consumer policy and is not an implicit part of `stop`.
+Stopping a Run removes its child processes and provider-owned ephemeral resources, then recreates an empty private transient-credential directory. It retains the manifest, Runtime, Session state, and managed `resources` store. Retention or deletion of that state is consumer policy and is not an implicit part of `stop`.
 
 ## Verification
 

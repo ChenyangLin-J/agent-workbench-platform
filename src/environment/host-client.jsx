@@ -3,10 +3,17 @@ import { createRoot } from 'react-dom/client';
 
 import { SessionBrowser } from '../ui/index.jsx';
 import { minimalHostSessionPresentation, selectMinimalHostSession } from './host-presentation.js';
+import { resolveMinimalHostUrl } from './host-url.js';
 import '../ui/styles.css';
 import './assets/host.css';
 
 const bootstrap = globalThis.__AGENT_WORKBENCH_BOOTSTRAP__ || {};
+const hostBaseUrl = bootstrap.baseUrl || globalThis.document?.baseURI;
+const attachmentsEnabled = bootstrap.features?.attachments === true;
+
+function hostUrl(path) {
+  return resolveMinimalHostUrl(path, { baseUrl: hostBaseUrl });
+}
 
 function MinimalHostApp() {
   const [sessions, setSessions] = useState([]);
@@ -19,7 +26,7 @@ function MinimalHostApp() {
   const refreshQueued = useRef(false);
 
   const request = useCallback(async (path, options = {}) => {
-    const response = await fetch(path, {
+    const response = await fetch(hostUrl(path), {
       ...options,
       headers: {
         'content-type': 'application/json',
@@ -33,7 +40,7 @@ function MinimalHostApp() {
   }, []);
 
   const refreshSessions = useCallback(async () => {
-    const body = await request('/api/sessions');
+    const body = await request('api/sessions');
     const nextSessions = (body.sessions || []).map(minimalHostSessionPresentation);
     setSessions(nextSessions);
     setSelectedId((current) => selectMinimalHostSession(nextSessions, current));
@@ -42,7 +49,7 @@ function MinimalHostApp() {
 
   const refreshSession = useCallback(async (sessionId = selectedId) => {
     if (!sessionId) return null;
-    const body = await request(`/api/sessions/${encodeURIComponent(sessionId)}`);
+    const body = await request(`api/sessions/${encodeURIComponent(sessionId)}`);
     const nextSession = minimalHostSessionPresentation(body.session);
     setSession(nextSession);
     return nextSession;
@@ -93,7 +100,7 @@ function MinimalHostApp() {
   async function createSession() {
     setError('');
     try {
-      const body = await request('/api/sessions', { method: 'POST', body: JSON.stringify({}) });
+      const body = await request('api/sessions', { method: 'POST', body: JSON.stringify({}) });
       await refreshSessions();
       setSelectedId(body.session.sessionId);
     } catch (nextError) {
@@ -101,12 +108,12 @@ function MinimalHostApp() {
     }
   }
 
-  async function submit({ prompt, mode }) {
+  async function submit({ prompt, mode, attachments = [] }) {
     setError('');
     try {
-      await request(`/api/sessions/${encodeURIComponent(selectedId)}/turns`, {
+      await request(`api/sessions/${encodeURIComponent(selectedId)}/turns`, {
         method: 'POST',
-        body: JSON.stringify({ prompt, mode }),
+        body: JSON.stringify({ prompt, mode, attachments }),
       });
       setSession((current) => current ? { ...current, status: 'running', statusLabel: '正在处理' } : current);
       scheduleRefresh();
@@ -116,17 +123,48 @@ function MinimalHostApp() {
     }
   }
 
+  async function uploadAttachments(files, options = {}) {
+    if (!selectedId) throw new Error('请先新建或选择一个对话。');
+    return uploadSessionAttachments(selectedId, files, options);
+  }
+
+  async function resolveDroppedDirectories({ directories = [] } = {}) {
+    if (!selectedId) throw new Error('请先新建或选择一个对话。');
+    return request(`api/sessions/${encodeURIComponent(selectedId)}/directory-references`, {
+      method: 'POST',
+      body: JSON.stringify({
+        directories: directories.map(({ name, pathHint }) => ({ name, pathHint })),
+      }),
+    });
+  }
+
+  async function openAttachment(attachment) {
+    if (!selectedId || !attachment?.id) return;
+    const response = await fetch(hostUrl(
+      `api/sessions/${encodeURIComponent(selectedId)}/attachments/${encodeURIComponent(attachment.id)}/content`,
+    ), {
+      headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error?.message || `附件读取失败 (${response.status})`);
+    }
+    const objectUrl = URL.createObjectURL(await response.blob());
+    globalThis.open(objectUrl, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  }
+
   async function interrupt() {
     const expectedTurnId = session?.runtimeBinding?.activeTurnId;
     if (!expectedTurnId) return;
-    await request(`/api/sessions/${encodeURIComponent(selectedId)}/interrupt`, {
+    await request(`api/sessions/${encodeURIComponent(selectedId)}/interrupt`, {
       method: 'POST',
       body: JSON.stringify({ expectedTurnId }),
     });
   }
 
   async function respondToRequest({ token, decision, answers }) {
-    await request(`/api/sessions/${encodeURIComponent(selectedId)}/requests/${encodeURIComponent(token)}`, {
+    await request(`api/sessions/${encodeURIComponent(selectedId)}/requests/${encodeURIComponent(token)}`, {
       method: 'POST',
       body: JSON.stringify({ response: answers ? { answers } : { decision } }),
     });
@@ -136,7 +174,7 @@ function MinimalHostApp() {
   const detail = useMemo(() => session ? {
     session,
     features: {
-      attachments: false,
+      attachments: attachmentsEnabled ? 'visible' : 'hidden',
       externalLink: false,
       realtime: false,
       sessionStatus: false,
@@ -147,6 +185,9 @@ function MinimalHostApp() {
     },
     actions: {
       onSubmit: submit,
+      onUploadAttachments: attachmentsEnabled ? uploadAttachments : null,
+      onResolveDroppedDirectories: attachmentsEnabled ? resolveDroppedDirectories : null,
+      onOpenAttachment: attachmentsEnabled ? openAttachment : null,
       onInterrupt: session.status === 'running' ? interrupt : null,
       onRespondToRequest: respondToRequest,
       onError: (nextError) => setError(nextError.message),
@@ -198,7 +239,7 @@ function MinimalHostApp() {
 }
 
 async function streamEvents(sessionId, signal, onEvent) {
-  const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/events`, {
+  const response = await fetch(hostUrl(`api/sessions/${encodeURIComponent(sessionId)}/events`), {
     headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
     signal,
   });
@@ -219,3 +260,55 @@ async function streamEvents(sessionId, signal, onEvent) {
 }
 
 createRoot(document.getElementById('root')).render(<MinimalHostApp />);
+
+async function uploadSessionAttachments(sessionId, files, { onProgress } = {}) {
+  const uploaded = [];
+  for (const file of files || []) {
+    const data = await fileAsDataUrl(file, (progress) => onProgress?.(progress * 0.35));
+    const result = await uploadAttachmentRequest(sessionId, {
+      attachment: { name: file.name, type: file.type, size: file.size, data },
+    }, (progress) => onProgress?.(35 + progress * 0.65));
+    if (result.attachment) uploaded.push(result.attachment);
+  }
+  return uploaded;
+}
+
+function fileAsDataUrl(file, onProgress = null) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('progress', (event) => {
+      if (event.lengthComputable) onProgress?.((event.loaded / event.total) * 100);
+    });
+    reader.addEventListener('load', () => {
+      onProgress?.(100);
+      resolve(String(reader.result || ''));
+    }, { once: true });
+    reader.addEventListener('error', () => reject(new Error('附件读取失败')), { once: true });
+    reader.readAsDataURL(file);
+  });
+}
+
+function uploadAttachmentRequest(sessionId, payload, onProgress = null) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', hostUrl(`api/sessions/${encodeURIComponent(sessionId)}/attachments`));
+    request.setRequestHeader('content-type', 'application/json');
+    if (bootstrap.accessToken) request.setRequestHeader('x-agent-workbench-token', bootstrap.accessToken);
+    request.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) onProgress?.((event.loaded / event.total) * 100);
+    });
+    request.addEventListener('load', () => {
+      const body = (() => {
+        try { return JSON.parse(request.responseText || '{}'); } catch { return {}; }
+      })();
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error(body.error?.message || `附件上传失败 (${request.status})`));
+        return;
+      }
+      onProgress?.(100);
+      resolve(body);
+    }, { once: true });
+    request.addEventListener('error', () => reject(new Error('附件上传网络中断')), { once: true });
+    request.send(JSON.stringify(payload));
+  });
+}

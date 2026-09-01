@@ -22,6 +22,14 @@ export {
 } from './providers.js';
 export { isPathContained, resolveContainedPath } from './paths.js';
 export { EnvironmentSessionStore } from './session-store.js';
+export {
+  commitEnvironmentSessionAttachments,
+  createEnvironmentSessionResourceStore,
+  readEnvironmentSessionAttachment,
+  registerEnvironmentSessionDirectories,
+  resolveEnvironmentSessionAttachmentInputs,
+  saveEnvironmentSessionAttachment,
+} from './session-attachments.js';
 export { createMinimalHost } from './minimal-host.js';
 export {
   capabilitySnapshotsReady,
@@ -42,7 +50,7 @@ export {
   readStagedCodexCredential,
 } from './codex-credential.js';
 export { runModelEgressBroker } from './model-egress.js';
-export { createDataAdapterRpcHandler, runDataAdapterServer } from './data-adapter-server.js';
+export { createDataAdapterRpcHandler, createModuleMcpRpcHandler, runDataAdapterServer } from './data-adapter-server.js';
 export { runDockerSupervisor } from './docker-supervisor.js';
 export { runFixedIngressProxy } from './ingress-proxy.js';
 export { runInternalMinimalHost } from './internal-host.js';
@@ -51,6 +59,7 @@ export {
   BIGQUERY_READ_ADAPTER_KIND,
   ENVIRONMENT_BINDINGS_SCHEMA,
   GOOGLE_OAUTH_TARGET,
+  MODULE_MCP_READ_ADAPTER_KIND,
   OPENMETADATA_READ_ADAPTER_KIND,
   OPENMETADATA_READ_TOOLS,
   adapterDirectoryName,

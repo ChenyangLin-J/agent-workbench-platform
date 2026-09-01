@@ -115,6 +115,48 @@ test('Skill snapshot staging requires a valid frontmatter name', async (t) => {
   }), { code: 'CAPABILITY_SNAPSHOT_MANIFEST_INVALID' });
 });
 
+test('Environment snapshots module MCP packages but does not register them as Codex Skills', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-mcp-snapshot-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'solver-read');
+  await mkdir(source, { mode: 0o700 });
+  await writeFile(join(source, 'package.json'), '{"name":"solver-read","type":"module"}\n', { mode: 0o600 });
+  await writeFile(join(source, 'adapter.mjs'), 'export function createMcpHandler() {}\n', { mode: 0o600 });
+  const environment = await createEnvironment({
+    storageRoot: join(root, 'environments'),
+    profile: {
+      id: 'mcp-snapshot',
+      capabilities: {
+        lock: { capabilities: [{ id: 'adapters.solver', kind: 'mcp-server', scope: 'experiment', version: '1' }] },
+        sources: [{ id: 'adapters.solver', path: source }],
+        adapters: [{
+          id: 'adapters.solver', kind: 'module-mcp-read', server: 'solver', entrypoint: 'adapter.mjs',
+          credentialEnvironment: { SOLVER_TOKEN: 'credentials.solver-token' },
+          networkTargets: ['https://solver.example.test/api'], effect: 'experiment.read',
+          allowedTools: ['query_solver_engine'],
+        }],
+      },
+    },
+  });
+  assert.equal(environment.capabilities.snapshots[0].name, 'solver-read');
+  assert.equal(environment.capabilities.snapshots[0].kind, 'mcp-server');
+  const run = await createEnvironmentRun(environment.paths.root);
+  await mkdir(join(run.paths.runtime, 'codex-home'), { recursive: true, mode: 0o700 });
+  const adapterDirectory = Buffer.from('adapters.solver').toString('hex').slice(0, 48);
+  const tokenDirectory = join(run.paths.credentials, 'data-adapters', adapterDirectory);
+  await mkdir(tokenDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(join(tokenDirectory, 'service-token'), `${'x'.repeat(40)}\n`, { mode: 0o600 });
+  run.runtime.dataAdapters = [{
+    server: 'solver', url: 'http://awb-0000000000000000-data-1:4200/mcp',
+    tokenEnvKey: 'AGENT_WORKBENCH_DATA_ADAPTER_1_TOKEN',
+    tokenFile: join(tokenDirectory, 'service-token'), enabledTools: ['query_solver_engine'],
+  }];
+  const prepared = await prepareMinimalRuntimeConfiguration({ manifest: run });
+  const config = await readFile(prepared.configPath, 'utf8');
+  assert.match(config, /\[mcp_servers\."solver"\]/);
+  assert.equal(config.includes('SKILL.md'), false);
+});
+
 test('Minimal Runtime disables Skills outside the immutable snapshot lock', async () => {
   const directory = '0'.repeat(24);
   const allowedPath = `/capabilities/${directory}/SKILL.md`;
@@ -134,7 +176,7 @@ test('Minimal Runtime disables Skills outside the immutable snapshot lock', asyn
   } };
   const manifest = {
     paths: { capabilities: '/capabilities', workspace: '/workspace' },
-    capabilities: { snapshots: [{ name: 'snapshot-skill', directory }] },
+    capabilities: { snapshots: [{ name: 'snapshot-skill', kind: 'skill-source', directory }] },
   };
   const status = await prepareMinimalCapabilitySkills(connection, manifest);
   assert.equal(status.ready, true);

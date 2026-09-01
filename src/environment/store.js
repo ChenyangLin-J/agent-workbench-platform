@@ -126,7 +126,7 @@ export async function createEnvironmentRun(environmentTarget, {
   await assertMissing(runRoot, `Run already exists: ${id}`);
   await mkdir(temporaryRoot, { recursive: false, mode: 0o700 });
   try {
-    for (const name of ['runtime', 'state', 'workspace', 'tmp', 'credentials', 'capabilities']) {
+    for (const name of ['runtime', 'state', 'resources', 'workspace', 'tmp', 'credentials', 'capabilities']) {
       await mkdir(join(temporaryRoot, name), { mode: 0o700 });
     }
     const storedCapabilitySnapshots = environment.capabilities.snapshots || [];
@@ -331,7 +331,7 @@ function isolationManifest(profile, inspection, paths) {
       ]),
       writableRoots: uniqueSorted([
         ...profile.isolation.filesystem.writableRoots,
-        ...['runs', 'runtime', 'state', 'workspace', 'temporary', 'credentials']
+        ...['runs', 'runtime', 'state', 'resources', 'workspace', 'temporary', 'credentials']
           .map((name) => paths[name])
           .filter(Boolean),
       ]),
@@ -348,6 +348,7 @@ function runPaths(root) {
     root,
     runtime: join(root, 'runtime'),
     state: join(root, 'state'),
+    resources: join(root, 'resources'),
     workspace: join(root, 'workspace'),
     temporary: join(root, 'tmp'),
     credentials: join(root, 'credentials'),

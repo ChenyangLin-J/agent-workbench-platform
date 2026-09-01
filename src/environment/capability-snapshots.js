@@ -25,22 +25,22 @@ const MAX_SNAPSHOT_BYTES = 20 * 1024 * 1024;
 export async function stageCapabilitySnapshots({ profile, targetRoot } = {}) {
   if (typeof targetRoot !== 'string' || !targetRoot.trim()) throw new TypeError('capability snapshot targetRoot is required');
   const lockEntries = profile?.capabilities?.lock?.capabilities || [];
-  const skillEntries = lockEntries.filter((entry) => entry.kind === 'skill-source');
+  const sourceEntries = lockEntries.filter((entry) => ['skill-source', 'mcp-server'].includes(entry.kind));
   const sources = new Map((profile?.capabilities?.sources || []).map((source) => [source.id, source]));
-  if (!skillEntries.length) {
+  if (!sourceEntries.length) {
     await mkdir(resolve(targetRoot), { recursive: true, mode: 0o700 });
     return [];
   }
   await mkdir(resolve(targetRoot), { recursive: true, mode: 0o700 });
   const snapshots = [];
-  for (const entry of skillEntries) {
+  for (const entry of sourceEntries) {
     const source = sources.get(entry.id);
     if (!source) throw snapshotError('CAPABILITY_SNAPSHOT_SOURCE_MISSING', `Capability snapshot source is missing: ${entry.id}.`);
     const directory = createHash('sha256').update(entry.id).digest('hex').slice(0, 24);
-    const result = await snapshotDirectory(source.path, join(resolve(targetRoot), directory));
+    const result = await snapshotDirectory(source.path, join(resolve(targetRoot), directory), entry.kind);
     snapshots.push({
       id: entry.id,
-      name: result.skillName,
+      name: result.name,
       kind: entry.kind,
       scope: entry.scope,
       version: entry.version,
@@ -62,9 +62,9 @@ export async function copyCapabilitySnapshots({ sourceRoot, targetRoot, snapshot
     validateSnapshotMetadata(snapshot);
     const source = join(canonicalSourceRoot, snapshot.directory);
     const target = join(resolve(targetRoot), snapshot.directory);
-    const result = await snapshotDirectory(source, target);
+    const result = await snapshotDirectory(source, target, snapshot.kind);
     if (result.sha256 !== snapshot.sha256 || result.files !== snapshot.files || result.bytes !== snapshot.bytes
-      || result.skillName !== snapshot.name) {
+      || result.name !== snapshot.name) {
       throw snapshotError('CAPABILITY_SNAPSHOT_HASH_MISMATCH', `Capability snapshot changed after Environment creation: ${snapshot.id}.`);
     }
   }
@@ -86,9 +86,9 @@ export async function verifyCapabilitySnapshots({ sourceRoot, snapshots = [] } =
     if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) {
       throw snapshotError('CAPABILITY_SNAPSHOT_SOURCE_UNSAFE', 'Capability snapshot must be a directory and not a symlink.');
     }
-    const result = await summarizeDirectory(source);
+    const result = await summarizeDirectory(source, snapshot.kind);
     if (result.sha256 !== snapshot.sha256 || result.files !== snapshot.files || result.bytes !== snapshot.bytes
-      || result.skillName !== snapshot.name) {
+      || result.name !== snapshot.name) {
       throw snapshotError('CAPABILITY_SNAPSHOT_HASH_MISMATCH', `Capability snapshot no longer matches its manifest: ${snapshot.id}.`);
     }
   }
@@ -115,7 +115,8 @@ async function canonicalSnapshotRoot(sourceRoot) {
 }
 
 export function capabilitySnapshotsReady(profile = {}, snapshots = []) {
-  const entries = (profile.capabilities?.lock?.capabilities || []).filter((entry) => entry.kind === 'skill-source');
+  const entries = (profile.capabilities?.lock?.capabilities || [])
+    .filter((entry) => ['skill-source', 'mcp-server'].includes(entry.kind));
   if (!entries.length) return Array.isArray(snapshots) && snapshots.length === 0;
   if (!Array.isArray(snapshots) || snapshots.length !== entries.length) return false;
   const byId = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]));
@@ -125,7 +126,7 @@ export function capabilitySnapshotsReady(profile = {}, snapshots = []) {
     return snapshot?.kind === entry.kind
       && snapshot.scope === entry.scope
       && snapshot.version === entry.version
-      && validSkillName(snapshot.name)
+      && validCapabilityName(snapshot.name)
       && /^[a-f0-9]{24}$/.test(snapshot.directory || '')
       && typeof snapshot.sha256 === 'string'
       && /^[a-f0-9]{64}$/.test(snapshot.sha256)
@@ -136,7 +137,7 @@ export function capabilitySnapshotsReady(profile = {}, snapshots = []) {
   });
 }
 
-async function snapshotDirectory(sourcePath, targetPath) {
+async function snapshotDirectory(sourcePath, targetPath, kind) {
   const sourceInfo = await lstat(sourcePath).catch((error) => {
     throw snapshotError('CAPABILITY_SNAPSHOT_SOURCE_UNAVAILABLE', `Capability snapshot source is unavailable (${error.code || 'error'}).`);
   });
@@ -144,9 +145,7 @@ async function snapshotDirectory(sourcePath, targetPath) {
     throw snapshotError('CAPABILITY_SNAPSHOT_SOURCE_UNSAFE', 'Capability snapshot source must be a directory and not a symlink.');
   }
   const canonicalSource = await realpath(sourcePath);
-  if (!(await stat(join(canonicalSource, 'SKILL.md')).catch(() => null))?.isFile()) {
-    throw snapshotError('CAPABILITY_SNAPSHOT_MANIFEST_MISSING', 'Skill capability snapshot requires SKILL.md.');
-  }
+  await validateSourceManifest(canonicalSource, kind);
   const inventory = await inventoryDirectory(canonicalSource);
   await mkdir(targetPath, { recursive: false, mode: 0o700 });
   for (const item of inventory) {
@@ -159,10 +158,10 @@ async function snapshotDirectory(sourcePath, targetPath) {
     await copyFile(item.path, target);
     await chmod(target, 0o600);
   }
-  return summarizeDirectory(targetPath);
+  return summarizeDirectory(targetPath, kind);
 }
 
-async function summarizeDirectory(root) {
+async function summarizeDirectory(root, kind) {
   const inventory = await inventoryDirectory(root);
   const hash = createHash('sha256');
   let files = 0;
@@ -184,7 +183,7 @@ async function summarizeDirectory(root) {
     files,
     bytes,
     sha256: hash.digest('hex'),
-    skillName: await readSkillName(join(root, 'SKILL.md')),
+    name: await readCapabilityName(root, kind),
   };
 }
 
@@ -230,11 +229,37 @@ function validateSnapshotMetadata(snapshot) {
   if (!snapshot || typeof snapshot !== 'object' || !/^[a-f0-9]{24}$/.test(snapshot.directory || '')
     || !/^[a-f0-9]{64}$/.test(snapshot.sha256 || '')
     || typeof snapshot.id !== 'string' || !snapshot.id
-    || !validSkillName(snapshot.name)
+    || !['skill-source', 'mcp-server'].includes(snapshot.kind)
+    || !validCapabilityName(snapshot.name)
     || !Number.isSafeInteger(snapshot.files) || snapshot.files < 1
     || !Number.isSafeInteger(snapshot.bytes) || snapshot.bytes < 0) {
     throw snapshotError('CAPABILITY_SNAPSHOT_METADATA_INVALID', 'Capability snapshot metadata is invalid.');
   }
+}
+
+async function validateSourceManifest(root, kind) {
+  if (kind === 'skill-source') {
+    if (!(await stat(join(root, 'SKILL.md')).catch(() => null))?.isFile()) {
+      throw snapshotError('CAPABILITY_SNAPSHOT_MANIFEST_MISSING', 'Skill capability snapshot requires SKILL.md.');
+    }
+    await readSkillName(join(root, 'SKILL.md'));
+    return;
+  }
+  if (kind === 'mcp-server') {
+    const path = join(root, 'package.json');
+    if (!(await stat(path).catch(() => null))?.isFile()) {
+      throw snapshotError('CAPABILITY_SNAPSHOT_MANIFEST_MISSING', 'MCP capability snapshot requires package.json.');
+    }
+    await readMcpPackageName(path);
+    return;
+  }
+  throw snapshotError('CAPABILITY_SNAPSHOT_KIND_UNSUPPORTED', `Capability snapshot kind is unsupported: ${kind}.`);
+}
+
+async function readCapabilityName(root, kind) {
+  if (kind === 'skill-source') return readSkillName(join(root, 'SKILL.md'));
+  if (kind === 'mcp-server') return readMcpPackageName(join(root, 'package.json'));
+  throw snapshotError('CAPABILITY_SNAPSHOT_KIND_UNSUPPORTED', `Capability snapshot kind is unsupported: ${kind}.`);
 }
 
 async function readSkillName(path) {
@@ -242,13 +267,27 @@ async function readSkillName(path) {
   const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] || '';
   const value = frontmatter.match(/^name:\s*([^\r\n]+?)\s*$/m)?.[1] || '';
   const name = value.replace(/^(?:"([^"]+)"|'([^']+)')$/, '$1$2').trim();
-  if (!validSkillName(name)) {
+  if (!validCapabilityName(name)) {
     throw snapshotError('CAPABILITY_SNAPSHOT_MANIFEST_INVALID', 'Skill capability snapshot requires a valid frontmatter name.');
   }
   return name;
 }
 
-function validSkillName(value) {
+async function readMcpPackageName(path) {
+  let document;
+  try {
+    document = JSON.parse(await readFile(path, 'utf8'));
+  } catch {
+    throw snapshotError('CAPABILITY_SNAPSHOT_MANIFEST_INVALID', 'MCP capability package.json must be valid JSON.');
+  }
+  const name = typeof document?.name === 'string' ? document.name.trim() : '';
+  if (document?.type !== 'module' || !validCapabilityName(name)) {
+    throw snapshotError('CAPABILITY_SNAPSHOT_MANIFEST_INVALID', 'MCP capability package.json requires a valid name and type=module.');
+  }
+  return name;
+}
+
+function validCapabilityName(value) {
   return typeof value === 'string' && /^[a-z0-9][a-z0-9._:-]{0,127}$/.test(value);
 }
 

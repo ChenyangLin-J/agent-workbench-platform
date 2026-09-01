@@ -72,6 +72,36 @@ test('Session store serializes concurrent binding updates without losing fields'
   });
 });
 
+test('Session store derives the default title from the first user input and retains attachment metadata', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot });
+  const session = await store.create();
+  await store.recordUserInput(session.sessionId, '近 7 天 iOS 纯新用户趋势', {
+    attachments: [{
+      id: 'attachment-1',
+      name: '口径说明.md',
+      mimeType: 'text/markdown',
+      size: 18,
+    }],
+  });
+  const view = await store.get(session.sessionId);
+  assert.equal(view.title, '近 7 天 iOS 纯新用户趋势');
+  assert.deepEqual(view.messages[0].attachments, [{
+    id: 'attachment-1',
+    name: '口径说明.md',
+    mimeType: 'text/markdown',
+    size: 18,
+    kind: 'file',
+    inputType: 'mention',
+    status: 'ready',
+  }]);
+
+  const named = await store.create({ title: '保留自定义标题' });
+  await store.recordUserInput(named.sessionId, '不应覆盖标题');
+  assert.equal((await store.get(named.sessionId)).title, '保留自定义标题');
+});
+
 test('Session store serializes public reads with active mutations', async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-'));
   t.after(() => rm(stateRoot, { recursive: true, force: true }));

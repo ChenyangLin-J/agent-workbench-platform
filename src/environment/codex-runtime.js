@@ -115,13 +115,13 @@ export function createMinimalCodexRuntime({
 }
 
 function capabilitySkillPreparation(manifest) {
-  const snapshots = manifest.capabilities?.snapshots || [];
+  const snapshots = (manifest.capabilities?.snapshots || []).filter((snapshot) => snapshot.kind === 'skill-source');
   if (!snapshots.length) return null;
   return (connection) => prepareMinimalCapabilitySkills(connection, manifest);
 }
 
 export async function prepareMinimalCapabilitySkills(connection, manifest) {
-  const snapshots = manifest.capabilities?.snapshots || [];
+  const snapshots = (manifest.capabilities?.snapshots || []).filter((snapshot) => snapshot.kind === 'skill-source');
   if (!snapshots.length) return { ready: true, roots: [], skills: [], expected: [], missing: [] };
   const expectedSkills = snapshots.map((snapshot) => snapshot.name);
   const allowedPaths = new Set(snapshots.map((snapshot) => join(

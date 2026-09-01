@@ -11,6 +11,7 @@ export async function prepareMinimalRuntimeConfiguration({
   const broker = manifest?.runtime?.modelBroker;
   const dataAdapters = manifest?.runtime?.dataAdapters || [];
   const capabilitySnapshots = manifest?.capabilities?.snapshots || [];
+  const skillSnapshots = capabilitySnapshots.filter((snapshot) => snapshot.kind === 'skill-source');
   validateCapabilitySnapshots(
     capabilitySnapshots,
     manifest?.capabilities?.lock?.capabilities || [],
@@ -75,7 +76,7 @@ export async function prepareMinimalRuntimeConfiguration({
       `exclude = [${secretEnvironmentKeys.map(tomlString).join(', ')}]`,
       '',
     ] : []),
-    ...capabilitySnapshots.flatMap((snapshot) => [
+    ...skillSnapshots.flatMap((snapshot) => [
       '[[skills.config]]',
       `path = ${tomlString(join(manifest.paths.capabilities, snapshot.directory, 'SKILL.md'))}`,
       'enabled = true',
@@ -147,13 +148,15 @@ function validateCapabilitySnapshots(snapshots, lockEntries, capabilityRoot) {
     throw runtimeConfigError('CAPABILITY_SNAPSHOT_ROOT_REQUIRED', 'Capability snapshot root is required.');
   }
   const seen = new Set();
-  const locked = new Map(lockEntries.filter((entry) => entry.kind === 'skill-source').map((entry) => [entry.id, entry]));
+  const locked = new Map(lockEntries
+    .filter((entry) => ['skill-source', 'mcp-server'].includes(entry.kind))
+    .map((entry) => [entry.id, entry]));
   if (snapshots.length !== locked.size) {
     throw runtimeConfigError('CAPABILITY_SNAPSHOTS_INVALID', 'Capability snapshots do not match the capability lock.');
   }
   for (const snapshot of snapshots) {
     const entry = locked.get(snapshot?.id);
-    if (!snapshot || snapshot.kind !== 'skill-source'
+    if (!snapshot || !['skill-source', 'mcp-server'].includes(snapshot.kind)
       || typeof snapshot.id !== 'string' || !snapshot.id
       || !/^[a-z0-9][a-z0-9._:-]{0,127}$/.test(snapshot.name || '')
       || !/^[a-f0-9]{24}$/.test(snapshot.directory || '')

@@ -1096,6 +1096,16 @@ export function SessionWorkspace({
         try {
           const result = await actions.onResolveDroppedDirectories({ directories });
           const references = Array.isArray(result) ? result : result?.references;
+          const resources = Array.isArray(result?.resources) ? result.resources : [];
+          const availableResourceSlots = Math.max(0, uploadPolicy.maxCount - attachments.length);
+          const acceptedResources = resources.slice(0, availableResourceSlots).map((resource, index) => ({
+            ...normalizeSessionAttachment(resource, `directory-${index}`),
+            status: 'ready',
+            progress: 100,
+          }));
+          if (acceptedResources.length) {
+            setAttachments((current) => [...current, ...acceptedResources].slice(0, uploadPolicy.maxCount));
+          }
           const currentDraft = composerRef.current?.value || draft;
           const nextDraft = appendComposerReferences(currentDraft, references, {
             textLimit: SESSION_COMPOSER_TEXT_LIMIT,
@@ -1106,7 +1116,10 @@ export function SessionWorkspace({
           }
           const warning = String(result?.warning || '').trim();
           if (warning) errors.push(warning);
-          else if (nextDraft === currentDraft) {
+          if (acceptedResources.length < resources.length) {
+            errors.push(`每轮最多添加 ${uploadPolicy.maxCount} 个资源。`);
+          }
+          else if (nextDraft === currentDraft && !acceptedResources.length) {
             errors.push(labels.directoryDropEmpty || '宿主没有返回可用的文件夹引用。');
           }
         } catch (error) {
@@ -1401,7 +1414,7 @@ export function SessionWorkspace({
               <div className="cwu-attachments" aria-live="polite">
                 {attachments.map((attachment) => (
                   <article className={`cwu-attachment is-${attachment.status || 'ready'}`} key={attachment.id}>
-                    <i aria-hidden="true">{attachment.kind === 'image' ? '▧' : attachment.kind === 'audio' ? '♪' : '▤'}</i>
+                    <i aria-hidden="true">{attachment.kind === 'image' ? '▧' : attachment.kind === 'audio' ? '♪' : attachment.kind === 'directory' ? '▱' : '▤'}</i>
                     <div>
                       <strong title={attachment.name}>{attachment.name}</strong>
                       <small>
@@ -1409,7 +1422,9 @@ export function SessionWorkspace({
                           ? `上传中 ${Math.round(attachment.progress || 0)}%`
                           : attachment.status === 'error'
                             ? (attachment.error || '上传失败')
-                            : `${formatAttachmentSize(attachment.size)} · 已就绪`}
+                            : attachment.kind === 'directory'
+                              ? '文件夹 · 已就绪'
+                              : `${formatAttachmentSize(attachment.size)} · 已就绪`}
                       </small>
                       {attachment.status === 'uploading' ? (
                         <span className="cwu-attachment-progress"><i style={{ width: `${attachment.progress || 0}%` }} /></span>
@@ -2186,13 +2201,13 @@ function Message({
           {visibleAttachments.map((attachment) => (
             <button
               className="cwu-message-attachment"
-              disabled={!onOpenAttachment}
+              disabled={!attachmentOpenable(attachment, onOpenAttachment)}
               key={attachment.id}
               onClick={() => onOpenAttachment?.(attachment, message)}
-              title={onOpenAttachment ? `打开 ${attachment.name}` : attachment.name}
+              title={attachmentOpenable(attachment, onOpenAttachment) ? `打开 ${attachment.name}` : attachment.name}
               type="button"
             >
-              <i aria-hidden="true">{attachment.kind === 'image' ? '▧' : attachment.kind === 'audio' ? '♪' : '▤'}</i>
+              <i aria-hidden="true">{attachment.kind === 'image' ? '▧' : attachment.kind === 'audio' ? '♪' : attachment.kind === 'directory' ? '▱' : '▤'}</i>
               <span>{attachment.name}</span>
             </button>
           ))}
@@ -2350,6 +2365,13 @@ function formatAttachmentSize(value) {
   if (size < 1024) return `${Math.round(size)} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KB`;
   return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+function attachmentOpenable(attachment, onOpenAttachment) {
+  if (typeof onOpenAttachment !== 'function') return false;
+  const resource = attachment?.resource;
+  if (resource?.mode !== 'external') return true;
+  return resource.capabilities?.preview === true || resource.capabilities?.download === true;
 }
 
 function sandboxedHtmlSource(content) {

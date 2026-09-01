@@ -13,6 +13,7 @@ import {
   BIGQUERY_API_TARGET,
   BIGQUERY_READ_ADAPTER_KIND,
   GOOGLE_OAUTH_TARGET,
+  MODULE_MCP_READ_ADAPTER_KIND,
   OPENMETADATA_READ_ADAPTER_KIND,
   adapterDirectoryName,
   dataAdapterRequest,
@@ -47,8 +48,10 @@ export async function runDockerSupervisor(runTarget, {
   const manifest = await readEnvironmentManifest(runTarget);
   if (manifest.kind !== 'run') throw new TypeError('Docker supervisor requires a Run target');
   manifest.paths.capabilities ||= join(manifest.paths.root, 'capabilities');
+  manifest.paths.resources ||= join(manifest.paths.root, 'resources');
   manifest.capabilities.snapshots ||= [];
   await mkdir(manifest.paths.capabilities, { recursive: true, mode: 0o700 });
+  await mkdir(manifest.paths.resources, { recursive: true, mode: 0o700 });
   const profile = await readStoredEnvironmentProfile(manifest.paths.root);
   const adapterRequest = dataAdapterRequest(profile);
   const stagedBrokerCredentialPath = join(manifest.paths.credentials, 'broker', 'model.json');
@@ -142,6 +145,12 @@ export async function runDockerSupervisor(runTarget, {
   const dataAdapters = adapterRequest.adapters.map((adapter, index) => {
     const directory = adapterDirectoryName(adapter.id);
     const number = index + 1;
+    const capabilitySnapshot = adapter.kind === MODULE_MCP_READ_ADAPTER_KIND
+      ? manifest.capabilities.snapshots.find((snapshot) => snapshot.id === adapter.id && snapshot.kind === 'mcp-server')
+      : null;
+    if (adapter.kind === MODULE_MCP_READ_ADAPTER_KIND && !capabilitySnapshot) {
+      throw supervisorError('MODULE_MCP_SNAPSHOT_MISSING', `Module MCP snapshot is unavailable: ${adapter.id}.`);
+    }
     return {
       adapter,
       directory,
@@ -149,9 +158,12 @@ export async function runDockerSupervisor(runTarget, {
       url: `http://awb-${suffix}-data-${number}:${DATA_ADAPTER_PORT}/mcp`,
       tokenEnvKey: `AGENT_WORKBENCH_DATA_ADAPTER_${number}_TOKEN`,
       tokenFile: `/run/credentials/data-adapters/${directory}/service-token`,
-      enabledTools: adapter.kind === OPENMETADATA_READ_ADAPTER_KIND
-        ? [...adapter.allowedTools]
-        : ['dry_run_query', 'run_query'],
+      enabledTools: adapter.kind === BIGQUERY_READ_ADAPTER_KIND
+        ? ['dry_run_query', 'run_query']
+        : [...adapter.allowedTools],
+      capabilityRoot: capabilitySnapshot
+        ? join(manifest.paths.capabilities, capabilitySnapshot.directory)
+        : null,
       credentialRoot: join(stagedAdapterCredentialRoot, directory),
       workloadTokenRoot: join(workloadSecretRoot, 'data-adapters', directory),
       configPath: join(manifest.paths.state, 'data-adapter-config', `${directory}.json`),
@@ -163,11 +175,11 @@ export async function runDockerSupervisor(runTarget, {
   });
   const hostHttpsProxy = modelBroker || dataAdapters.length ? configuredHostHttpsProxy(process.env) : null;
   const workloadProfile = containerProfile(profile);
-  await Promise.all([
-    rm(readyPath, { force: true }),
-    rm(brokerReadyPath, { force: true }),
-    ...dataAdapters.map((entry) => rm(entry.readyPath, { force: true })),
-  ]);
+  await clearDockerSupervisorGeneratedState({
+    readyPath,
+    brokerReadyPath,
+    dataAdapters,
+  });
   await Promise.all([
     mkdir(configRoot, { recursive: true, mode: 0o700 }),
     mkdir(join(manifest.paths.state, 'data-adapter-config'), { recursive: true, mode: 0o700 }),
@@ -355,12 +367,28 @@ export async function runDockerSupervisor(runTarget, {
   }
 }
 
+export async function clearDockerSupervisorGeneratedState({
+  readyPath,
+  brokerReadyPath,
+  dataAdapters = [],
+} = {}) {
+  await Promise.all([
+    readyPath ? rm(readyPath, { force: true }) : null,
+    brokerReadyPath ? rm(brokerReadyPath, { force: true }) : null,
+    ...dataAdapters.flatMap((entry) => [
+      entry?.configPath ? rm(entry.configPath, { force: true }) : null,
+      entry?.readyPath ? rm(entry.readyPath, { force: true }) : null,
+    ]),
+  ]);
+}
+
 function containerRunManifest(manifest, profile, inspection, { modelBroker = null, dataAdapters = [] } = {}) {
   const root = '/run/workbench';
   const paths = {
     root,
     runtime: `${root}/runtime`,
     state: `${root}/state`,
+    resources: `${root}/resources`,
     workspace: `${root}/workspace`,
     temporary: `${root}/tmp`,
     credentials: '/run/credentials',
@@ -393,7 +421,14 @@ function containerRunManifest(manifest, profile, inspection, { modelBroker = nul
           paths.capabilities,
           '/run/credentials',
         ])],
-        writableRoots: [...new Set([...profile.isolation.filesystem.writableRoots, paths.runtime, paths.state, paths.workspace, paths.temporary])],
+        writableRoots: [...new Set([
+          ...profile.isolation.filesystem.writableRoots,
+          paths.runtime,
+          paths.state,
+          paths.resources,
+          paths.workspace,
+          paths.temporary,
+        ])],
       },
     },
     process: { pid: null, port: null, providerState: {} },
@@ -418,6 +453,7 @@ function dockerRunArguments({ manifest, profile, image, containerName, networkNa
     '--tmpfs', '/run/workbench/tmp:rw,nosuid,size=512m',
     '--mount', mount(manifest.paths.runtime, '/run/workbench/runtime', false),
     '--mount', mount(manifest.paths.state, '/run/workbench/state', false),
+    '--mount', mount(manifest.paths.resources, '/run/workbench/resources', false),
     '--mount', mount(manifest.paths.workspace, '/run/workbench/workspace', false),
     '--mount', mount(manifest.paths.capabilities, '/run/workbench/capabilities', true),
     '--mount', mount(workloadSecretRoot, '/run/credentials', true),
@@ -513,6 +549,7 @@ function dockerDataAdapterArguments({ image, entry, runId, proxyUrl = null }) {
     '--mount', mount(entry.configPath, '/run/config/adapter.json', true),
     '--mount', mount(entry.stateRoot, '/run/adapter-state', false),
   ];
+  if (entry.capabilityRoot) args.push('--mount', mount(entry.capabilityRoot, '/run/capability', true));
   if (proxyUrl) {
     args.push(
       '--add-host', 'host.docker.internal:host-gateway',
@@ -530,6 +567,7 @@ function dockerDataAdapterArguments({ image, entry, runId, proxyUrl = null }) {
     '--run-id', runId,
     '--port', String(DATA_ADAPTER_PORT),
   );
+  if (entry.capabilityRoot) args.push('--capability-root', '/run/capability');
   return args;
 }
 
@@ -539,6 +577,9 @@ function adapterProxyTargets(adapter) {
   }
   if (adapter.kind === BIGQUERY_READ_ADAPTER_KIND) {
     return [BIGQUERY_API_TARGET, GOOGLE_OAUTH_TARGET].map(httpsProxyTarget);
+  }
+  if (adapter.kind === MODULE_MCP_READ_ADAPTER_KIND) {
+    return adapter.networkTargets.map(httpsProxyTarget);
   }
   throw supervisorError('DATA_ADAPTER_KIND_UNSUPPORTED', `Unsupported data adapter kind: ${adapter.kind}.`);
 }

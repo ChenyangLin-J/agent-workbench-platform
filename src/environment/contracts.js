@@ -195,13 +195,15 @@ function normalizeCapabilityLock(lock = {}) {
 function normalizeCapabilitySources(value, lock, baseDirectory) {
   if (value == null) return [];
   if (!Array.isArray(value)) throw new TypeError('environment capability sources must be an array');
-  const locked = new Set(lock.capabilities.filter((entry) => entry.kind === 'skill-source').map((entry) => entry.id));
+  const locked = new Set(lock.capabilities
+    .filter((entry) => ['skill-source', 'mcp-server'].includes(entry.kind))
+    .map((entry) => entry.id));
   const seen = new Set();
   return value.map((candidate) => {
     if (!plainObject(candidate)) throw new TypeError('environment capability source must be an object');
     rejectUnknownKeys(candidate, new Set(['id', 'path']), 'environment capability source');
     const id = nonEmptyString(candidate.id, 'environment capability source id');
-    if (!locked.has(id)) throw new TypeError(`capability source is not present in the lock as skill-source: ${id}`);
+    if (!locked.has(id)) throw new TypeError(`capability source is not present in the lock as skill-source or mcp-server: ${id}`);
     if (seen.has(id)) throw new TypeError(`duplicate capability source id: ${id}`);
     seen.add(id);
     const path = nonEmptyString(candidate.path, `capability source ${id} path`);

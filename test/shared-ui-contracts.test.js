@@ -72,6 +72,29 @@ test('attachment contract normalizes UI metadata without taking over product sto
     id: 'upload-1', name: 'report.md', mimeType: 'application/octet-stream', size: 0,
     kind: 'file', inputType: 'mention', status: 'error', progress: 100, error: '网络中断',
   });
+  const directory = normalizeSessionAttachment({
+    id: 'res_directory-0001',
+    name: 'Spoofed name',
+    mimeType: 'application/octet-stream',
+    size: 99,
+    resource: {
+      schema: 'agent-workbench.resource/v1',
+      id: 'res_directory-0001',
+      kind: 'workspace-directory',
+      mode: 'external',
+      owner: { sessionId: 'session-a' },
+      display: { name: 'Project', mimeType: 'inode/directory', size: 0 },
+      origin: { type: 'workspace', createdAt: '2026-09-01T00:00:00.000Z' },
+      lifecycle: { class: 'workspace', state: 'ready', updatedAt: '2026-09-01T00:00:00.000Z' },
+      capabilities: { preview: false, download: false, openInWorkspace: true },
+    },
+  });
+  assert.equal(directory.name, 'Project');
+  assert.equal(directory.mimeType, 'inode/directory');
+  assert.equal(directory.size, 0);
+  assert.equal(directory.kind, 'directory');
+  assert.equal(directory.inputType, 'mention');
+  assert.equal(directory.resource.kind, 'workspace-directory');
 });
 
 test('attachment envelopes preserve Agent input while projecting transcript attachment cards', () => {

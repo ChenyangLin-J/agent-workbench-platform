@@ -297,7 +297,7 @@ export function dockerProfileFacts(profile = {}, {
   if (!environment) reasons.push(`Container environment keys require a secret-safe broker: ${unsafeEnvironmentKeys.join(', ')}.`);
   const lockEntries = profile.capabilities?.lock?.capabilities || [];
   const emptyCapabilityLock = lockEntries.length === 0;
-  const supportedCapabilityKinds = lockEntries.every((entry) => ['skill-source', 'read-only-adapter'].includes(entry.kind));
+  const supportedCapabilityKinds = lockEntries.every((entry) => ['skill-source', 'read-only-adapter', 'mcp-server'].includes(entry.kind));
   const capabilities = supportedCapabilityKinds && capabilitySnapshotsReady(profile, capabilitySnapshots);
   if (!capabilities) reasons.push('Container capability snapshots are not staged yet.');
   const brokerRequest = codexModelBrokerRequest(profile);
@@ -322,12 +322,15 @@ export function dockerProfileFacts(profile = {}, {
     && exactStringSet(profile.isolation?.externalEffects?.write, []);
   if (!externalEffects) reasons.push('Declared external effects require an enforcing capability adapter.');
   const hasSkill = lockEntries.some((entry) => entry.kind === 'skill-source');
+  const hasModuleMcp = lockEntries.some((entry) => entry.kind === 'mcp-server');
   return {
     environment,
     capabilities,
     capabilityMode: emptyCapabilityLock ? 'empty-capability-lock'
-      : adapterRequest.requested && hasSkill ? 'immutable-skill-snapshots-and-read-only-adapters'
-        : adapterRequest.requested ? 'locked-read-only-adapters' : 'immutable-skill-snapshots',
+      : hasSkill && hasModuleMcp ? 'immutable-skill-and-mcp-snapshots'
+        : hasModuleMcp ? 'immutable-read-only-mcp-snapshots'
+          : adapterRequest.requested && hasSkill ? 'immutable-skill-snapshots-and-read-only-adapters'
+            : adapterRequest.requested ? 'locked-read-only-adapters' : 'immutable-skill-snapshots',
     credentials,
     network,
     externalEffects,

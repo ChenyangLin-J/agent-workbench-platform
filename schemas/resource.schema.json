@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-workbench.local/schemas/resource.schema.json",
+  "title": "Agent Workbench Resource Descriptor",
+  "type": "object",
+  "required": ["schema", "id", "kind", "mode", "owner", "display", "origin", "lifecycle", "capabilities"],
+  "properties": {
+    "schema": { "const": "agent-workbench.resource/v1" },
+    "id": { "type": "string", "pattern": "^res_[A-Za-z0-9][A-Za-z0-9_-]{7,199}$" },
+    "kind": {
+      "enum": [
+        "workspace-file",
+        "workspace-directory",
+        "session-input",
+        "session-artifact",
+        "visualization",
+        "transient-output",
+        "diagnostic-evidence"
+      ]
+    },
+    "mode": { "enum": ["managed", "external"] },
+    "owner": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "sessionId": { "$ref": "#/$defs/identity" },
+        "turnId": { "$ref": "#/$defs/identity" },
+        "runId": { "$ref": "#/$defs/identity" },
+        "workspaceId": { "$ref": "#/$defs/identity" }
+      },
+      "additionalProperties": false
+    },
+    "display": {
+      "type": "object",
+      "required": ["name", "mimeType", "size"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "mimeType": { "type": "string", "pattern": "^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$" },
+        "size": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "integrity": {
+      "type": "object",
+      "required": ["algorithm", "digest"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "origin": {
+      "type": "object",
+      "required": ["type", "createdAt"],
+      "properties": {
+        "type": { "enum": ["upload", "paste", "tool", "browser", "workspace", "generated", "migration"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "lifecycle": {
+      "type": "object",
+      "required": ["class", "state"],
+      "properties": {
+        "class": { "enum": ["session-durable", "draft", "transient", "diagnostic", "workspace", "cache"] },
+        "state": { "enum": ["staged", "ready", "promotable", "promoted", "orphaned", "quarantined", "purged"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["preview", "download", "openInWorkspace"],
+      "properties": {
+        "preview": { "type": "boolean" },
+        "download": { "type": "boolean" },
+        "openInWorkspace": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "enum": ["session-input", "session-artifact", "visualization"] } } },
+      "then": { "properties": { "owner": { "required": ["sessionId"] } } }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+    }
+  }
+}

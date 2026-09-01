@@ -13,7 +13,38 @@ import {
   inspectIsolationProvider,
   normalizeEnvironmentProfile,
 } from '../src/environment/index.js';
-import { httpsProxyTarget } from '../src/environment/docker-supervisor.js';
+import {
+  clearDockerSupervisorGeneratedState,
+  httpsProxyTarget,
+} from '../src/environment/docker-supervisor.js';
+
+test('Docker supervisor clears generated launch evidence without deleting retained Run state', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-docker-resume-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const readyPath = join(root, 'container-ready.json');
+  const brokerReadyPath = join(root, 'model-ready.json');
+  const configPath = join(root, 'adapter.json');
+  const adapterReadyPath = join(root, 'adapter-ready.json');
+  const sessionsPath = join(root, 'sessions.json');
+  await Promise.all([
+    writeFile(readyPath, '{}'),
+    writeFile(brokerReadyPath, '{}'),
+    writeFile(configPath, '{}'),
+    writeFile(adapterReadyPath, '{}'),
+    writeFile(sessionsPath, '{"retained":true}'),
+  ]);
+
+  await clearDockerSupervisorGeneratedState({
+    readyPath,
+    brokerReadyPath,
+    dataAdapters: [{ configPath, readyPath: adapterReadyPath }],
+  });
+
+  for (const generatedPath of [readyPath, brokerReadyPath, configPath, adapterReadyPath]) {
+    await assert.rejects(() => stat(generatedPath), { code: 'ENOENT' });
+  }
+  assert.equal((await stat(sessionsPath)).isFile(), true);
+});
 
 test('Docker provider proves ephemeral isolation only for enforceable offline Profiles', async () => {
   const profile = normalizeEnvironmentProfile({
@@ -154,6 +185,40 @@ test('Docker provider accepts an exact immutable Skill snapshot set', () => {
   assert.equal(facts.capabilityMode, 'immutable-skill-snapshots');
   assert.equal(facts.ready, true);
   assert.equal(dockerProfileFacts(profile, { capabilitySnapshots: [] }).ready, false);
+});
+
+test('Docker provider accepts an immutable module MCP snapshot with exact read-only declarations', () => {
+  const profile = normalizeEnvironmentProfile({
+    id: 'module-mcp-container',
+    capabilities: {
+      lock: { capabilities: [
+        { id: 'adapters.solver', kind: 'mcp-server', scope: 'experiment', version: '1' },
+      ] },
+      sources: [{ id: 'adapters.solver', path: '/controller/solver-read' }],
+      adapters: [{
+        id: 'adapters.solver', kind: 'module-mcp-read', server: 'solver', entrypoint: 'adapter.mjs',
+        credentialEnvironment: { SOLVER_TOKEN: 'credentials.solver-token' },
+        networkTargets: ['https://solver.example.test/api'], effect: 'experiment.read',
+        allowedTools: ['query_solver_engine'],
+      }],
+    },
+    isolation: {
+      provider: 'docker', minimumLevel: 'ephemeral-machine',
+      credentialReferences: ['credentials.solver-token'],
+      networkTargets: ['https://solver.example.test/api'],
+      externalEffects: { read: ['experiment.read'], write: [] },
+    },
+  });
+  const facts = dockerProfileFacts(profile, {
+    dataAdapterBrokerReady: true,
+    capabilitySnapshots: [{
+      id: 'adapters.solver', name: 'solver-read', kind: 'mcp-server', scope: 'experiment', version: '1',
+      directory: '0'.repeat(24), sha256: 'a'.repeat(64), files: 2, bytes: 100,
+    }],
+  });
+  assert.equal(facts.ready, true);
+  assert.equal(facts.capabilityMode, 'immutable-read-only-mcp-snapshots');
+  assert.equal(facts.dataAdapters, true);
 });
 
 test('Docker provider accepts only exact read-only adapter isolation declarations', async () => {

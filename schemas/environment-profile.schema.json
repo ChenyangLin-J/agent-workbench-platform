@@ -53,7 +53,8 @@
           "items": {
             "oneOf": [
               { "$ref": "#/$defs/openMetadataReadAdapter" },
-              { "$ref": "#/$defs/bigQueryReadAdapter" }
+              { "$ref": "#/$defs/bigQueryReadAdapter" },
+              { "$ref": "#/$defs/moduleMcpReadAdapter" }
             ]
           }
         }
@@ -171,6 +172,36 @@
         "allowedProjects": { "$ref": "#/$defs/stringList" },
         "maximumBytesBilled": { "type": "integer", "minimum": 1 },
         "maximumRows": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "moduleMcpReadAdapter": {
+      "type": "object",
+      "required": ["id", "kind", "server", "entrypoint", "credentialEnvironment", "networkTargets", "effect", "allowedTools"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "module-mcp-read" },
+        "server": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,62}$" },
+        "entrypoint": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?/)[^\\\\]+\\.(?:mjs|js)$" },
+        "credentialEnvironment": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]{1,126}$" },
+          "additionalProperties": { "type": "string", "pattern": "^credentials\\.[a-z0-9][a-z0-9.-]{0,126}$" }
+        },
+        "networkTargets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "format": "uri", "pattern": "^https://" }
+        },
+        "effect": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{1,126}\\.read$" },
+        "allowedTools": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,62}$" }
+        }
       },
       "additionalProperties": false
     }

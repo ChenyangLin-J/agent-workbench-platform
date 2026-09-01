@@ -1,13 +1,15 @@
 import { createSign, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   BIGQUERY_API_TARGET,
   BIGQUERY_READ_ADAPTER_KIND,
   GOOGLE_OAUTH_TARGET,
+  MODULE_MCP_READ_ADAPTER_KIND,
   OPENMETADATA_READ_ADAPTER_KIND,
   normalizeDataAdapters,
   readStagedDataAdapterCredential,
@@ -25,14 +27,18 @@ export async function runDataAdapterServer({
   host = '0.0.0.0',
   port = 4200,
   fetchImpl = proxyAwareFetch,
+  capabilityRoot = null,
 } = {}) {
+  const lockKind = adapter?.kind === MODULE_MCP_READ_ADAPTER_KIND ? 'mcp-server' : 'read-only-adapter';
   adapter = normalizeDataAdapters([adapter], {
-    capabilities: [{ id: adapter?.id, kind: 'read-only-adapter' }],
+    capabilities: [{ id: adapter?.id, kind: lockKind }],
   })[0];
   const credential = await readStagedDataAdapterCredential(credentialPath, adapter);
   const serviceToken = (await readFile(serviceTokenPath, 'utf8')).trim();
   if (serviceToken.length < 32) throw serverError('DATA_ADAPTER_SERVICE_TOKEN_INVALID', 'Data adapter service token is invalid.');
-  const rpc = createDataAdapterRpcHandler({ adapter, credential, fetchImpl });
+  const rpc = adapter.kind === MODULE_MCP_READ_ADAPTER_KIND
+    ? await createModuleMcpRpcHandler({ adapter, credential, capabilityRoot, fetchImpl })
+    : createDataAdapterRpcHandler({ adapter, credential, fetchImpl });
   const server = createServer(async (request, response) => {
     try {
       if (request.method !== 'POST' || request.url !== '/mcp') return send(response, 404, errorResponse(null, -32601, 'Not found'));
@@ -78,6 +84,99 @@ export function createDataAdapterRpcHandler({ adapter, credential, fetchImpl = p
     return createBigQueryRpcHandler({ adapter, credential, fetchImpl, now });
   }
   throw serverError('DATA_ADAPTER_KIND_UNSUPPORTED', `Unsupported data adapter kind: ${adapter.kind}.`);
+}
+
+export async function createModuleMcpRpcHandler({ adapter, credential, capabilityRoot, fetchImpl = proxyAwareFetch } = {}) {
+  if (adapter?.kind !== MODULE_MCP_READ_ADAPTER_KIND) {
+    throw serverError('MODULE_MCP_ADAPTER_INVALID', 'Module MCP adapter configuration is invalid.');
+  }
+  const root = resolve(nonEmptyString(capabilityRoot, 'module MCP capability root'));
+  const [rootInfo, canonicalRoot] = await Promise.all([lstat(root), realpath(root)]);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    throw serverError('MODULE_MCP_ROOT_UNSAFE', 'Module MCP capability root must be a directory and not a symlink.');
+  }
+  const requestedEntrypoint = resolve(canonicalRoot, adapter.entrypoint);
+  const entrypointRelative = relative(canonicalRoot, requestedEntrypoint);
+  if (!entrypointRelative || entrypointRelative.startsWith(`..${sep}`) || entrypointRelative === '..') {
+    throw serverError('MODULE_MCP_ENTRYPOINT_UNSAFE', 'Module MCP entrypoint is outside its immutable capability snapshot.');
+  }
+  const [entrypointInfo, canonicalEntrypoint] = await Promise.all([
+    lstat(requestedEntrypoint),
+    realpath(requestedEntrypoint),
+  ]);
+  if (!entrypointInfo.isFile() || entrypointInfo.isSymbolicLink()
+    || relative(canonicalRoot, canonicalEntrypoint).startsWith(`..${sep}`)) {
+    throw serverError('MODULE_MCP_ENTRYPOINT_UNSAFE', 'Module MCP entrypoint must be a regular snapshot file.');
+  }
+  const module = await import(pathToFileURL(canonicalEntrypoint).href);
+  if (typeof module.createMcpHandler !== 'function') {
+    throw serverError('MODULE_MCP_EXPORT_INVALID', 'Module MCP entrypoint must export createMcpHandler().');
+  }
+  const handler = await module.createMcpHandler({
+    environment: Object.freeze({ ...credential.environment }),
+    fetchImpl: restrictedModuleFetch(fetchImpl, adapter.networkTargets),
+  });
+  if (typeof handler !== 'function') {
+    throw serverError('MODULE_MCP_HANDLER_INVALID', 'Module MCP createMcpHandler() must return a request handler.');
+  }
+  const allowed = new Set(adapter.allowedTools);
+  const listed = await handler({ jsonrpc: '2.0', id: 'agent-workbench-startup', method: 'tools/list' });
+  const toolNames = Array.isArray(listed?.result?.tools)
+    ? listed.result.tools.map((tool) => tool?.name).filter((name) => typeof name === 'string')
+    : [];
+  if (toolNames.length !== allowed.size || toolNames.some((name) => !allowed.has(name))
+    || [...allowed].some((name) => !toolNames.includes(name))) {
+    throw serverError('MODULE_MCP_TOOLSET_MISMATCH', 'Module MCP tool catalog does not match the Environment allowlist.');
+  }
+  return async (request) => {
+    const validation = validateJsonRpc(request);
+    if (validation.notification) return null;
+    if (request.method === 'initialize') return successResponse(request.id, {
+      protocolVersion: request.params?.protocolVersion || '2025-06-18',
+      capabilities: { tools: { listChanged: false } },
+      serverInfo: { name: adapter.server, version: '1' },
+    });
+    if (request.method === 'ping') return successResponse(request.id, {});
+    if (request.method === 'tools/list') {
+      const response = await handler(request);
+      if (Array.isArray(response?.result?.tools)) {
+        response.result.tools = response.result.tools.filter((tool) => allowed.has(tool?.name));
+      }
+      return response;
+    }
+    if (request.method !== 'tools/call') {
+      return errorResponse(request.id, -32601, 'Method is outside the read-only adapter contract.');
+    }
+    const name = request.params?.name;
+    if (typeof name !== 'string' || !allowed.has(name)) {
+      return errorResponse(request.id, -32602, 'Tool is outside the read-only allowlist.');
+    }
+    try {
+      return await handler(request);
+    } catch (error) {
+      return errorResponse(request.id, -32002, safeServerMessage(error));
+    }
+  };
+}
+
+function restrictedModuleFetch(fetchImpl, targets) {
+  const allowed = targets.map((target) => new URL(target));
+  return (value, options) => {
+    let requested;
+    try {
+      requested = new URL(value);
+    } catch {
+      throw serverError('MODULE_MCP_NETWORK_REJECTED', 'Module MCP requested an invalid network target.');
+    }
+    const accepted = allowed.some((target) => requested.protocol === 'https:'
+      && requested.origin === target.origin
+      && (target.pathname === '/' || requested.pathname === target.pathname
+        || requested.pathname.startsWith(`${target.pathname.replace(/\/$/, '')}/`)));
+    if (!accepted || requested.username || requested.password) {
+      throw serverError('MODULE_MCP_NETWORK_REJECTED', 'Module MCP requested a target outside its network allowlist.');
+    }
+    return fetchImpl(requested.toString(), options);
+  };
 }
 
 function createOpenMetadataRpcHandler({ adapter, credential, fetchImpl }) {
@@ -385,8 +484,14 @@ function waitForShutdown(server) {
 function safeServerMessage(error) {
   if (String(error?.code || '').startsWith('BIGQUERY_')
     || String(error?.code || '').startsWith('OPENMETADATA_')
-    || String(error?.code || '').startsWith('GOOGLE_')) return error.message;
+    || String(error?.code || '').startsWith('GOOGLE_')
+    || String(error?.code || '').startsWith('MODULE_MCP_')) return error.message;
   return 'Data adapter request was rejected.';
+}
+
+function nonEmptyString(value, label) {
+  if (typeof value !== 'string' || !value.trim()) throw serverError('MODULE_MCP_CONFIGURATION_INVALID', `${label} is required.`);
+  return value.trim();
 }
 
 function serverError(code, message) {
@@ -395,6 +500,10 @@ function serverError(code, message) {
 
 function proxyAwareFetch(url, options = {}) {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(abortError(options.signal));
+      return;
+    }
     const body = options.body == null
       ? null
       : Buffer.from(options.body instanceof URLSearchParams ? options.body.toString() : String(options.body));
@@ -402,7 +511,10 @@ function proxyAwareFetch(url, options = {}) {
     if (body && !Object.keys(headers).some((name) => name.toLowerCase() === 'content-length')) {
       headers['content-length'] = String(body.length);
     }
-    const request = httpsRequest(url, {
+    let request;
+    const removeAbortListener = () => options.signal?.removeEventListener('abort', abortRequest);
+    const abortRequest = () => request?.destroy(abortError(options.signal));
+    request = httpsRequest(url, {
       method: options.method || 'GET',
       headers,
       agent: new HttpsAgent({ proxyEnv: process.env }),
@@ -417,21 +529,45 @@ function proxyAwareFetch(url, options = {}) {
         }
         chunks.push(chunk);
       });
-      response.once('error', reject);
+      response.once('error', (error) => {
+        removeAbortListener();
+        reject(error);
+      });
       response.once('end', () => {
-        const content = Buffer.concat(chunks).toString('utf8');
-        resolve({
-          ok: response.statusCode >= 200 && response.statusCode < 300,
+        removeAbortListener();
+        resolve(createBufferedFetchResponse(Buffer.concat(chunks), {
           status: response.statusCode,
-          headers: new Headers(response.headers),
-          async text() { return content; },
-          async json() { return JSON.parse(content); },
-        });
+          statusText: response.statusMessage,
+          headers: response.headers,
+        }));
       });
     });
+    options.signal?.addEventListener('abort', abortRequest, { once: true });
     request.setTimeout(60_000, () => request.destroy(serverError('DATA_ADAPTER_UPSTREAM_TIMEOUT', 'Data adapter upstream timed out.')));
-    request.once('error', reject);
+    request.once('error', (error) => {
+      removeAbortListener();
+      reject(error);
+    });
     if (body) request.write(body);
     request.end();
   });
+}
+
+export function createBufferedFetchResponse(body, {
+  status = 200,
+  statusText = '',
+  headers = {},
+} = {}) {
+  const normalizedStatus = Number.isInteger(status) && status >= 200 && status <= 599 ? status : 502;
+  const responseBody = [204, 205, 304].includes(normalizedStatus) ? null : body;
+  return new Response(responseBody, {
+    status: normalizedStatus,
+    statusText: typeof statusText === 'string' ? statusText : '',
+    headers: new Headers(headers),
+  });
+}
+
+function abortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  return Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
 }

@@ -91,6 +91,7 @@ async function main(argv) {
       readyFile: resolve(requiredOption(options['ready-file'], '--ready-file')),
       runId: requiredOption(options['run-id'], '--run-id'),
       port: integerOption(options.port, 'port', null, 1, 65535),
+      capabilityRoot: options['capability-root'] ? resolve(options['capability-root']) : null,
     });
     return;
   }
