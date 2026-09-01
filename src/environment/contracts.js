@@ -122,12 +122,28 @@ export function assertNoSecretMaterial(value, label = 'value') {
 
 function normalizeRuntime(runtime = {}) {
   if (!plainObject(runtime)) throw new TypeError('environment profile runtime must be an object');
-  rejectUnknownKeys(runtime, new Set(['provider', 'model', 'reasoningEffort']), 'environment profile runtime');
+  rejectUnknownKeys(runtime, new Set(['provider', 'model', 'reasoningEffort', 'modelGateway']), 'environment profile runtime');
   return {
     provider: nonEmptyString(runtime.provider || 'codex', 'runtime provider'),
     ...(runtime.model == null ? {} : { model: nonEmptyString(runtime.model, 'runtime model') }),
     ...(runtime.reasoningEffort == null ? {} : { reasoningEffort: nonEmptyString(runtime.reasoningEffort, 'runtime reasoningEffort') }),
+    ...(runtime.modelGateway == null ? {} : { modelGateway: normalizeModelGateway(runtime.modelGateway) }),
   };
+}
+
+function normalizeModelGateway(value) {
+  if (!plainObject(value)) throw new TypeError('runtime modelGateway must be an object');
+  rejectUnknownKeys(value, new Set(['type', 'baseUrl', 'credentialReference']), 'runtime modelGateway');
+  const type = nonEmptyString(value.type, 'runtime modelGateway type');
+  if (type !== 'openai-compatible-responses') {
+    throw new TypeError(`unsupported runtime modelGateway type: ${type}`);
+  }
+  const baseUrl = httpsUrl(value.baseUrl, 'runtime modelGateway baseUrl');
+  const credentialReference = nonEmptyString(value.credentialReference, 'runtime modelGateway credentialReference');
+  if (!/^credentials\.[a-z0-9][a-z0-9.-]{0,126}$/.test(credentialReference)) {
+    throw new TypeError('runtime modelGateway credentialReference is invalid');
+  }
+  return { type, baseUrl, credentialReference };
 }
 
 function normalizeFeatures(features = {}) {
@@ -279,6 +295,19 @@ function positiveInteger(value, label) {
 function nonEmptyString(value, label) {
   if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${label} must be a non-empty string`);
   return value.trim();
+}
+
+function httpsUrl(value, label) {
+  let url;
+  try {
+    url = new URL(nonEmptyString(value, label));
+  } catch {
+    throw new TypeError(`${label} must be a valid URL`);
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+    throw new TypeError(`${label} must be a credential-free https URL without query or fragment`);
+  }
+  return url.toString().replace(/\/$/, '');
 }
 
 function rejectUnknownKeys(value, allowed, label) {

@@ -52,7 +52,7 @@ export function createMinimalHost({
     }
     if (request.method === 'POST' && url.pathname === '/api/sessions') {
       const body = await readJsonBody(request);
-      const session = await sessionStore.create({ title: body.title || 'New Session' });
+      const session = await sessionStore.create({ title: body.title || '新对话' });
       await kernel.attach(session.sessionId, runtimeAttachOptions(manifest));
       return sendJson(response, 201, { session: await sessionStore.get(session.sessionId) });
     }
@@ -255,7 +255,9 @@ async function serveAsset(response, assetsRoot, pathname) {
   }
   response.writeHead(200, {
     'content-type': contentType(path),
-    'cache-control': path.endsWith('.html') ? 'no-store' : 'public, max-age=31536000, immutable',
+    // Minimal Host assets use stable URLs. They must be revalidated on every
+    // page load so an upgraded Run cannot keep executing a previous UI bundle.
+    'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     'content-security-policy': "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'",
   });

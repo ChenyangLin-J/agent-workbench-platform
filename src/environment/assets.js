@@ -1,4 +1,5 @@
-import { copyFile, mkdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,7 +24,16 @@ export async function buildMinimalHostAssets({ outputDirectory } = {}) {
     loader: { '.woff2': 'file', '.woff': 'file', '.ttf': 'file' },
     assetNames: 'assets/[name]-[hash]',
   });
-  await copyFile(INDEX_TEMPLATE, join(outputDirectory, 'index.html'));
+  const script = await readFile(join(outputDirectory, 'minimal-host.js'));
+  const stylesheet = await readFile(join(outputDirectory, 'minimal-host.css'));
+  const assetVersion = createHash('sha256')
+    .update(script)
+    .update(stylesheet)
+    .digest('hex')
+    .slice(0, 12);
+  const index = (await readFile(INDEX_TEMPLATE, 'utf8'))
+    .replaceAll('__MINIMAL_HOST_ASSET_VERSION__', assetVersion);
+  await writeFile(join(outputDirectory, 'index.html'), index);
   return {
     root: outputDirectory,
     index: join(outputDirectory, 'index.html'),

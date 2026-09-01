@@ -13,6 +13,7 @@ import {
   inspectIsolationProvider,
   normalizeEnvironmentProfile,
 } from '../src/environment/index.js';
+import { httpsProxyTarget } from '../src/environment/docker-supervisor.js';
 
 test('Docker provider proves ephemeral isolation only for enforceable offline Profiles', async () => {
   const profile = normalizeEnvironmentProfile({
@@ -60,7 +61,7 @@ test('Docker provider accepts only a ready fixed Codex model broker', async () =
   }), { profile });
   assert.equal(ready.available, true);
   assert.equal(ready.effectiveLevel, 'ephemeral-machine');
-  assert.equal(ready.enforcement.credentials.mode, 'short-lived-codex-credential-broker');
+  assert.equal(ready.enforcement.credentials.mode, 'isolated-model-credential-broker');
   assert.equal(ready.enforcement.network.mode, 'internal-network-with-fixed-ingress-and-model-egress-sidecars');
   const unavailable = await inspectIsolationProvider(createDockerIsolationProvider({
     inspectDocker: async () => ({ available: true, version: 'test', reasons: [] }),
@@ -69,6 +70,37 @@ test('Docker provider accepts only a ready fixed Codex model broker', async () =
   assert.equal(unavailable.available, false);
   assert.equal(unavailable.effectiveLevel, 'development');
   assert.match(unavailable.reason, /credential expired/);
+});
+
+test('Docker provider accepts an exact OpenAI-compatible Responses gateway declaration', async () => {
+  const profile = normalizeEnvironmentProfile({
+    id: 'gateway-container',
+    runtime: {
+      provider: 'codex',
+      model: 'gpt-test',
+      modelGateway: {
+        type: 'openai-compatible-responses',
+        baseUrl: 'https://gateway.example/v1',
+        credentialReference: 'credentials.model-gateway',
+      },
+    },
+    isolation: {
+      provider: 'docker',
+      minimumLevel: 'ephemeral-machine',
+      credentialReferences: ['credentials.model-gateway'],
+      networkTargets: ['https://gateway.example/v1'],
+    },
+  });
+  const inspection = await inspectIsolationProvider(createDockerIsolationProvider({
+    inspectDocker: async () => ({ available: true, version: 'test', reasons: [] }),
+    credentialBroker: { inspect: async () => ({ ready: true, requested: true }), stage: async () => {} },
+  }), { profile });
+  assert.equal(inspection.available, true);
+  assert.equal(inspection.effectiveLevel, 'ephemeral-machine');
+  assert.equal(inspection.enforcement.credentials.mode, 'isolated-model-credential-broker');
+  assert.equal(inspection.enforcement.network.enforced, true);
+  assert.deepEqual(httpsProxyTarget('https://gateway.example/v1'), { host: 'gateway.example', port: 443 });
+  assert.deepEqual(httpsProxyTarget('https://gateway.example:8443/v1'), { host: 'gateway.example', port: 8443 });
 });
 
 test('Docker provider fails closed when network, credentials, capabilities, or effects need brokers', async () => {

@@ -83,6 +83,30 @@ Launch `env create` and `env run` with `CODEX_HOME` pointing at a logged-in Code
 
 The broker does not refresh an expiring token. Refresh the source Codex login before creating a new Run.
 
+An Environment may instead declare one fixed OpenAI-compatible Responses gateway. The API key remains in a consumer-owned environment binding and is staged only into the model-egress sidecar:
+
+```json
+{
+  "runtime": {
+    "provider": "codex",
+    "model": "gateway-model",
+    "modelGateway": {
+      "type": "openai-compatible-responses",
+      "baseUrl": "https://gateway.example/v1",
+      "credentialReference": "credentials.model-gateway"
+    }
+  },
+  "isolation": {
+    "provider": "docker",
+    "minimumLevel": "ephemeral-machine",
+    "credentialReferences": ["credentials.model-gateway"],
+    "networkTargets": ["https://gateway.example/v1"]
+  }
+}
+```
+
+Bind `credentials.model-gateway` to a private environment key in the same bindings file used by `env create` and `env run`. The workload sees only a per-Run service token and the Run-local broker URL; it never receives the gateway key or arbitrary egress.
+
 ## Read-only data adapters
 
 Version 0.9 adds two enforcing adapter kinds: `openmetadata-mcp-read` and `bigquery-read`. Each adapter has a matching `read-only-adapter` lock entry. The Profile declares only fixed targets, read effects, credential references and allowlists; credential locations live in a separate private bindings file.

@@ -28,6 +28,7 @@ test('Session capabilities preserve booleans and support product UI complexity m
   assert.deepEqual(normalizeSessionFeatures({
     attachments: false,
     realtimeV3: true,
+    sessionStatus: false,
     steer: false,
     subagents: 'summary',
     sideChats: 'full',
@@ -36,6 +37,7 @@ test('Session capabilities preserve booleans and support product UI complexity m
     attachments: 'hidden',
     externalLink: 'visible',
     realtime: 'visible',
+    sessionStatus: false,
     steer: false,
     sideChats: 'full',
     subagents: 'summary',

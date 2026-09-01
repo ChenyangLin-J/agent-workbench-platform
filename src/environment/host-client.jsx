@@ -2,18 +2,21 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client';
 
 import { SessionBrowser } from '../ui/index.jsx';
+import { minimalHostSessionPresentation, selectMinimalHostSession } from './host-presentation.js';
 import '../ui/styles.css';
 import './assets/host.css';
 
 const bootstrap = globalThis.__AGENT_WORKBENCH_BOOTSTRAP__ || {};
 
 function MinimalHostApp() {
-  const [environment, setEnvironment] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [session, setSession] = useState(null);
+  const [listCollapsed, setListCollapsed] = useState(false);
   const [error, setError] = useState('');
   const refreshTimer = useRef(null);
+  const refreshRunning = useRef(false);
+  const refreshQueued = useRef(false);
 
   const request = useCallback(async (path, options = {}) => {
     const response = await fetch(path, {
@@ -31,30 +34,48 @@ function MinimalHostApp() {
 
   const refreshSessions = useCallback(async () => {
     const body = await request('/api/sessions');
-    setSessions(body.sessions || []);
-    return body.sessions || [];
+    const nextSessions = (body.sessions || []).map(minimalHostSessionPresentation);
+    setSessions(nextSessions);
+    setSelectedId((current) => selectMinimalHostSession(nextSessions, current));
+    return nextSessions;
   }, [request]);
 
   const refreshSession = useCallback(async (sessionId = selectedId) => {
     if (!sessionId) return null;
     const body = await request(`/api/sessions/${encodeURIComponent(sessionId)}`);
-    setSession(body.session);
-    return body.session;
+    const nextSession = minimalHostSessionPresentation(body.session);
+    setSession(nextSession);
+    return nextSession;
   }, [request, selectedId]);
 
   const scheduleRefresh = useCallback(() => {
-    if (refreshTimer.current) return;
-    refreshTimer.current = setTimeout(() => {
+    refreshQueued.current = true;
+    if (refreshTimer.current || refreshRunning.current) return;
+    refreshTimer.current = setTimeout(async () => {
       refreshTimer.current = null;
-      Promise.all([refreshSessions(), refreshSession()]).catch((nextError) => setError(nextError.message));
-    }, 60);
+      refreshQueued.current = false;
+      refreshRunning.current = true;
+      try {
+        await refreshSessions();
+        await refreshSession();
+        setError('');
+      } catch (nextError) {
+        setError(nextError.message);
+      } finally {
+        refreshRunning.current = false;
+        if (refreshQueued.current) scheduleRefresh();
+      }
+    }, 180);
   }, [refreshSession, refreshSessions]);
 
   useEffect(() => {
-    Promise.all([request('/api/environment').then(setEnvironment), refreshSessions()])
-      .catch((nextError) => setError(nextError.message));
-    return () => clearTimeout(refreshTimer.current);
-  }, [refreshSessions, request]);
+    refreshSessions().catch((nextError) => setError(nextError.message));
+    return () => {
+      clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+      refreshQueued.current = false;
+    };
+  }, [refreshSessions]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -87,7 +108,8 @@ function MinimalHostApp() {
         method: 'POST',
         body: JSON.stringify({ prompt, mode }),
       });
-      await Promise.all([refreshSessions(), refreshSession(selectedId)]);
+      setSession((current) => current ? { ...current, status: 'running', statusLabel: '正在处理' } : current);
+      scheduleRefresh();
     } catch (nextError) {
       setError(nextError.message);
       throw nextError;
@@ -108,12 +130,7 @@ function MinimalHostApp() {
       method: 'POST',
       body: JSON.stringify({ response: answers ? { answers } : { decision } }),
     });
-    await refreshSession(selectedId);
-  }
-
-  async function stopRuntime() {
-    if (!globalThis.confirm('Stop this Workbench Run?')) return;
-    await request('/api/runtime/stop', { method: 'POST', body: '{}' });
+    scheduleRefresh();
   }
 
   const detail = useMemo(() => session ? {
@@ -122,67 +139,57 @@ function MinimalHostApp() {
       attachments: false,
       externalLink: false,
       realtime: false,
+      sessionStatus: false,
       sideChats: false,
-      steer: true,
+      steer: false,
       subagents: false,
-      technicalDetails: true,
+      technicalDetails: false,
     },
     actions: {
-      onBack: () => setSelectedId(null),
       onSubmit: submit,
       onInterrupt: session.status === 'running' ? interrupt : null,
       onRespondToRequest: respondToRequest,
       onError: (nextError) => setError(nextError.message),
     },
     labels: {
-      back: 'Sessions',
-      composerPlaceholder: 'Ask the agent…',
-      emptyTitle: 'Start this Session',
-      emptyBody: 'This Run retains the conversation without requiring a project.',
+      composerPlaceholder: '输入问题……',
+      emptyTitle: '开始对话',
+      emptyBody: '直接输入问题即可开始。',
     },
   } : null, [session, selectedId]);
 
-  const isolationSatisfied = environment?.isolation?.effectiveLevel === environment?.isolation?.requestedLevel
-    || environment?.isolation?.effectiveLevel === 'ephemeral-machine';
   const runtimeError = session?.status === 'error' ? session.runtimeBinding?.lastError : '';
   const visibleError = error || runtimeError;
 
   return (
     <main className="awb-minimal-host">
-      <header className="awb-host-bar">
-        <div className="awb-host-identity">
-          <strong>{environment?.profile?.id || 'Minimal Host'}</strong>
-          <span>{environment?.id || 'starting'}</span>
-        </div>
-        <div className="awb-host-meta">
-          <span className="awb-host-isolation" data-satisfied={isolationSatisfied}>
-            Isolation: {environment?.isolation?.effectiveLevel || 'checking'} / required {environment?.isolation?.requestedLevel || 'checking'}
-          </span>
-          <button className="awb-host-stop" onClick={() => stopRuntime().catch((nextError) => setError(nextError.message))} type="button">Stop Run</button>
-        </div>
-      </header>
       <SessionBrowser
         actions={{
           onCreate: createSession,
-          onRefresh: refreshSessions,
           onSelect: (nextSession) => setSelectedId(nextSession.id),
+          onToggleList: setListCollapsed,
         }}
         browser={{
           sessions,
           selectedSessionId: selectedId,
+          listCollapsed,
           groupMode: 'time',
-          groupOptions: [{ id: 'time', label: 'Recent' }],
-          createTargets: [{ id: 'environment', label: 'Environment' }],
+          groupOptions: [{ id: 'time', label: '最近' }],
+          createTargets: [{ id: 'environment', label: '对话' }],
           showCreateTargetSelect: false,
         }}
         detail={detail}
         labels={{
-          countSuffix: 'Sessions',
-          createLabel: 'New Session',
-          detailEmptyTitle: sessions.length ? 'Choose a Session' : 'Create the first Session',
-          detailEmptyBody: 'The Minimal Host does not require projects, tasks, or memory.',
-          listAriaLabel: 'Sessions',
-          refresh: 'Refresh',
+          countSuffix: '个对话',
+          createLabel: '新建对话',
+          createAriaLabel: '新建对话',
+          detailEmptyTitle: '新建一个对话',
+          detailEmptyBody: '输入问题后即可开始。',
+          collapseList: '收起对话列表',
+          expandList: '展开对话列表',
+          listAriaLabel: '对话列表',
+          searchAriaLabel: '搜索对话',
+          searchPlaceholder: '搜索对话',
         }}
       />
       {visibleError ? <div className="awb-host-error" role="alert">{visibleError}</div> : null}

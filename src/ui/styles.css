@@ -118,6 +118,7 @@
 .cwu-session-shell { position: relative; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; background: var(--cwu-bg); color: var(--cwu-text); }
 .cwu-session-shell * { box-sizing: border-box; }
 .cwu-session-header { position: sticky; z-index: 10; top: 0; min-height: 64px; display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 8px 20px; border-bottom: 1px solid var(--cwu-border); background: color-mix(in srgb, var(--cwu-bg) 94%, transparent); backdrop-filter: blur(14px); }
+.cwu-session-header.without-back { grid-template-columns: minmax(0, 1fr) auto; }
 .cwu-session-heading { min-width: 0; text-align: center; }
 .cwu-session-heading > span { display: block; color: var(--cwu-muted); font-size: 11px; }
 .cwu-session-heading h1 { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 650; }

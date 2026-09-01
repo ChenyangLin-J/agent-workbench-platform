@@ -4,6 +4,7 @@ This is the durable documentation entry for the shared package. Read only the ro
 
 | Task | Read | Purpose |
 | --- | --- | --- |
+| Start a new Workbench or decide whether it needs a repository | [`operations/START_A_WORKBENCH.md`](operations/START_A_WORKBENCH.md) | Environment-first decision, minimum owned assets, and consumer upgrade boundary |
 | Understand ownership or decide where a change belongs | [`architecture.md`](architecture.md) | Stable Platform/consumer boundary and host contracts |
 | Build the runnable minimal host or isolated environments | [`specs/runnable-minimal-host.md`](specs/runnable-minimal-host.md) | Active CLI, manifest, isolation, and adoption design |
 | Create, inspect, run, or stop a local Environment | [`operations/ENVIRONMENTS.md`](operations/ENVIRONMENTS.md) | Profile examples, lifecycle commands, provider guarantees, and verification |

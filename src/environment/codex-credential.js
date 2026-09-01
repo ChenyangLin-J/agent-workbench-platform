@@ -3,17 +3,24 @@ import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
+import { ENVIRONMENT_BINDINGS_SCHEMA, normalizeEnvironmentBindings } from './data-adapters.js';
+
 export const CODEX_NATIVE_CREDENTIAL_REFERENCE = 'credentials.codex-native';
 export const CHATGPT_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+export const OPENAI_COMPATIBLE_RESPONSES_GATEWAY = 'openai-compatible-responses';
 
 const DEFAULT_MINIMUM_TTL_MS = 5 * 60_000;
 
 export function codexModelBrokerRequest(profile = {}) {
   const credentialReferences = profile.isolation?.credentialReferences || [];
   const networkTargets = profile.isolation?.networkTargets || [];
-  const credentialRequested = credentialReferences.includes(CODEX_NATIVE_CREDENTIAL_REFERENCE);
-  const targetRequested = networkTargets.some((target) => normalizeTarget(target) === CHATGPT_CODEX_BASE_URL);
-  if (!credentialRequested && !targetRequested) {
+  const gateway = profile.runtime?.modelGateway || null;
+  const credentialReference = gateway?.credentialReference || CODEX_NATIVE_CREDENTIAL_REFERENCE;
+  const target = gateway?.baseUrl || CHATGPT_CODEX_BASE_URL;
+  const kind = gateway ? 'openai-compatible-api-key' : 'chatgpt-access-token';
+  const credentialRequested = credentialReferences.includes(credentialReference);
+  const targetRequested = networkTargets.some((candidate) => normalizeTarget(candidate) === target);
+  if (!gateway && !credentialRequested && !targetRequested) {
     return { requested: false, supported: true, credentialReference: null, target: null, reasons: [] };
   }
   const reasons = [];
@@ -21,40 +28,51 @@ export function codexModelBrokerRequest(profile = {}) {
     reasons.push('The built-in model broker requires runtime.provider=codex and an explicit runtime.model.');
   }
   if (!credentialRequested) {
-    reasons.push(`The built-in model broker requires ${CODEX_NATIVE_CREDENTIAL_REFERENCE}.`);
+    reasons.push(`The built-in model broker requires ${credentialReference}.`);
   }
   if (!targetRequested) {
-    reasons.push(`The built-in model broker requires ${CHATGPT_CODEX_BASE_URL}.`);
+    reasons.push(`The built-in model broker requires ${target}.`);
   }
   return {
     requested: true,
     supported: reasons.length === 0,
-    credentialReference: credentialRequested ? CODEX_NATIVE_CREDENTIAL_REFERENCE : null,
-    target: targetRequested ? CHATGPT_CODEX_BASE_URL : null,
+    kind,
+    credentialReference: credentialRequested ? credentialReference : null,
+    target: targetRequested ? target : null,
     reasons,
   };
 }
 
 export function createCodexNativeCredentialBroker({
   codexHome = process.env.CODEX_HOME || join(homedir(), '.codex'),
+  bindings = { schema: ENVIRONMENT_BINDINGS_SCHEMA, credentials: {} },
+  environment = process.env,
   now = () => new Date(),
   minimumTtlMs = DEFAULT_MINIMUM_TTL_MS,
 } = {}) {
   const sourcePath = join(resolve(codexHome), 'auth.json');
+  const normalizedBindings = normalizeEnvironmentBindings(bindings);
   return Object.freeze({
-    id: 'codex-native-chatgpt',
+    id: 'codex-model-credential',
     async inspect({ profile } = {}) {
       const request = codexModelBrokerRequest(profile);
       if (!request.requested) return { ready: true, requested: false };
       if (!request.supported) return { ready: false, requested: true, reason: request.reasons.join(' ') };
       try {
-        const credential = await readChatGptCredential(sourcePath, { now, minimumTtlMs });
+        const credential = await resolveModelCredential(request, {
+          sourcePath,
+          bindings: normalizedBindings,
+          environment,
+          now,
+          minimumTtlMs,
+        });
         return {
           ready: true,
           requested: true,
+          kind: credential.kind,
           credentialReference: request.credentialReference,
           target: request.target,
-          expiresAt: credential.expiresAt,
+          ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}),
         };
       } catch (error) {
         return {
@@ -70,7 +88,13 @@ export function createCodexNativeCredentialBroker({
         throw credentialError('CODEX_CREDENTIAL_PROFILE_UNSUPPORTED', request.reasons.join(' ') || 'Codex credential broker was not requested.');
       }
       if (typeof directory !== 'string' || !directory.trim()) throw new TypeError('credential broker directory is required');
-      const credential = await readChatGptCredential(sourcePath, { now, minimumTtlMs });
+      const credential = await resolveModelCredential(request, {
+        sourcePath,
+        bindings: normalizedBindings,
+        environment,
+        now,
+        minimumTtlMs,
+      });
       const targetDirectory = resolve(directory);
       const temporaryDirectory = `${targetDirectory}.staging-${randomUUID()}`;
       await mkdir(dirname(targetDirectory), { recursive: true, mode: 0o700 });
@@ -78,11 +102,16 @@ export function createCodexNativeCredentialBroker({
       try {
         await writeFile(join(temporaryDirectory, 'model.json'), `${JSON.stringify({
           schemaVersion: 1,
-          kind: 'chatgpt-access-token',
+          kind: credential.kind,
+          credentialReference: request.credentialReference,
           target: request.target,
-          accessToken: credential.accessToken,
-          accountId: credential.accountId,
-          expiresAt: credential.expiresAt,
+          ...(credential.kind === 'chatgpt-access-token'
+            ? {
+                accessToken: credential.accessToken,
+                accountId: credential.accountId,
+                expiresAt: credential.expiresAt,
+              }
+            : { apiKey: credential.apiKey }),
         }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
         await rename(temporaryDirectory, targetDirectory);
       } catch (error) {
@@ -91,9 +120,10 @@ export function createCodexNativeCredentialBroker({
       }
       return {
         directory: targetDirectory,
+        kind: credential.kind,
         credentialReference: request.credentialReference,
         target: request.target,
-        expiresAt: credential.expiresAt,
+        ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}),
       };
     },
   });
@@ -106,17 +136,50 @@ export async function readStagedCodexCredential(path, { now = () => new Date() }
     throw credentialError('CODEX_CREDENTIAL_STAGED_UNSAFE', 'Staged Codex credential must be a private regular file and not a symlink.');
   }
   const document = JSON.parse(await readFile(canonical, 'utf8'));
-  if (document?.schemaVersion !== 1 || document.kind !== 'chatgpt-access-token') {
+  if (document?.schemaVersion !== 1
+    || !['chatgpt-access-token', 'openai-compatible-api-key'].includes(document.kind)) {
     throw credentialError('CODEX_CREDENTIAL_INVALID', 'Staged Codex credential has an unsupported schema.');
   }
   const target = normalizeTarget(document.target);
+  if (!target || !target.startsWith('https://')) {
+    throw credentialError('CODEX_CREDENTIAL_TARGET_INVALID', 'Staged Codex credential target must be HTTPS.');
+  }
+  if (document.kind === 'openai-compatible-api-key') {
+    return {
+      kind: document.kind,
+      target,
+      credentialReference: nonEmptyString(document.credentialReference, 'staged model credential reference'),
+      apiKey: nonEmptyString(document.apiKey, 'staged model API key'),
+    };
+  }
   if (target !== CHATGPT_CODEX_BASE_URL) {
-    throw credentialError('CODEX_CREDENTIAL_TARGET_INVALID', 'Staged Codex credential target is not allowed.');
+    throw credentialError('CODEX_CREDENTIAL_TARGET_INVALID', 'Staged ChatGPT credential target is not allowed.');
   }
   const accessToken = nonEmptyString(document.accessToken, 'staged Codex access token');
   const accountId = nonEmptyString(document.accountId, 'staged Codex account id');
   const expiresAt = validExpiry(document.expiresAt, now(), 0);
-  return { target, accessToken, accountId, expiresAt };
+  return { kind: document.kind, target, accessToken, accountId, expiresAt };
+}
+
+async function resolveModelCredential(request, options) {
+  if (request.kind === 'chatgpt-access-token') {
+    return readChatGptCredential(options.sourcePath, options);
+  }
+  if (request.kind === 'openai-compatible-api-key') {
+    const binding = options.bindings.credentials[request.credentialReference];
+    if (!binding) {
+      throw credentialError('MODEL_GATEWAY_BINDING_MISSING', `binding ${request.credentialReference} is missing.`);
+    }
+    if (binding.source !== 'environment') {
+      throw credentialError('MODEL_GATEWAY_BINDING_SOURCE_INVALID', 'Model gateway API key must come from an environment binding.');
+    }
+    const apiKey = options.environment[binding.key];
+    return {
+      kind: request.kind,
+      apiKey: nonEmptyString(apiKey, `model gateway environment key ${binding.key}`),
+    };
+  }
+  throw credentialError('CODEX_CREDENTIAL_PROFILE_UNSUPPORTED', `Unsupported model credential kind: ${request.kind}.`);
 }
 
 async function readChatGptCredential(sourcePath, { now, minimumTtlMs }) {
@@ -143,6 +206,7 @@ async function readChatGptCredential(sourcePath, { now, minimumTtlMs }) {
     || claims.chatgpt_account_id;
   const expiresAt = validExpiry(claims.exp, now(), minimumTtlMs, { seconds: true });
   return {
+    kind: 'chatgpt-access-token',
     accessToken,
     accountId: nonEmptyString(accountId, 'Codex ChatGPT account id'),
     expiresAt,
@@ -182,7 +246,7 @@ function normalizeTarget(value) {
 
 function safeCredentialError(error) {
   if (error?.code === 'ENOENT') return 'Codex auth.json was not found';
-  if (String(error?.code || '').startsWith('CODEX_CREDENTIAL_')) return String(error.message);
+  if (/^(?:CODEX_CREDENTIAL_|MODEL_GATEWAY_)/.test(String(error?.code || ''))) return String(error.message);
   return 'credential validation failed';
 }
 

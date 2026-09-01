@@ -18,13 +18,13 @@ export class EnvironmentSessionStore {
   }
 
   async list() {
-    const document = await this.#read();
+    const document = await this.#readQueued();
     return Object.values(document.sessions)
       .map(publicSession)
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   }
 
-  async create({ title = 'New Session' } = {}) {
+  async create({ title = '新对话' } = {}) {
     const sessionId = `session-${this.uuid()}`;
     const timestamp = this.#time();
     await this.#mutate((document) => {
@@ -44,14 +44,14 @@ export class EnvironmentSessionStore {
   }
 
   async get(sessionId) {
-    const document = await this.#read();
+    const document = await this.#readQueued();
     const session = document.sessions[sessionId];
     if (!session) throw storeError('SESSION_NOT_FOUND', `Session not found: ${sessionId}`, 404);
     return sessionView(session, document.bindings[sessionId]);
   }
 
   async load(sessionId) {
-    const document = await this.#read();
+    const document = await this.#readQueued();
     return document.bindings[sessionId] ? structuredClone(document.bindings[sessionId]) : null;
   }
 
@@ -154,6 +154,12 @@ export class EnvironmentSessionStore {
     return document;
   }
 
+  #readQueued() {
+    const operation = this.queue.catch(() => {}).then(() => this.#read());
+    this.queue = operation.then(() => undefined);
+    return operation;
+  }
+
   #mutate(updater) {
     const operation = this.queue.catch(() => {}).then(async () => {
       const document = await this.#read();
@@ -179,7 +185,7 @@ function publicSession(session) {
     id: session.id,
     title: session.title,
     contextId: 'environment',
-    contextLabel: 'Environment',
+    contextLabel: '',
     status: session.status,
     statusLabel: statusLabel(session.status),
     createdAt: session.createdAt,
@@ -321,12 +327,12 @@ function sessionStatus(value, fallback) {
 
 function statusLabel(status) {
   return ({
-    connecting: 'Connecting',
-    error: 'Error',
-    idle: 'Idle',
-    interrupted: 'Interrupted',
-    running: 'Running',
-    waiting: 'Waiting for input',
+    connecting: '正在连接',
+    error: '发生错误',
+    idle: '空闲',
+    interrupted: '已停止',
+    running: '正在处理',
+    waiting: '等待输入',
   })[status] || status;
 }
 

@@ -6,6 +6,7 @@ export function normalizeSessionFeatures(features = {}) {
     attachments: normalizeVisibility(features.attachments, 'visible'),
     externalLink: normalizeVisibility(features.externalLink, 'visible'),
     realtime: normalizeVisibility(features.realtime ?? features.realtimeV3, 'hidden'),
+    sessionStatus: features.sessionStatus !== false,
     sideChats: normalizeFeatureMode(features.sideChats),
     steer: features.steer !== false,
     subagents: normalizeSubagentMode(features.subagents),

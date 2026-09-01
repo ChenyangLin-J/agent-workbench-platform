@@ -133,7 +133,7 @@ export function normalizeSessionViewModel(value = {}) {
     draft: String(value.draft || ''),
     composerDisabled: Boolean(value.composerDisabled),
     title: String(value.title || '未命名 Session'),
-    contextLabel: String(value.contextLabel || 'Agent Session'),
+    contextLabel: value.contextLabel == null ? 'Agent Session' : String(value.contextLabel),
     status: ['connecting', 'running', 'waiting', 'idle', 'error'].includes(value.status)
       ? value.status
       : 'idle',
@@ -396,7 +396,7 @@ export function normalizeSessionBrowserViewModel(value = {}) {
         id: String(session?.id || `session-${index}`),
         title: String(session?.title || '未命名 Session'),
         contextId: stringOrNull(session?.contextId),
-        contextLabel: String(session?.contextLabel || '未分类'),
+        contextLabel: session?.contextLabel == null ? '未分类' : String(session.contextLabel),
         secondaryLabel: String(session?.secondaryLabel || ''),
         searchableText: String(session?.searchableText || session?.searchText || ''),
         sortOrder: Number.isFinite(Number(session?.sortOrder)) ? Number(session.sortOrder) : null,
@@ -614,6 +614,115 @@ export function clipboardAttachmentFiles(clipboardData) {
     seen.add(signature);
     return true;
   });
+}
+
+function transferItems(dataTransfer) {
+  try {
+    return [...(dataTransfer?.items || [])];
+  } catch {
+    return [];
+  }
+}
+
+function transferItemEntry(item) {
+  try {
+    return item?.webkitGetAsEntry?.() || null;
+  } catch {
+    return null;
+  }
+}
+
+function transferItemFile(item) {
+  try {
+    return item?.getAsFile?.() || null;
+  } catch {
+    return null;
+  }
+}
+
+function transferText(dataTransfer, type) {
+  try {
+    return String(dataTransfer?.getData?.(type) || '');
+  } catch {
+    return '';
+  }
+}
+
+function decodeFileUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'file:') return '';
+    const pathname = decodeURIComponent(url.pathname);
+    return url.hostname && url.hostname !== 'localhost' ? `//${url.hostname}${pathname}` : pathname;
+  } catch {
+    return '';
+  }
+}
+
+function isAbsolutePathHint(value) {
+  return value.startsWith('/') || /^[a-z]:[\\/]/i.test(value) || value.startsWith('\\\\');
+}
+
+function transferPathHints(dataTransfer) {
+  const lines = [
+    ...transferText(dataTransfer, 'text/uri-list').split(/\r?\n/),
+    ...transferText(dataTransfer, 'text/plain').split(/\r?\n/),
+  ];
+  const hints = [];
+  for (const line of lines) {
+    const value = line.trim();
+    if (!value || value.startsWith('#')) continue;
+    const hint = value.startsWith('file:') ? decodeFileUrl(value) : value;
+    if (hint && isAbsolutePathHint(hint) && !hints.includes(hint)) hints.push(hint);
+  }
+  return hints;
+}
+
+function pathHintBasename(value) {
+  return String(value || '').replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || '';
+}
+
+export function composerDropPayload(dataTransfer) {
+  const items = transferItems(dataTransfer).filter((item) => !item?.kind || item.kind === 'file');
+  if (!items.length) {
+    return { directories: [], files: [...(dataTransfer?.files || [])] };
+  }
+  const pathHints = transferPathHints(dataTransfer);
+  const directoryCandidates = [];
+  const files = [];
+  for (const item of items) {
+    const entry = transferItemEntry(item);
+    const file = transferItemFile(item);
+    if (entry?.isDirectory) {
+      directoryCandidates.push({
+        name: String(entry.name || file?.name || 'folder').trim() || 'folder',
+        file,
+      });
+    } else if (file) {
+      files.push(file);
+    }
+  }
+  const directories = directoryCandidates.map((directory, index) => {
+    const directHint = String(directory.file?.path || '').trim();
+    const matchingHint = pathHints.find((hint) => pathHintBasename(hint) === directory.name)
+      || (pathHints.length === directoryCandidates.length ? pathHints[index] : '');
+    return {
+      name: directory.name,
+      pathHint: directHint || matchingHint,
+      file: directory.file,
+    };
+  });
+  return { directories, files };
+}
+
+export function appendComposerReferences(draft, references, { textLimit = 12000 } = {}) {
+  const current = String(draft || '');
+  const texts = (Array.isArray(references) ? references : [])
+    .map((reference) => String(typeof reference === 'string' ? reference : reference?.text || '').trim())
+    .filter(Boolean);
+  if (!texts.length) return current;
+  const separator = current && !current.endsWith('\n') ? '\n' : '';
+  return `${current}${separator}${texts.join('\n')}`.slice(0, textLimit);
 }
 
 export function shouldConvertPastedTextToAttachment(draft, text, {

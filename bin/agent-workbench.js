@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   IsolationProviderRegistry,
+  createCodexNativeCredentialBroker,
   createDataAdapterCredentialBroker,
   createDevelopmentIsolationProvider,
   createDockerIsolationProvider,
@@ -106,7 +107,10 @@ async function main(argv) {
     : { schema: 'agent-workbench.environment-bindings/v1', credentials: {} };
   const providers = new IsolationProviderRegistry([
     createDevelopmentIsolationProvider(),
-    createDockerIsolationProvider({ dataAdapterCredentialBroker: createDataAdapterCredentialBroker({ bindings }) }),
+    createDockerIsolationProvider({
+      credentialBroker: createCodexNativeCredentialBroker({ bindings }),
+      dataAdapterCredentialBroker: createDataAdapterCredentialBroker({ bindings }),
+    }),
   ]);
 
   if (command === 'create') {

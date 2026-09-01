@@ -57,6 +57,38 @@ test('Codex credential broker rejects long-lived or expiring credentials', async
   assert.match((await createCodexNativeCredentialBroker({ codexHome, now: () => now }).inspect({ profile: brokerProfile() })).reason, /expires too soon/);
 });
 
+test('model credential broker stages an OpenAI-compatible gateway key only from private bindings', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-model-gateway-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const broker = createCodexNativeCredentialBroker({
+    codexHome: join(root, 'unused-codex-home'),
+    bindings: {
+      schema: 'agent-workbench.environment-bindings/v1',
+      credentials: {
+        'credentials.model-gateway': { source: 'environment', key: 'MODEL_GATEWAY_API_KEY' },
+      },
+    },
+    environment: { MODEL_GATEWAY_API_KEY: 'gateway-fixture-key' },
+  });
+  const profile = gatewayProfile();
+  const inspection = await broker.inspect({ profile });
+  assert.deepEqual(inspection, {
+    ready: true,
+    requested: true,
+    kind: 'openai-compatible-api-key',
+    credentialReference: 'credentials.model-gateway',
+    target: 'https://gateway.example/v1',
+  });
+  const stagedDirectory = join(root, 'credentials', 'broker');
+  await broker.stage({ profile, directory: stagedDirectory });
+  const document = JSON.parse(await readFile(join(stagedDirectory, 'model.json'), 'utf8'));
+  assert.equal(document.kind, 'openai-compatible-api-key');
+  assert.equal(document.target, 'https://gateway.example/v1');
+  assert.equal(document.apiKey, 'gateway-fixture-key');
+  assert.equal(document.accessToken, undefined);
+  assert.equal(document.accountId, undefined);
+});
+
 test('fixed model egress broker replaces caller auth and denies every other route', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-model-broker-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -120,6 +152,51 @@ test('fixed model egress broker replaces caller auth and denies every other rout
     method: 'POST',
     headers: { authorization: 'Bearer run-service-token' },
   })).status, 403);
+});
+
+test('fixed model egress broker sends gateway keys only to the declared Responses endpoint', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-model-gateway-egress-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const credentialPath = join(root, 'model.json');
+  const tokenPath = join(root, 'service-token');
+  await writeFile(credentialPath, `${JSON.stringify({
+    schemaVersion: 1,
+    kind: 'openai-compatible-api-key',
+    credentialReference: 'credentials.model-gateway',
+    target: 'https://gateway.example/v1',
+    apiKey: 'gateway-fixture-key',
+  })}\n`, { mode: 0o600 });
+  await writeFile(tokenPath, 'run-service-token\n', { mode: 0o600 });
+  let observed;
+  const server = await runModelEgressBroker({
+    credentialPath,
+    serviceTokenPath: tokenPath,
+    port: 0,
+    requestUpstream(options, callback) {
+      const stream = new PassThrough();
+      stream.setTimeout = () => stream;
+      stream.on('finish', () => {
+        observed = options;
+        const response = Readable.from(['{"ok":true}\n']);
+        response.statusCode = 200;
+        response.headers = { 'content-type': 'application/json' };
+        callback(response);
+      });
+      return stream;
+    },
+  });
+  t.after(() => new Promise((resolvePromise) => server.close(resolvePromise)));
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/responses`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer run-service-token' },
+    body: '{"input":"hello"}',
+  });
+  assert.equal(response.status, 200);
+  assert.equal(observed.hostname, 'gateway.example');
+  assert.equal(observed.path, '/v1/responses');
+  assert.equal(observed.headers.authorization, 'Bearer gateway-fixture-key');
+  assert.equal(observed.headers['chatgpt-account-id'], undefined);
 });
 
 test('brokered Runtime config contains only the Run-local endpoint and hides its service token from shells', async (t) => {
@@ -203,6 +280,27 @@ function brokerProfile() {
       minimumLevel: 'ephemeral-machine',
       credentialReferences: ['credentials.codex-native'],
       networkTargets: [CHATGPT_CODEX_BASE_URL],
+    },
+  });
+}
+
+function gatewayProfile() {
+  return normalizeEnvironmentProfile({
+    id: 'gateway-model',
+    runtime: {
+      provider: 'codex',
+      model: 'gpt-test',
+      modelGateway: {
+        type: 'openai-compatible-responses',
+        baseUrl: 'https://gateway.example/v1',
+        credentialReference: 'credentials.model-gateway',
+      },
+    },
+    isolation: {
+      provider: 'docker',
+      minimumLevel: 'ephemeral-machine',
+      credentialReferences: ['credentials.model-gateway'],
+      networkTargets: ['https://gateway.example/v1'],
     },
   });
 }

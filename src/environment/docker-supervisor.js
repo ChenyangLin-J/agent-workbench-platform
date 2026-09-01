@@ -60,7 +60,13 @@ export async function runDockerSupervisor(runTarget, {
         if (!codexModelBrokerRequest(profile).requested) return { ready: true, requested: false };
         try {
           const credential = await readStagedCodexCredential(stagedBrokerCredentialPath);
-          return { ready: true, requested: true, target: credential.target, expiresAt: credential.expiresAt };
+          return {
+            ready: true,
+            requested: true,
+            kind: credential.kind,
+            target: credential.target,
+            ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}),
+          };
         } catch {
           return { ready: false, requested: true, reason: 'The staged Codex model credential is unavailable.' };
         }
@@ -122,11 +128,16 @@ export async function runDockerSupervisor(runTarget, {
   const modelCredential = brokerRequest.requested
     ? await readStagedCodexCredential(brokerCredentialPath)
     : null;
+  if (modelCredential
+    && (modelCredential.kind !== brokerRequest.kind || modelCredential.target !== brokerRequest.target)) {
+    throw supervisorError('MODEL_BROKER_CREDENTIAL_MISMATCH', 'Staged model credential does not match the Environment Profile.');
+  }
   const modelBroker = modelCredential ? {
     baseUrl: `http://${egressName}:${MODEL_EGRESS_PORT}`,
     envKey: MODEL_BROKER_ENV_KEY,
+    kind: modelCredential.kind,
     target: modelCredential.target,
-    expiresAt: modelCredential.expiresAt,
+    ...(modelCredential.expiresAt ? { expiresAt: modelCredential.expiresAt } : {}),
   } : null;
   const dataAdapters = adapterRequest.adapters.map((adapter, index) => {
     const directory = adapterDirectoryName(adapter.id);
@@ -232,6 +243,7 @@ export async function runDockerSupervisor(runTarget, {
         hostProxyRelay = await startFixedTargetProxyRelay({
           upstreamProxyUrl: hostHttpsProxy,
           authToken: randomBytes(32).toString('base64url'),
+          targets: [httpsProxyTarget(modelBroker.target)],
         });
       }
       for (const entry of dataAdapters) {
@@ -328,7 +340,8 @@ export async function runDockerSupervisor(runTarget, {
         imageId: image.id,
         ...(modelBroker ? {
           modelBrokerTarget: modelBroker.target,
-          modelCredentialExpiresAt: modelBroker.expiresAt,
+          modelCredentialKind: modelBroker.kind,
+          ...(modelBroker.expiresAt ? { modelCredentialExpiresAt: modelBroker.expiresAt } : {}),
         } : {}),
       },
     });
@@ -522,12 +535,18 @@ function dockerDataAdapterArguments({ image, entry, runId, proxyUrl = null }) {
 
 function adapterProxyTargets(adapter) {
   if (adapter.kind === OPENMETADATA_READ_ADAPTER_KIND) {
-    return [{ host: new URL(adapter.target).hostname, port: 443 }];
+    return [httpsProxyTarget(adapter.target)];
   }
   if (adapter.kind === BIGQUERY_READ_ADAPTER_KIND) {
-    return [BIGQUERY_API_TARGET, GOOGLE_OAUTH_TARGET].map((target) => ({ host: new URL(target).hostname, port: 443 }));
+    return [BIGQUERY_API_TARGET, GOOGLE_OAUTH_TARGET].map(httpsProxyTarget);
   }
   throw supervisorError('DATA_ADAPTER_KIND_UNSUPPORTED', `Unsupported data adapter kind: ${adapter.kind}.`);
+}
+
+export function httpsProxyTarget(target) {
+  const url = new URL(target);
+  if (url.protocol !== 'https:') throw new TypeError('Fixed proxy target must use HTTPS');
+  return { host: url.hostname, port: Number(url.port || 443) };
 }
 
 function configuredHostHttpsProxy(environment) {
@@ -647,7 +666,8 @@ async function waitForModelBrokerReady({ readyPath, manifest, credential, docker
     }
     try {
       const ready = JSON.parse(await readFile(readyPath, 'utf8'));
-      if (ready.runId !== manifest.id || ready.target !== credential.target || ready.expiresAt !== credential.expiresAt) {
+      if (ready.runId !== manifest.id || ready.credentialKind !== credential.kind
+        || ready.target !== credential.target || ready.expiresAt !== credential.expiresAt) {
         throw supervisorError('MODEL_BROKER_IDENTITY_MISMATCH', 'Model broker ready evidence does not match this Run.');
       }
       return;

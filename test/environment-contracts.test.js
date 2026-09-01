@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, realpath, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -132,6 +132,15 @@ test('profile normalization binds locked read-only adapters without credential v
       }],
     },
   }), /built-in read allowlist/);
+});
+
+test('published Environment Profile schema matches the model gateway runtime contract', async () => {
+  const schema = JSON.parse(await readFile(new URL('../schemas/environment-profile.schema.json', import.meta.url), 'utf8'));
+  assert.deepEqual(schema.properties.runtime.properties.modelGateway, { $ref: '#/$defs/modelGateway' });
+  assert.deepEqual(schema.$defs.modelGateway.required, ['type', 'baseUrl', 'credentialReference']);
+  assert.equal(schema.$defs.modelGateway.properties.type.const, 'openai-compatible-responses');
+  assert.equal(schema.$defs.modelGateway.properties.credentialReference.pattern, '^credentials\\.[a-z0-9][a-z0-9.-]{0,126}$');
+  assert.equal(schema.$defs.modelGateway.additionalProperties, false);
 });
 
 test('effective isolation is derived from every enforcement facet', () => {

@@ -52,8 +52,9 @@ export async function runModelEgressBroker({
         runId,
         pid: process.pid,
         port: typeof address === 'object' && address ? address.port : port,
+        credentialKind: credential.kind,
         target: credential.target,
-        expiresAt: credential.expiresAt,
+        ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}),
         readyAt: new Date().toISOString(),
       }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
     } catch (error) {
@@ -73,7 +74,9 @@ export async function runModelEgressBroker({
 async function proxyModelRequest(incoming, outgoing, { credential, serviceToken, now, requestUpstream }) {
   try {
     if (!authorized(incoming.headers.authorization, serviceToken)) return sendError(outgoing, 401, 'MODEL_BROKER_UNAUTHORIZED');
-    if (new Date(credential.expiresAt).getTime() <= new Date(now()).getTime()) return sendError(outgoing, 401, 'MODEL_BROKER_CREDENTIAL_EXPIRED');
+    if (credential.expiresAt && new Date(credential.expiresAt).getTime() <= new Date(now()).getTime()) {
+      return sendError(outgoing, 401, 'MODEL_BROKER_CREDENTIAL_EXPIRED');
+    }
     if (incoming.method !== 'POST') return sendError(outgoing, 405, 'MODEL_BROKER_METHOD_DENIED');
     const requestUrl = new URL(incoming.url || '/', 'http://model-broker.local');
     if (!ALLOWED_PATHS.has(requestUrl.pathname)) return sendError(outgoing, 403, 'MODEL_BROKER_PATH_DENIED');
@@ -124,8 +127,12 @@ function upstreamHeaders(headers, credential, host) {
     'upgrade',
   ]) delete result[name];
   result.host = host;
-  result.authorization = `Bearer ${credential.accessToken}`;
-  result['chatgpt-account-id'] = credential.accountId;
+  if (credential.kind === 'chatgpt-access-token') {
+    result.authorization = `Bearer ${credential.accessToken}`;
+    result['chatgpt-account-id'] = credential.accountId;
+  } else {
+    result.authorization = `Bearer ${credential.apiKey}`;
+  }
   return result;
 }
 

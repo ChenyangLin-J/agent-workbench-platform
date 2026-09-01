@@ -14,7 +14,8 @@
       "properties": {
         "provider": { "type": "string", "minLength": 1 },
         "model": { "type": "string", "minLength": 1 },
-        "reasoningEffort": { "type": "string", "minLength": 1 }
+        "reasoningEffort": { "type": "string", "minLength": 1 },
+        "modelGateway": { "$ref": "#/$defs/modelGateway" }
       },
       "additionalProperties": false
     },
@@ -97,6 +98,23 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true
+    },
+    "modelGateway": {
+      "type": "object",
+      "required": ["type", "baseUrl", "credentialReference"],
+      "properties": {
+        "type": { "const": "openai-compatible-responses" },
+        "baseUrl": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://(?![^/?#]*@)[^/?#]+(?:/[^?#]*)?$"
+        },
+        "credentialReference": {
+          "type": "string",
+          "pattern": "^credentials\\.[a-z0-9][a-z0-9.-]{0,126}$"
+        }
+      },
+      "additionalProperties": false
     },
     "capabilityLock": {
       "type": "object",

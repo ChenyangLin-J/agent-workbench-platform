@@ -10,7 +10,9 @@ import '../browser/session-ui-elements.js';
 import '../browser/subagent-elements.js';
 
 import {
+  appendComposerReferences,
   clipboardAttachmentFiles,
+  composerDropPayload,
   documentPreviewPresentation,
   groupSessionMessages,
   groupSessionSummaries,
@@ -648,7 +650,9 @@ export function SessionBrowser({
                     />
                     <span className="cwu-browser-row-copy">
                       <strong>{session.title}</strong>
-                      <small>{unread ? '新结果 · ' : ''}{session.secondaryLabel || (view.groupMode === 'context' ? formatTime(session.updatedAt) : `${session.contextLabel} · ${formatTime(session.updatedAt)}`)}</small>
+                      <small>{unread ? '新结果 · ' : ''}{session.secondaryLabel || (view.groupMode === 'context'
+                        ? formatTime(session.updatedAt)
+                        : [session.contextLabel, formatTime(session.updatedAt)].filter(Boolean).join(' · '))}</small>
                     </span>
                   </button>
                   {actions.onFavorite && session.canFavorite ? (
@@ -735,14 +739,14 @@ export function SessionBrowser({
     <div className={`cwu-browser ${listCollapsed ? 'is-list-collapsed' : ''}`}>
       {list}
 
-      <button
+      {(isNarrow && detail) || actions.onToggleList ? <button
         aria-expanded={!listCollapsed}
         aria-label={listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
         className="cwu-browser-list-toggle"
         onClick={toggleSessionList}
         title={listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
         type="button"
-      >{listCollapsed ? '›' : '‹'}</button>
+      >{listCollapsed ? '›' : '‹'}</button> : null}
 
       <section className="cwu-browser-detail" aria-label={labels.detailAriaLabel || 'Session 详情'}>
         {detail ? <SessionWorkspace key={detail.session?.sessionId || 'session-detail'} {...detail} /> : (
@@ -783,6 +787,7 @@ export function SessionWorkspace({
   const [attachments, setAttachments] = useState([]);
   const [attachmentUploadState, setAttachmentUploadState] = useState({ status: 'idle', error: '' });
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
+  const [attachmentDragKind, setAttachmentDragKind] = useState('files');
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -824,6 +829,7 @@ export function SessionWorkspace({
     setAttachments([]);
     setAttachmentUploadState({ status: 'idle', error: '' });
     setAttachmentDragActive(false);
+    setAttachmentDragKind('files');
     setAwayFromLatest(false);
     setHasNewMessagesBelow(false);
     messageActivityRef.current = { sessionId: view.sessionId, key: latestMessageActivityKey };
@@ -932,18 +938,20 @@ export function SessionWorkspace({
     const availableSlots = Math.max(0, uploadPolicy.maxCount - attachments.length);
     const candidates = [...(fileList || [])].slice(0, availableSlots);
     if (!availableSlots && (fileList?.length || 0)) {
-      setAttachmentUploadState({ status: 'error', error: `单次最多 ${uploadPolicy.maxCount} 个附件。` });
-      return;
+      const errors = [`单次最多 ${uploadPolicy.maxCount} 个附件。`];
+      setAttachmentUploadState({ status: 'error', error: errors[0] });
+      return errors;
     }
     const files = candidates.filter((file) => (
       file.size <= uploadPolicy.maxBytes && fileMatchesAccept(file, uploadPolicy.accept)
     ));
-    if (!actions.onUploadAttachments) return;
+    if (!actions.onUploadAttachments) return [];
     if (!files.length) {
       if (candidates.length) {
         setAttachmentUploadState({ status: 'error', error: '附件不符合格式或大小限制。' });
+        return ['附件不符合格式或大小限制。'];
       }
-      return;
+      return [];
     }
     setAttachmentUploadState({ status: 'idle', error: '' });
     const errors = candidates.length > files.length
@@ -1002,6 +1010,7 @@ export function SessionWorkspace({
       status: errors.length ? 'error' : 'idle',
       error: errors[0] || '',
     });
+    return errors;
   }
 
   async function retryAttachment(attachment) {
@@ -1052,24 +1061,60 @@ export function SessionWorkspace({
   }
 
   function handleAttachmentDrag(event) {
-    if (!event.dataTransfer?.types?.includes('Files') || !actions.onUploadAttachments) return;
+    if (!event.dataTransfer?.types?.includes('Files')
+      || (!actions.onUploadAttachments && !actions.onResolveDroppedDirectories)) return;
     event.preventDefault();
-    if (composerDisabled || uploading || attachments.length >= uploadPolicy.maxCount) return;
-    event.dataTransfer.dropEffect = 'copy';
+    if (composerDisabled || uploading) return;
+    const payload = composerDropPayload(event.dataTransfer);
+    const hasDirectories = payload.directories.length > 0;
+    const hasFiles = payload.files.length > 0;
+    if (!hasDirectories && (!hasFiles || attachments.length >= uploadPolicy.maxCount)) return;
+    event.dataTransfer.dropEffect = hasDirectories ? 'link' : 'copy';
+    setAttachmentDragKind(hasDirectories ? hasFiles ? 'mixed' : 'directories' : 'files');
     setAttachmentDragActive(true);
   }
 
   function handleAttachmentDragLeave(event) {
     if (event.currentTarget.contains(event.relatedTarget)) return;
     setAttachmentDragActive(false);
+    setAttachmentDragKind('files');
   }
 
   async function handleAttachmentDrop(event) {
-    if (!event.dataTransfer?.types?.includes('Files') || !actions.onUploadAttachments) return;
+    if (!event.dataTransfer?.types?.includes('Files')
+      || (!actions.onUploadAttachments && !actions.onResolveDroppedDirectories)) return;
     event.preventDefault();
     setAttachmentDragActive(false);
-    if (composerDisabled || uploading || attachments.length >= uploadPolicy.maxCount) return;
-    await uploadFiles(event.dataTransfer.files);
+    setAttachmentDragKind('files');
+    if (composerDisabled || uploading) return;
+    const { directories, files } = composerDropPayload(event.dataTransfer);
+    const errors = files.length ? await uploadFiles(files) : [];
+    if (directories.length) {
+      if (!actions.onResolveDroppedDirectories) {
+        errors.push(labels.directoryDropUnsupported || '当前宿主不支持引用文件夹。');
+      } else {
+        try {
+          const result = await actions.onResolveDroppedDirectories({ directories });
+          const references = Array.isArray(result) ? result : result?.references;
+          const currentDraft = composerRef.current?.value || draft;
+          const nextDraft = appendComposerReferences(currentDraft, references, {
+            textLimit: SESSION_COMPOSER_TEXT_LIMIT,
+          });
+          if (nextDraft !== currentDraft) {
+            setDraft(nextDraft);
+            actions.onDraftChange?.(nextDraft);
+          }
+          const warning = String(result?.warning || '').trim();
+          if (warning) errors.push(warning);
+          else if (nextDraft === currentDraft) {
+            errors.push(labels.directoryDropEmpty || '宿主没有返回可用的文件夹引用。');
+          }
+        } catch (error) {
+          errors.push(error?.message || labels.directoryDropFailed || '文件夹引用失败。');
+        }
+      }
+    }
+    setAttachmentUploadState({ status: errors.length ? 'error' : 'idle', error: errors[0] || '' });
   }
 
   async function handleComposerPaste(event) {
@@ -1163,17 +1208,17 @@ export function SessionWorkspace({
           revealLabel={labels.revealFile}
         />
       ) : null}
-      <header className="cwu-session-header">
-        <button className="cwu-quiet-button" onClick={actions.onBack} type="button">
+      <header className={`cwu-session-header ${actions.onBack ? 'has-back' : 'without-back'}`}>
+        {actions.onBack ? <button className="cwu-quiet-button" onClick={actions.onBack} type="button">
           ← {labels.back || '返回'}
-        </button>
+        </button> : null}
         <div className="cwu-session-heading">
-          <span>{view.contextLabel}</span>
+          {view.contextLabel ? <span>{view.contextLabel}</span> : null}
           <h1>{view.title}</h1>
         </div>
         <div className="cwu-session-actions">
           {extensions.renderHeaderActions?.({ session: view }) || null}
-          <SessionStatus label={view.statusLabel} state={view.status} tone={sessionStatusTone(view.status)} />
+          {enabledFeatures.sessionStatus ? <SessionStatus label={view.statusLabel} state={view.status} tone={sessionStatusTone(view.status)} /> : null}
           {running && actions.onInterrupt ? (
             <button className="cwu-button" onClick={actions.onInterrupt} type="button">停止</button>
           ) : null}
@@ -1342,7 +1387,13 @@ export function SessionWorkspace({
             onDrop={handleAttachmentDrop}
           >
           {attachmentDragActive ? (
-            <div className="cwu-attachment-dropzone" role="status">松开以上传附件</div>
+            <div className="cwu-attachment-dropzone" role="status">{
+              attachmentDragKind === 'directories'
+                ? (labels.directoryDrop || '松开以引用文件夹')
+                : attachmentDragKind === 'mixed'
+                  ? (labels.mixedDrop || '松开以添加文件夹引用和附件')
+                  : (labels.attachmentDrop || '松开以上传附件')
+            }</div>
           ) : null}
           <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); submit(composer.primaryMode); }}>
             {extensions.renderComposerOverlay?.({ draft, session: view, setDraft }) || null}
@@ -1424,7 +1475,7 @@ export function SessionWorkspace({
                     <span aria-hidden="true">＋</span>附件
                   </label>
                 ) : null}
-                {view.models.length ? (
+                {view.models.length && actions.onExecutionProfileChange ? (
                   <div className="cwu-execution-controls" aria-label={labels.executionSettings || '执行设置'}>
                     <label title={labels.model || '模型'}>
                       <span>{labels.model || '模型'}</span>
@@ -1483,7 +1534,7 @@ export function SessionWorkspace({
                       type="button"
                     >⚡ Fast</button>
                   </div>
-                ) : <span className="cwu-execution-profile">{view.executionProfile.label}</span>}
+                ) : view.executionProfile.label ? <span className="cwu-execution-profile">{view.executionProfile.label}</span> : null}
               </div>
               <div>
                 {composer.showSecondary ? (

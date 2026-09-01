@@ -36,6 +36,7 @@ export { createDockerIsolationProvider, dockerProfileFacts } from './docker-prov
 export {
   CHATGPT_CODEX_BASE_URL,
   CODEX_NATIVE_CREDENTIAL_REFERENCE,
+  OPENAI_COMPATIBLE_RESPONSES_GATEWAY,
   codexModelBrokerRequest,
   createCodexNativeCredentialBroker,
   readStagedCodexCredential,

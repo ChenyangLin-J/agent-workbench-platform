@@ -73,7 +73,7 @@ export function createDockerIsolationProvider({
             mode: mode(
               facts.credentials,
               facts.modelBroker && facts.dataAdapters ? 'isolated-model-and-data-credential-brokers'
-                : facts.modelBroker ? 'short-lived-codex-credential-broker'
+                : facts.modelBroker ? 'isolated-model-credential-broker'
                   : facts.dataAdapters ? 'isolated-data-adapter-credentials' : 'no-credentials',
               'credential-broker-required',
             ),
@@ -313,7 +313,7 @@ export function dockerProfileFacts(profile = {}, {
   const credentials = exactStringSet(profile.isolation?.credentialReferences, expectedCredentials)
     && (!brokerRequest.requested || (brokerRequest.supported && modelBrokerReady))
     && (!adapterRequest.requested || (adapterRequest.supported && dataAdapterBrokerReady));
-  if (!credentials) reasons.push('Container credential references require the supported short-lived Codex credential broker.');
+  if (!credentials) reasons.push('Container credential references require the supported isolated model credential broker.');
   const network = exactStringSet(profile.isolation?.networkTargets, expectedNetwork)
     && (!brokerRequest.requested || (brokerRequest.supported && modelBrokerReady))
     && (!adapterRequest.requested || adapterRequest.supported);

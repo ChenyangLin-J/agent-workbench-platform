@@ -11,6 +11,7 @@ import {
   createMinimalHost,
   runtimeEnvironment,
 } from '../src/environment/index.js';
+import { minimalHostSessionPresentation, selectMinimalHostSession } from '../src/environment/host-presentation.js';
 import { FakeRuntimeProvider } from './core-testkit.js';
 
 test('Minimal Host creates and runs project-free Sessions through the Core Kernel', async (t) => {
@@ -73,10 +74,15 @@ test('Minimal Host assets build without consumer source', async (t) => {
     readFile(assets.script, 'utf8'),
     readFile(assets.stylesheet, 'utf8'),
   ]);
-  assert.match(indexResponse, /minimal-host\.js/);
+  assert.match(indexResponse, /minimal-host\.js\?v=[a-f0-9]{12}/);
+  assert.match(indexResponse, /minimal-host\.css\?v=[a-f0-9]{12}/);
+  assert.doesNotMatch(indexResponse, /__MINIMAL_HOST_ASSET_VERSION__/);
   assert.match(indexResponse, /rel="icon" href="data:image\/svg\+xml/);
   assert.match(scriptResponse, /runtimeBinding/);
   assert.match(scriptResponse, /awb-host-error/);
+  assert.match(scriptResponse, /onToggleList/);
+  assert.doesNotMatch(scriptResponse, /Stop Run|Isolation:/);
+  assert.doesNotMatch(scriptResponse, /\/api\/environment/);
   assert.ok(scriptResponse.length > 1_000);
   assert.ok(stylesheetResponse.length > 0);
 
@@ -94,7 +100,22 @@ test('Minimal Host assets build without consumer source', async (t) => {
   t.after(() => host.stop());
   const servedIndex = await fetch(listening.url);
   assert.match(servedIndex.headers.get('content-security-policy'), /style-src 'self' 'unsafe-inline'/);
+  assert.equal(servedIndex.headers.get('cache-control'), 'no-store');
+  assert.equal((await fetch(`${listening.url}/minimal-host.js`)).headers.get('cache-control'), 'no-store');
+  assert.equal((await fetch(`${listening.url}/minimal-host.css`)).headers.get('cache-control'), 'no-store');
   assert.equal((await fetch(`${listening.url}/favicon.ico`)).status, 404);
+});
+
+test('Minimal Host presentation selects the newest available Session and preserves a valid selection', () => {
+  const sessions = [{ id: 'newest' }, { id: 'older' }];
+  assert.equal(selectMinimalHostSession(sessions), 'newest');
+  assert.equal(selectMinimalHostSession(sessions, 'older'), 'older');
+  assert.equal(selectMinimalHostSession(sessions, 'missing'), 'newest');
+  assert.equal(selectMinimalHostSession([], 'missing'), null);
+  assert.deepEqual(minimalHostSessionPresentation({ title: 'New Session', contextLabel: 'Environment' }), {
+    title: '新对话',
+    contextLabel: '',
+  });
 });
 
 test('Codex Runtime constructs an allowlisted environment without inherited secrets', () => {

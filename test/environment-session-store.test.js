@@ -56,6 +56,8 @@ test('Session store serializes concurrent binding updates without losing fields'
   t.after(() => rm(stateRoot, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot });
   const session = await store.create();
+  assert.equal(session.title, '新对话');
+  assert.equal(session.contextLabel, '');
   await Promise.all([
     store.save(session.sessionId, { runtimeProvider: 'fake' }),
     store.save(session.sessionId, { runtimeSessionId: 'runtime-2' }),
@@ -68,4 +70,21 @@ test('Session store serializes concurrent binding updates without losing fields'
     sessionId: session.sessionId,
     updatedAt: (await store.load(session.sessionId)).updatedAt,
   });
+});
+
+test('Session store serializes public reads with active mutations', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot });
+  const session = await store.create();
+  const operations = [];
+  for (let index = 0; index < 40; index += 1) {
+    operations.push(store.save(session.sessionId, { status: index % 2 ? 'running' : 'idle' }));
+    operations.push(store.list());
+    operations.push(store.get(session.sessionId));
+    operations.push(store.load(session.sessionId));
+  }
+  const results = await Promise.all(operations);
+  assert.equal(results.filter(Array.isArray).every((sessions) => sessions.length === 1), true);
+  assert.equal((await store.get(session.sessionId)).sessionId, session.sessionId);
 });

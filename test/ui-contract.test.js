@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { clipboardAttachmentFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { appendComposerReferences, clipboardAttachmentFiles, composerDropPayload, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -419,6 +419,9 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /useState\(view\.draft\)/);
   assert.match(source, /actions\.onDraftChange\?\.\(event\.target\.value\)/);
   assert.match(source, /handleAttachmentDrop/);
+  assert.match(source, /actions\.onResolveDroppedDirectories/);
+  assert.match(source, /composerDropPayload\(event\.dataTransfer\)/);
+  assert.match(source, /labels\.directoryDrop \|\| '松开以引用文件夹'/);
   assert.match(source, /actions\.onExecutionProfileChange/);
   assert.match(source, /actions\.onLoadTechnicalDetails/);
   assert.match(source, /serviceTier/);
@@ -509,6 +512,29 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(session.executionProfile.serviceTier, 'priority');
   assert.equal(session.models[0].serviceTiers[0].label, 'Fast');
   assert.equal(session.accessModes[0].label, '完全访问');
+});
+
+test('Composer drop payload separates directories from files and preserves host path hints', () => {
+  const folderFile = { name: '资料' };
+  const regularFile = { name: 'report.pdf', type: 'application/pdf', size: 42 };
+  const payload = composerDropPayload({
+    items: [{
+      kind: 'file',
+      webkitGetAsEntry: () => ({ isDirectory: true, name: '资料' }),
+      getAsFile: () => folderFile,
+    }, {
+      kind: 'file',
+      webkitGetAsEntry: () => ({ isDirectory: false, name: 'report.pdf' }),
+      getAsFile: () => regularFile,
+    }],
+    getData: (type) => type === 'text/uri-list' ? 'file:///Users/mac/My%20Project/%E8%B5%84%E6%96%99' : '',
+  });
+  assert.deepEqual(payload, {
+    directories: [{ name: '资料', pathHint: '/Users/mac/My Project/资料', file: folderFile }],
+    files: [regularFile],
+  });
+  assert.equal(appendComposerReferences('请检查', ['/Users/mac/My Project/资料']), '请检查\n/Users/mac/My Project/资料');
+  assert.equal(appendComposerReferences('1234', [{ text: '/long' }], { textLimit: 7 }), '1234\n/l');
 });
 
 test('completed consecutive commentary is grouped behind one compact disclosure per turn', async () => {

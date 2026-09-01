@@ -59,7 +59,7 @@ Implemented in Platform:
 - `env create`, `run`, `inspect` and `stop` plus the built-in Session UI and Codex Runtime lifecycle;
 - effective isolation derived from nine enforcement facets rather than provider self-report;
 - a real Docker ephemeral provider for offline Profiles and immutable `skill-source` snapshots, including exact owned-resource cleanup and a repeatable Docker smoke test;
-- a fixed model egress sidecar that stages only an unexpired ChatGPT access token, never copies `auth.json` or refresh tokens, and exposes only Codex Responses routes to the workload;
+- a fixed model egress sidecar that stages either an unexpired ChatGPT access token or one consumer-bound OpenAI-compatible gateway key, never exposes the upstream credential to the workload, and permits only Responses routes;
 - an authenticated fixed-target host proxy relay for Docker hosts that require `HTTP(S)_PROXY`, without copying controller proxy credentials into the workload or manifest;
 - Environment-time Skill snapshot staging, frontmatter-name capture, per-Run hash verification, a read-only workload mount and a fail-closed Codex Runtime allowlist that exposes no host source path;
 - controller-only Environment Bindings plus isolated OpenMetadata and BigQuery sidecars that enforce fixed targets, exact read effects, tool/query allowlists and resource ceilings without exposing data credentials to the workload;
@@ -70,7 +70,7 @@ Deliberately blocked rather than downgraded:
 - Capability kinds other than `skill-source` and the two built-in `read-only-adapter` kinds;
 - write effects, arbitrary data targets and undeclared adapter implementations.
 
-Short-lived Codex model access is enforceable for the exact `credentials.codex-native` plus `https://chatgpt.com/backend-api/codex` pairing. Long-lived API keys, arbitrary model targets and refresh-token transfer remain rejected. Local `skill-source` locks are enforceable through immutable snapshots plus Runtime inventory validation. The two built-in data adapter kinds now enforce real read-only data-backed Runs; other data services and effect kinds remain unsupported and fail closed.
+Codex model access is enforceable either through the exact `credentials.codex-native` plus `https://chatgpt.com/backend-api/codex` pairing, or through a Profile-declared OpenAI-compatible Responses gateway whose key comes from a private consumer binding. Arbitrary workload egress, embedded Profile credentials and refresh-token transfer remain rejected. Local `skill-source` locks are enforceable through immutable snapshots plus Runtime inventory validation. The two built-in data adapter kinds now enforce real read-only data-backed Runs; other data services and effect kinds remain unsupported and fail closed.
 
 On 2026-08-31, an independently defined one-Skill Profile completed a real `gpt-5.6-sol` Session in the Docker `ephemeral-machine` provider and returned the immutable Skill marker `CORE_V080_CANARY_OK`. The canary also verified zero browser console errors/warnings, a 390 px viewport without horizontal overflow, exact stopped-resource cleanup, an empty transient-credential directory after stop, and a manifest containing no access, refresh, service-token or proxy values. This closed the project-free real-model and Minimal Host browser gates. Personal later ran released v0.9 Candidate and no-Skill Baseline Profiles with the same OpenMetadata/BigQuery prompt; both returned the same table and query result with exact cleanup. The former host-process implementation matched the neutral business result only by exposing `bq` to the Agent, and was removed after the comparison.
 
@@ -117,11 +117,11 @@ An environment can remain useful without being fully offline. Required model and
 
 The first host includes only:
 
-- environment identity and effective isolation summary;
 - create/open/list the Run's Sessions;
 - `SessionWorkspace` transcript, Composer, requests, interruption and supported attachments;
-- Runtime health and explicit stop;
 - optional host extensions declared by the Consumer Profile.
+
+Run identity, isolation evidence and lifecycle controls remain available through `env inspect` and `env stop`; they are operational concerns and are not shown in the default user-facing Session surface. The host automatically opens the newest available Session and renders only controls backed by an available action.
 
 Projects, tasks, assets, memory, Side Chat, Subagents, Browser, Capability mutation and evidence dashboards are hidden unless the Profile explicitly enables an existing Platform feature or a consumer extension. The built-in host does not invent fallback domain objects to satisfy its UI.
 

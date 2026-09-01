@@ -61,6 +61,7 @@ Platform never reads a product database, chooses a package manager, stores crede
 
 - A Session can exist with no project. Project-scoped consumers may add `contextId` and labels without placing product fields in Core records.
 - `SessionBrowser` and `SessionWorkspace` own common list, transcript, Composer, queue, approval, attachment, Subagent, Realtime and responsive interaction semantics.
+- Composer classifies dropped directories separately from uploadable files. Platform owns that interaction and appends host-resolved references; consumers opt in through `actions.onResolveDroppedDirectories` and retain local-path authorization and fallback policy.
 - Products own full-text search backends, navigation and any content rendered through extension slots.
 - Host file actions receive the original authorized reference. Platform renders and normalizes metadata but does not grant filesystem access.
 
