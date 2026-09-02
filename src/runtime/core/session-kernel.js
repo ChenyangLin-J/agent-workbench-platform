@@ -195,6 +195,31 @@ export class AgentSessionKernel extends EventEmitter {
     return result;
   }
 
+  async fork(sourceSessionId, targetSessionId, { lastTurnId, host = null, cwd = null, settings = {} } = {}) {
+    assertSessionId(sourceSessionId);
+    assertSessionId(targetSessionId);
+    if (sourceSessionId === targetSessionId) throw kernelError('SESSION_FORK_TARGET_CONFLICT', 'Fork target must be a new Session.', 409);
+    if (!this.capabilities().fork) throw kernelError('RUNTIME_FORK_UNSUPPORTED', 'Provider cannot fork Sessions.', 409);
+    const normalizedLastTurnId = String(lastTurnId || '').trim();
+    if (!normalizedLastTurnId) throw new TypeError('lastTurnId is required.');
+    await this.attach(sourceSessionId, { host, cwd, settings });
+    const sourceRuntimeSession = this.sessions.get(sourceSessionId);
+    if (sourceRuntimeSession.activeTurnId) throw kernelError('RUNTIME_TURN_ACTIVE', 'Cannot fork an active Turn.', 409);
+    if (this.sessions.has(targetSessionId) || await this.bindingStore.load(targetSessionId)) {
+      throw kernelError('SESSION_ALREADY_ATTACHED', 'Fork target Session already has a Runtime binding.', 409);
+    }
+    const forked = await sourceRuntimeSession.fork(normalizedLastTurnId, { cwd: cwd ?? sourceRuntimeSession.cwd, ...settings });
+    const runtimeSession = this.provider.createSession({ host, cwd: forked.cwd, settings });
+    try {
+      await runtimeSession.start();
+      await runtimeSession.resume(forked.runtimeSessionId, { cwd: forked.cwd, settings });
+      return await this.adopt(targetSessionId, runtimeSession);
+    } catch (error) {
+      runtimeSession.close();
+      throw error;
+    }
+  }
+
   async respondToRequest(sessionId, requestToken, response) {
     const pending = this.pendingRequests.get(requestToken);
     if (!pending || pending.sessionId !== sessionId) throw kernelError('REQUEST_NOT_FOUND', 'Pending request not found.', 404);

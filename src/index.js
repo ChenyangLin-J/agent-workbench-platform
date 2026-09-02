@@ -84,6 +84,18 @@ export {
   normalizeSideChatSnapshot,
 } from './features/side-chat.js';
 
+export {
+  SessionBranchController,
+  planSessionBranch,
+  sessionMessageBranchEligibility,
+} from './features/session-branch.js';
+
+export {
+  SessionTurnQueue,
+  createQueuedTurnDispatcher,
+  queuedTurnWasAccepted,
+} from './features/turn-queue.js';
+
 export { useSessionUserInput } from './ui-hooks.js';
 
 export {

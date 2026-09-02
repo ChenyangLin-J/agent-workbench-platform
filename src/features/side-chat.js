@@ -77,6 +77,8 @@ export class SideChatController {
     if (record.status === 'running') throw sideChatError('SIDE_CHAT_TURN_ACTIVE', 'Side Chat is already running.', 409);
     const normalizedInput = normalizeInput(input);
     if (!normalizedInput.length) throw sideChatError('SIDE_CHAT_INPUT_REQUIRED', 'Side Chat input is required.', 400);
+    const runtimeInput = options.runtimeInput === undefined ? normalizedInput : normalizeInput(options.runtimeInput);
+    if (!runtimeInput.length) throw sideChatError('SIDE_CHAT_RUNTIME_INPUT_REQUIRED', 'Side Chat Runtime input is required.', 400);
     const startedAt = this.now();
     const running = await this.store.save(normalizeSideChatRecord({
       ...record,
@@ -87,7 +89,7 @@ export class SideChatController {
       updatedAt: startedAt,
     }));
     try {
-      const result = await this.runtime.submit(record.runtimeSessionId, normalizedInput, {
+      const result = await this.runtime.submit(record.runtimeSessionId, runtimeInput, {
         model: optionalString(options.model ?? record.model),
         reasoningEffort: optionalString(options.reasoningEffort ?? record.reasoningEffort),
       });
@@ -158,6 +160,10 @@ export class SideChatController {
   async update(sideChatId, { title, model, reasoningEffort } = {}) {
     const record = await this.#loadMutable(sideChatId);
     if (record.status === 'running') throw sideChatError('SIDE_CHAT_TURN_ACTIVE', 'Side Chat is already running.', 409);
+    await this.runtime.update?.(record.runtimeSessionId, {
+      model: model === undefined ? record.model : model,
+      reasoningEffort: reasoningEffort === undefined ? record.reasoningEffort : reasoningEffort,
+    });
     return this.store.save(normalizeSideChatRecord({
       ...record,
       title: title === undefined ? record.title : title,

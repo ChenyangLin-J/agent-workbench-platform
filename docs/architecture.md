@@ -61,14 +61,17 @@ Platform never reads a product database, chooses a package manager, stores crede
 
 - A Session can exist with no project. Project-scoped consumers may add `contextId` and labels without placing product fields in Core records.
 - `SessionBrowser` and `SessionWorkspace` own common list, transcript, Composer, queue, approval, attachment, Subagent, Realtime and responsive interaction semantics.
+- `steer`, `queuedTurns`, `messageEdit`, and `messageFork` are separate feature-profile choices. The UI requires both the relevant flag and a supplied action; Runtime capabilities remain the execution authority.
+- Edit and Fork create a new Session branch and never replace the source Session's Runtime binding. Platform plans the branch and owns provider-neutral queue recovery; a consumer still owns authorization, storage adapters, product linking and navigation to the new Session.
+- The Minimal Host treats live Session synchronization as correctness: its event stream sends heartbeats, the client reconnects with the last observed event id, and running or waiting Sessions poll authoritative state until they leave that state. Persisted technical progress remains available through the shared collapsed detail surface.
 - Composer classifies dropped directories separately from uploadable files. Platform owns that interaction and appends host-resolved references; consumers opt in through `actions.onResolveDroppedDirectories` and retain local-path authorization and fallback policy.
 - Products own full-text search backends, navigation and any content rendered through extension slots.
 - Host file actions receive the original authorized reference. Platform renders and normalizes metadata but does not grant filesystem access.
 
 ### Side Chat and Subagent
 
-- Side Chat is an explicit fork with its own lifecycle and persistence adapter. Closing, switching Session, refreshing, Runtime expiry, and explicit deletion remain different actions.
-- Subagents come from Runtime parent/child relationships and are not represented as Side Chats. Products choose visibility and placement, not parsing semantics.
+- Side Chat is an explicit fork with its own lifecycle and persistence adapter. Closing, switching Session, refreshing, Runtime expiry, and explicit deletion remain different actions. Platform supplies the lifecycle controller and React panel; consumers translate provider events and bind stores.
+- Subagents come from Runtime parent/child relationships and are not represented as Side Chats. Platform supplies both embedded and auxiliary-panel UI; products choose visibility, placement and navigation, not parsing semantics.
 
 ### Capabilities and credentials
 

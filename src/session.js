@@ -113,8 +113,9 @@ export function sessionComposerPresentation({
   editing = false,
   submitting = false,
   canSteer = true,
+  canQueue = true,
 } = {}) {
-  const primaryMode = running && !editing ? canSteer ? 'steer' : 'queue' : 'turn';
+  const primaryMode = running && !editing ? canSteer ? 'steer' : canQueue ? 'queue' : null : 'turn';
   const primaryLabel = submitting
     ? '发送中…'
     : editing
@@ -122,14 +123,14 @@ export function sessionComposerPresentation({
       : previewOnly
         ? sessionId ? '发送并恢复' : '发送并创建'
         : running
-          ? canSteer ? '追加当前' : '下一轮'
+          ? canSteer ? '追加当前' : canQueue ? '下一轮' : '等待当前任务结束'
           : '发送';
   return {
     primaryMode,
     primaryLabel,
     secondaryMode: 'queue',
     secondaryLabel: '下一轮',
-    showSecondary: Boolean(running && !editing && canSteer),
+    showSecondary: Boolean(running && !editing && canSteer && canQueue),
   };
 }
 

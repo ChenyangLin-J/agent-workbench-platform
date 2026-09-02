@@ -328,6 +328,65 @@ export function SideChatPanel({
   );
 }
 
+export function SubagentPanel({ panel = {}, actions = {}, labels = {} }) {
+  const agents = Array.isArray(panel.agents) ? panel.agents : [];
+  const detail = panel.selected || null;
+  if (!detail) {
+    return (
+      <section className="cwu-subagent-panel" aria-label={labels.ariaLabel || 'Subagents'}>
+        {agents.length ? agents.map((agent) => (
+          <SubagentCard
+            actions={{
+              onOpenSubagent: actions.onSelect,
+              onStopSubagent: actions.onStop,
+            }}
+            agent={agent}
+            key={agent.id}
+            mode="full"
+            openLabel={labels.detail || '查看链路'}
+          />
+        )) : (
+          <div className="cwu-subagent-panel-empty">
+            <strong>{labels.emptyTitle || '暂无 Subagent'}</strong>
+            <p>{labels.emptyBody || '由主 Agent 派发后，会在这里显示运行配置、状态与完整执行链路。'}</p>
+          </div>
+        )}
+      </section>
+    );
+  }
+  const agent = detail.subagent || detail.agent || {};
+  const chain = [
+    ...(detail.parent ? [{
+      id: 'parent', title: labels.parent || '父 Session',
+      detail: detail.parent.name || detail.parent.id || labels.mainSession || '主 Session', status: 'completed',
+    }] : []),
+    ...(detail.chain || []),
+  ];
+  return (
+    <section className="cwu-subagent-panel is-detail" aria-label={labels.detailAriaLabel || 'Subagent 执行链路'}>
+      <header className="cwu-subagent-panel-head">
+        <button onClick={() => actions.onBack?.()} type="button">{labels.back || '← 返回'}</button>
+        <div>
+          <strong>{agent.nickname || agent.role || agent.name || 'Subagent'}</strong>
+          <span>{[agent.model, agent.reasoningEffort].filter(Boolean).join(' · ') || labels.inheritedConfig || '配置由主 Agent 派发'}</span>
+        </div>
+      </header>
+      <div className="cwu-subagent-chain">
+        {chain.map((step, index) => (
+          <article className="cwu-subagent-step" data-status={step.status || 'unknown'} key={step.id || `step-${index}`}>
+            <i aria-hidden="true" />
+            <div><strong>{step.title || step.type || '执行步骤'}</strong>{step.detail ? <p>{step.detail}</p> : null}</div>
+          </article>
+        ))}
+      </div>
+      <footer className="cwu-subagent-panel-actions">
+        {actions.onOpen ? <button className="cwu-button" onClick={() => actions.onOpen(agent)} type="button">{labels.open || '作为 Session 打开'}</button> : null}
+        {agent.canStop && actions.onStop ? <button className="cwu-button cwu-danger" onClick={() => actions.onStop(agent)} type="button">{labels.stop || '停止 Agent'}</button> : null}
+      </footer>
+    </section>
+  );
+}
+
 export function SessionBrowser({
   browser,
   detail = null,
@@ -803,8 +862,17 @@ export function SessionWorkspace({
     ? selectedExecutionModel.reasoningEfforts
     : ['low', 'medium', 'high', 'xhigh'];
   const fastTier = selectedExecutionModel?.serviceTiers.find((tier) => tier.id === 'priority') || null;
-  const canSubmit = Boolean((draft.trim() || readyAttachments.length) && !composerDisabled && !uploading && actions.onSubmit);
-  const composer = sessionComposerPresentation({ running, submitting, canSteer: enabledFeatures.steer });
+  const composer = sessionComposerPresentation({
+    running,
+    submitting,
+    canSteer: enabledFeatures.steer,
+    canQueue: enabledFeatures.queuedTurns,
+  });
+  const canSubmit = Boolean((draft.trim() || readyAttachments.length)
+    && !composerDisabled
+    && !uploading
+    && actions.onSubmit
+    && composer.primaryMode);
   const latestMessage = view.messages.at(-1);
   const latestMessageActivityKey = latestMessage
     ? `${latestMessage.id}:${latestMessage.content.length}:${latestMessage.content.slice(-32)}`
@@ -1283,8 +1351,8 @@ export function SessionWorkspace({
                 <React.Fragment key={message.id}>
                   <Message
                     message={message}
-                    onEditMessage={actions.onEditMessage}
-                    onForkMessage={actions.onForkMessage}
+                    onEditMessage={enabledFeatures.messageEdit ? actions.onEditMessage : null}
+                    onForkMessage={enabledFeatures.messageFork ? actions.onForkMessage : null}
                     onOpenAttachment={actions.onOpenAttachment}
                     onOpenLink={actions.onOpenLink}
                     onRevealLink={actions.onRevealLink}
@@ -1366,7 +1434,7 @@ export function SessionWorkspace({
               {hasNewMessagesBelow ? <small>{labels.newMessages || '有新消息'}</small> : null}
             </button>
           ) : null}
-          {view.queuedTurns.length ? (
+          {enabledFeatures.queuedTurns && view.queuedTurns.length ? (
             <section aria-label={labels.queuedTitle || '下一轮待发送'} className="cwu-queued-turns">
               <header><strong>{labels.queuedTitle || '下一轮待发送'}</strong><span>{view.queuedTurns.length} 条</span></header>
               <div className="cwu-queued-turn-list">
@@ -1405,7 +1473,7 @@ export function SessionWorkspace({
                   : (labels.attachmentDrop || '松开以上传附件')
             }</div>
           ) : null}
-          <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); submit(composer.primaryMode); }}>
+          <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); if (composer.primaryMode) submit(composer.primaryMode); }}>
             {extensions.renderComposerOverlay?.({ draft, session: view, setDraft }) || null}
             {attachments.length || attachmentUploadState.error ? (
               <div className="cwu-attachments" aria-live="polite">
@@ -1597,7 +1665,7 @@ export function SessionWorkspace({
   );
 }
 
-export function SubagentCard({ agent, actions, mode = 'full' }) {
+export function SubagentCard({ agent, actions, mode = 'full', openLabel = '打开线程' }) {
   const [stopping, setStopping] = useState(false);
   const title = [agent.nickname, agent.role].filter(Boolean).join(' · ') || agent.name;
   const meta = [agent.model, agent.reasoningEffort].filter(Boolean).join(' · ');
@@ -1613,7 +1681,7 @@ export function SubagentCard({ agent, actions, mode = 'full' }) {
       {mode === 'full' ? <p>{agent.prompt || agent.stateMessage || agent.name}</p> : null}
       {mode === 'full' ? (
         <div>
-          {actions.onOpenSubagent ? <button className="cwu-button" onClick={() => actions.onOpenSubagent(agent)} type="button">打开线程</button> : null}
+          {actions.onOpenSubagent ? <button className="cwu-button" onClick={() => actions.onOpenSubagent(agent)} type="button">{openLabel}</button> : null}
           {agent.canStop && actions.onStopSubagent ? (
             <button className="cwu-button cwu-danger" disabled={stopping} onClick={stop} type="button">
               {stopping ? '正在停止…' : '停止 Agent'}

@@ -163,6 +163,17 @@ export class FakeRuntimeSession extends EventEmitter {
     return { runtimeTurnId: expectedTurnId, status: 'interrupt_requested' };
   }
 
+  async fork(lastTurnId, { cwd = this.cwd } = {}) {
+    if (this.activeTurnId) throw Object.assign(new Error('turn active'), { code: 'RUNTIME_TURN_ACTIVE' });
+    if (!lastTurnId) throw new TypeError('lastTurnId is required');
+    return {
+      runtimeProvider: this.providerId,
+      runtimeSessionId: `${this.providerId}-fork-${FakeRuntimeSession.nextSessionId++}`,
+      activeTurnId: null,
+      cwd,
+    };
+  }
+
   complete(runtimeTurnId = this.activeTurnId, status = 'completed') {
     if (runtimeTurnId === this.activeTurnId) this.activeTurnId = null;
     this.emit('event', {

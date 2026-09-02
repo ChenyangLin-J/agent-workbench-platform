@@ -151,6 +151,10 @@ function normalizeFeatures(features = {}) {
   const defaults = {
     sessionWorkspace: true,
     attachments: true,
+    steer: true,
+    messageEdit: true,
+    messageFork: true,
+    queuedTurns: true,
     sideChat: false,
     subagents: false,
     browser: false,

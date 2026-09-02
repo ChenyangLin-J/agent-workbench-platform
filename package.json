@@ -1,6 +1,6 @@
 {
   "name": "@agent-workbench/platform",
-  "version": "0.14.2",
+  "version": "0.15.0",
   "description": "Shared Codex runtime, Session UI, Sub Agent, Realtime, runnable environments, browser, and capability primitives for independent agent workbench products.",
   "license": "MIT",
   "repository": {
@@ -47,6 +47,8 @@
     "./capability-manager": "./src/capability-manager.js",
     "./file-preview": "./src/file-preview.js",
     "./features/side-chat": "./src/features/side-chat.js",
+    "./features/session-branch": "./src/features/session-branch.js",
+    "./features/turn-queue": "./src/features/turn-queue.js",
     "./ui-hooks": "./src/ui-hooks.js",
     "./runtime": "./src/runtime.js",
     "./runtime/core": "./src/runtime/core/index.js",

@@ -426,6 +426,24 @@
 .cwu-side-chat-composer > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--cwu-muted); font-size: 9px; }
 .cwu-side-chat-composer .cwu-send { padding: 5px 8px; font-size: 10px; }
 .cwu-side-chat-error { border-top: 1px solid color-mix(in srgb, var(--cwu-error) 28%, var(--cwu-border)); background: color-mix(in srgb, var(--cwu-error) 8%, var(--cwu-surface)); color: var(--cwu-error); padding: 7px 9px; font-size: 10px; }
+.cwu-subagent-panel { min-height: 0; height: 100%; display: grid; align-content: start; gap: 8px; overflow-y: auto; padding: 10px; color: var(--cwu-text); }
+.cwu-subagent-panel.is-detail { grid-template-rows: auto minmax(0, 1fr) auto; gap: 0; overflow: hidden; padding: 0; }
+.cwu-subagent-panel-empty { display: grid; place-items: center; align-content: center; gap: 8px; min-height: 260px; padding: 28px 18px; color: var(--cwu-muted); text-align: center; }
+.cwu-subagent-panel-empty strong { color: var(--cwu-text); }
+.cwu-subagent-panel-empty p { max-width: 280px; margin: 0; font-size: 11px; line-height: 1.5; }
+.cwu-subagent-panel-head { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--cwu-border); }
+.cwu-subagent-panel-head > button { border: 0; background: transparent; color: var(--cwu-muted); padding: 4px; cursor: pointer; }
+.cwu-subagent-panel-head > div { min-width: 0; }
+.cwu-subagent-panel-head strong, .cwu-subagent-panel-head span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cwu-subagent-panel-head span { margin-top: 2px; color: var(--cwu-muted); font-size: 9px; }
+.cwu-subagent-chain { min-height: 0; overflow-y: auto; padding: 12px 11px; }
+.cwu-subagent-step { position: relative; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 7px; min-height: 56px; }
+.cwu-subagent-step:not(:last-child)::after { content: ""; position: absolute; top: 13px; bottom: 0; left: 4px; width: 1px; background: var(--cwu-border); }
+.cwu-subagent-step > i { position: relative; z-index: 1; width: 9px; height: 9px; margin-top: 3px; border: 2px solid var(--cwu-surface); border-radius: 50%; background: var(--cwu-accent); box-shadow: 0 0 0 1px var(--cwu-border); }
+.cwu-subagent-step[data-status="inProgress"] > i { background: #d97706; }
+.cwu-subagent-step strong { font-size: 11px; }
+.cwu-subagent-step p { max-height: 7.2em; margin: 3px 0 0; overflow: auto; color: var(--cwu-muted); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; line-height: 1.4; }
+.cwu-subagent-panel-actions { display: flex; justify-content: flex-end; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--cwu-border); }
 .cwu-capability-panel { display: grid; gap: 22px; color: var(--cwu-text); }
 .cwu-capability-panel > header, .cwu-capability-group > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .cwu-capability-panel > header span, .cwu-capability-group > header span { color: var(--cwu-muted); font-size: 11px; }

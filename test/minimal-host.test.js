@@ -357,6 +357,88 @@ test('Minimal Host inserts accepted user input before synchronously completed Ru
   assert.equal(detail.messages[0].turnId, detail.messages[1].turnId);
 });
 
+test('Minimal Host persists a queued Turn and starts it after the active Turn completes', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-queue-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const provider = new FakeRuntimeProvider({ capabilities: { steer: true } });
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = { 'content-type': 'application/json' };
+  const created = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST', headers, body: '{}',
+  }).then((response) => response.json());
+  const sessionId = created.session.sessionId;
+  const first = await fetch(`${listening.url}/api/sessions/${sessionId}/turns`, {
+    method: 'POST', headers, body: JSON.stringify({ prompt: 'first' }),
+  }).then((response) => response.json());
+  const queuedResponse = await fetch(`${listening.url}/api/sessions/${sessionId}/turns`, {
+    method: 'POST', headers, body: JSON.stringify({ prompt: 'second', mode: 'queue' }),
+  });
+  assert.equal(queuedResponse.status, 202);
+  assert.equal((await queuedResponse.json()).queued, true);
+  assert.deepEqual((await fetch(`${listening.url}/api/sessions/${sessionId}`).then((response) => response.json()))
+    .session.queuedTurns.map((turn) => turn.prompt), ['second']);
+
+  provider.createdSessions[0].complete(first.result.runtimeTurnId);
+  await eventually(() => provider.createdSessions[0].startedTurns.length === 2);
+  await eventually(async () => !(await store.loadQueuedTurns())[sessionId]?.length);
+  const detail = await fetch(`${listening.url}/api/sessions/${sessionId}`).then((response) => response.json());
+  assert.deepEqual(detail.session.queuedTurns, []);
+  assert.deepEqual(detail.session.messages.filter((message) => message.role === 'user').map((message) => message.content), [
+    'first',
+    'second',
+  ]);
+});
+
+test('Minimal Host edits or forks a completed message into an independent Session', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-branch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const provider = new FakeRuntimeProvider({ capabilities: { fork: true } });
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = { 'content-type': 'application/json' };
+  const created = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST', headers, body: '{}',
+  }).then((response) => response.json());
+  const sourceSessionId = created.session.sessionId;
+  const first = await fetch(`${listening.url}/api/sessions/${sourceSessionId}/turns`, {
+    method: 'POST', headers, body: JSON.stringify({ prompt: 'first' }),
+  }).then((response) => response.json());
+  const sourceRuntimeId = provider.createdSessions[0].runtimeSessionId;
+  provider.createdSessions[0].complete(first.result.runtimeTurnId);
+  await eventually(async () => !(await store.get(sourceSessionId)).runtimeBinding.activeTurnId);
+  const second = await fetch(`${listening.url}/api/sessions/${sourceSessionId}/turns`, {
+    method: 'POST', headers, body: JSON.stringify({ prompt: 'second' }),
+  }).then((response) => response.json());
+  provider.createdSessions[0].complete(second.result.runtimeTurnId);
+  await eventually(async () => !(await store.get(sourceSessionId)).runtimeBinding.activeTurnId);
+
+  const branchResponse = await fetch(`${listening.url}/api/sessions/${sourceSessionId}/branches`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      replaceTurnId: second.result.runtimeTurnId,
+      prompt: 'replacement',
+      intent: 'edit',
+    }),
+  });
+  assert.equal(branchResponse.status, 201);
+  const branch = (await branchResponse.json()).session;
+  assert.notEqual(branch.sessionId, sourceSessionId);
+  assert.equal((await store.get(sourceSessionId)).runtimeBinding.runtimeSessionId, sourceRuntimeId);
+  assert.notEqual(branch.runtimeBinding.runtimeSessionId, sourceRuntimeId);
+  assert.deepEqual(branch.messages.filter((message) => message.role === 'user').map((message) => message.content), [
+    'first',
+    'replacement',
+  ]);
+});
+
 test('Minimal Host client resolves APIs inside its mounted product namespace', () => {
   assert.equal(
     resolveMinimalHostUrl('/api/sessions', { baseUrl: 'https://datamama.example/agent/' }),
@@ -474,4 +556,12 @@ function runManifest(root) {
     extensions: {},
     lifecycle: { createdAt: new Date().toISOString(), startedAt: new Date().toISOString() },
   };
+}
+
+async function eventually(predicate, { attempts = 50 } = {}) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail('Condition was not met in time');
 }

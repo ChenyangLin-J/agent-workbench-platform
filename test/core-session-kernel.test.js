@@ -118,6 +118,21 @@ test('a newly created Runtime Session can be adopted without a resume round trip
   assert.equal(provider.createdSessions.length, 1);
 });
 
+test('Session Kernel forks into a new product Session without mutating the source binding', async (t) => {
+  const provider = new FakeRuntimeProvider({ capabilities: { fork: true } });
+  const store = new InMemoryBindingStore();
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store });
+  t.after(() => kernel.close());
+  const source = await kernel.attach('session-source', { cwd: '/workspace/source' });
+  const target = await kernel.fork('session-source', 'session-target', { lastTurnId: 'turn-before' });
+  assert.equal((await store.load('session-source')).runtimeSessionId, source.runtimeSessionId);
+  assert.notEqual(target.runtimeSessionId, source.runtimeSessionId);
+  assert.equal((await store.load('session-target')).runtimeSessionId, target.runtimeSessionId);
+  assert.equal(provider.createdSessions.length, 2);
+  assert.equal(provider.createdSessions[0].runtimeSessionId, source.runtimeSessionId);
+  assert.equal(provider.createdSessions[1].runtimeSessionId, target.runtimeSessionId);
+});
+
 test('event replay is bounded and signals recovery gaps', async (t) => {
   const provider = new FakeRuntimeProvider();
   const { CoreEventReplayBuffer } = await import('../src/runtime/core/contracts.js');

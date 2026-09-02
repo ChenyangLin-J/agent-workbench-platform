@@ -184,10 +184,13 @@ export class CodexRuntimeSession extends EventEmitter {
     });
     const threadId = String(result?.thread?.id || '');
     if (!threadId) throw providerError('RUNTIME_SESSION_ID_MISSING', 'Codex did not return a forked thread id.');
-    this.runtimeSessionId = threadId;
-    this.activeTurnId = null;
-    this.completedTurnIds.clear();
-    return this.describe();
+    return {
+      runtimeProvider: this.providerId,
+      runtimeSessionId: threadId,
+      activeTurnId: null,
+      cwd: params.cwd ?? this.cwd,
+      runtimeProfile: profileFromResult(result),
+    };
   }
 
   async unsubscribe() {

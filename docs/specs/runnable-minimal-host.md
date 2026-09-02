@@ -120,13 +120,16 @@ The first host includes only:
 
 - create/open/list the Run's Sessions;
 - `SessionWorkspace` transcript, Composer, requests, interruption and supported attachments;
+- persistent queued Turns with delete/recovery, plus independent message Edit/Fork branches when the Profile flags and Runtime capabilities allow them;
 - optional host extensions declared by the Consumer Profile.
 
 Run identity, isolation evidence and lifecycle controls remain available through `env inspect` and `env stop`; they are operational concerns and are not shown in the default user-facing Session surface. The host automatically opens the newest available Session and renders only controls backed by an available action.
 
+Live synchronization is part of this minimum surface, not an optional product feature. The Host sends event-stream heartbeats; the client reconnects with replay from the last observed event id and polls the authoritative Session while it is running or waiting. The transcript exposes persisted commentary and a collapsed technical-progress summary so a transient stream failure cannot leave the page permanently showing stale work.
+
 When `features.attachments` is enabled, the Minimal Host stages uploaded files through the Platform `ResourceStore` under the current Run's private `resources` root. A Turn may reference only resources previously uploaded to that same Session; Runtime acceptance commits them as Session-durable resources and the persisted transcript contains normalized descriptors, not host paths. A rejected Turn leaves its staged resources recoverable for retry. The first accepted user message also replaces the default Session title while preserving titles explicitly supplied by a consumer.
 
-Projects, tasks, assets, memory, Side Chat, Subagents, Browser, Capability mutation and evidence dashboards are hidden unless the Profile explicitly enables an existing Platform feature or a consumer extension. The built-in host does not invent fallback domain objects to satisfy its UI.
+`steer`, `queuedTurns`, `messageEdit`, and `messageFork` are independent Profile controls; disabling one removes its action without implying that the others are disabled. Projects, tasks, assets, memory, Side Chat, Subagents, Browser, Capability mutation and evidence dashboards are hidden unless the Profile explicitly enables an existing Platform feature or a consumer extension. The built-in host does not invent fallback domain objects to satisfy its UI.
 
 ## Data Skill Lab adoption
 

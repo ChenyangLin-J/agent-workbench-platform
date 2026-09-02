@@ -101,4 +101,11 @@ test('Agent and Personal share message roles and running composer actions', () =
     showSecondary: true,
   });
   assert.deepEqual(sessionComposerPresentation({ previewOnly: true, sessionId: 'saved-session' }).primaryLabel, '发送并恢复');
+  assert.deepEqual(sessionComposerPresentation({ running: true, canSteer: false, canQueue: false }), {
+    primaryMode: null,
+    primaryLabel: '等待当前任务结束',
+    secondaryMode: 'queue',
+    secondaryLabel: '下一轮',
+    showSecondary: false,
+  });
 });

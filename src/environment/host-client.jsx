@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client';
 
 import { SessionBrowser } from '../ui/index.jsx';
+import { sessionMessageBranchEligibility } from '../features/session-branch.js';
+import { maintainMinimalHostEventStream } from './host-event-stream.js';
 import { minimalHostSessionPresentation, selectMinimalHostSession } from './host-presentation.js';
 import { resolveMinimalHostUrl } from './host-url.js';
 import '../ui/styles.css';
@@ -10,6 +12,11 @@ import './assets/host.css';
 const bootstrap = globalThis.__AGENT_WORKBENCH_BOOTSTRAP__ || {};
 const hostBaseUrl = bootstrap.baseUrl || globalThis.document?.baseURI;
 const attachmentsEnabled = bootstrap.features?.attachments === true;
+const steerEnabled = featureEnabled('steer') && bootstrap.runtimeCapabilities?.steer !== false;
+const messageEditEnabled = featureEnabled('messageEdit');
+const messageForkEnabled = featureEnabled('messageFork') && bootstrap.runtimeCapabilities?.fork !== false;
+const queuedTurnsEnabled = featureEnabled('queuedTurns');
+const RUNNING_SESSION_POLL_MS = 2_000;
 
 function hostUrl(path) {
   return resolveMinimalHostUrl(path, { baseUrl: hostBaseUrl });
@@ -50,7 +57,7 @@ function MinimalHostApp() {
   const refreshSession = useCallback(async (sessionId = selectedId) => {
     if (!sessionId) return null;
     const body = await request(`api/sessions/${encodeURIComponent(sessionId)}`);
-    const nextSession = minimalHostSessionPresentation(body.session);
+    const nextSession = messageActionPresentation(minimalHostSessionPresentation(body.session));
     setSession(nextSession);
     return nextSession;
   }, [request, selectedId]);
@@ -91,11 +98,28 @@ function MinimalHostApp() {
     }
     refreshSession(selectedId).catch((nextError) => setError(nextError.message));
     const controller = new AbortController();
-    void streamEvents(selectedId, controller.signal, scheduleRefresh).catch((nextError) => {
+    void maintainMinimalHostEventStream({
+      open: ({ afterEventId, signal }) => fetch(hostUrl(
+        `api/sessions/${encodeURIComponent(selectedId)}/events?after=${encodeURIComponent(afterEventId)}`,
+      ), {
+        headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
+        signal,
+      }),
+      onEvent: scheduleRefresh,
+      signal: controller.signal,
+    }).catch((nextError) => {
       if (nextError.name !== 'AbortError') setError(nextError.message);
     });
     return () => controller.abort();
   }, [refreshSession, scheduleRefresh, selectedId]);
+
+  const sessionRunning = session?.status === 'running' || session?.status === 'waiting';
+  useEffect(() => {
+    if (!selectedId || !sessionRunning) return undefined;
+    scheduleRefresh();
+    const timer = setInterval(scheduleRefresh, RUNNING_SESSION_POLL_MS);
+    return () => clearInterval(timer);
+  }, [scheduleRefresh, selectedId, sessionRunning]);
 
   async function createSession() {
     setError('');
@@ -163,6 +187,32 @@ function MinimalHostApp() {
     });
   }
 
+  async function branchMessage({ turnId, prompt }, intent) {
+    setError('');
+    try {
+      const body = await request(`api/sessions/${encodeURIComponent(selectedId)}/branches`, {
+        method: 'POST',
+        body: JSON.stringify({ replaceTurnId: turnId, prompt, intent }),
+      });
+      const nextSession = messageActionPresentation(minimalHostSessionPresentation(body.session));
+      setSession(nextSession);
+      await refreshSessions();
+      setSelectedId(nextSession.sessionId);
+      scheduleRefresh();
+      return nextSession;
+    } catch (nextError) {
+      setError(nextError.message);
+      throw nextError;
+    }
+  }
+
+  async function deleteQueuedTurn(queuedTurnId) {
+    await request(`api/sessions/${encodeURIComponent(selectedId)}/queued-turns/${encodeURIComponent(queuedTurnId)}`, {
+      method: 'DELETE',
+    });
+    await refreshSession(selectedId);
+  }
+
   async function respondToRequest({ token, decision, answers }) {
     await request(`api/sessions/${encodeURIComponent(selectedId)}/requests/${encodeURIComponent(token)}`, {
       method: 'POST',
@@ -179,9 +229,12 @@ function MinimalHostApp() {
       realtime: false,
       sessionStatus: false,
       sideChats: false,
-      steer: false,
+      steer: steerEnabled,
+      messageEdit: messageEditEnabled,
+      messageFork: messageForkEnabled,
+      queuedTurns: queuedTurnsEnabled,
       subagents: false,
-      technicalDetails: false,
+      technicalDetails: true,
     },
     actions: {
       onSubmit: submit,
@@ -189,6 +242,9 @@ function MinimalHostApp() {
       onResolveDroppedDirectories: attachmentsEnabled ? resolveDroppedDirectories : null,
       onOpenAttachment: attachmentsEnabled ? openAttachment : null,
       onInterrupt: session.status === 'running' ? interrupt : null,
+      onEditMessage: messageEditEnabled ? (input) => branchMessage(input, 'edit') : null,
+      onForkMessage: messageForkEnabled ? (input) => branchMessage(input, 'fork') : null,
+      onDeleteQueuedTurn: queuedTurnsEnabled ? deleteQueuedTurn : null,
       onRespondToRequest: respondToRequest,
       onError: (nextError) => setError(nextError.message),
     },
@@ -238,28 +294,30 @@ function MinimalHostApp() {
   );
 }
 
-async function streamEvents(sessionId, signal, onEvent) {
-  const response = await fetch(hostUrl(`api/sessions/${encodeURIComponent(sessionId)}/events`), {
-    headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
-    signal,
-  });
-  if (!response.ok || !response.body) throw new Error(`Event stream failed (${response.status})`);
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) return;
-    buffer += decoder.decode(value, { stream: true });
-    const blocks = buffer.split('\n\n');
-    buffer = blocks.pop() || '';
-    for (const block of blocks) {
-      if (block.split('\n').some((line) => line.startsWith('data: '))) onEvent();
-    }
-  }
+createRoot(document.getElementById('root')).render(<MinimalHostApp />);
+
+function messageActionPresentation(session) {
+  const latestUserMessage = [...(session.messages || [])].reverse().find((message) => message.role === 'user');
+  return {
+    ...session,
+    messages: (session.messages || []).map((message) => ({
+      ...message,
+      ...sessionMessageBranchEligibility({
+        session,
+        message,
+        isLatestUserMessage: message === latestUserMessage,
+        features: {
+          messageEdit: messageEditEnabled,
+          messageFork: messageForkEnabled,
+        },
+      }),
+    })),
+  };
 }
 
-createRoot(document.getElementById('root')).render(<MinimalHostApp />);
+function featureEnabled(name) {
+  return bootstrap.features?.[name] !== false;
+}
 
 async function uploadSessionAttachments(sessionId, files, { onProgress } = {}) {
   const uploaded = [];

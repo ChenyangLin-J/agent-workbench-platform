@@ -48,6 +48,49 @@ export class EnvironmentSessionStore {
     return this.get(sessionId);
   }
 
+  async createBranch(sourceSessionId, { beforeTurnId, ownerId = null, title = null } = {}) {
+    const targetTurnId = nonEmptyString(beforeTurnId, 'Branch Turn id');
+    const sessionId = `session-${this.uuid()}`;
+    const timestamp = this.#time();
+    await this.#mutate((document) => {
+      const source = requireSession(document, sourceSessionId);
+      requireOwnedSession(source, sourceSessionId, ownerId);
+      const messageIndex = source.messages.findIndex((message) => message.turnId === targetTurnId);
+      if (messageIndex < 0) throw storeError('SESSION_BRANCH_TURN_NOT_FOUND', `Turn not found: ${targetTurnId}`, 404);
+      const messages = structuredClone(source.messages.slice(0, messageIndex));
+      const retainedTurnIds = new Set(messages.map((message) => message.turnId).filter(Boolean));
+      document.sessions[sessionId] = {
+        id: sessionId,
+        ownerId: source.ownerId,
+        title: title == null ? source.title : nonEmptyString(title, 'Session title'),
+        status: 'idle',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        completedAt: null,
+        messages,
+        technicalItems: structuredClone(source.technicalItems.filter((item) => retainedTurnIds.has(item.turnId))),
+        plan: [],
+      };
+    });
+    return this.get(sessionId, { ownerId });
+  }
+
+  async remove(sessionId, { ownerId = null, requireUnbound = false } = {}) {
+    let removed = null;
+    await this.#mutate((document) => {
+      const session = document.sessions[sessionId];
+      requireOwnedSession(session, sessionId, ownerId);
+      if (requireUnbound && document.bindings[sessionId]) {
+        throw storeError('SESSION_BOUND', `Session is already bound: ${sessionId}`, 409);
+      }
+      removed = sessionView(session, document.bindings[sessionId]);
+      delete document.sessions[sessionId];
+      delete document.bindings[sessionId];
+      if (document.queuedTurns) delete document.queuedTurns[sessionId];
+    });
+    return removed;
+  }
+
   async get(sessionId, { ownerId = null } = {}) {
     const document = await this.#readQueued();
     const session = document.sessions[sessionId];
@@ -79,6 +122,22 @@ export class EnvironmentSessionStore {
       }
     });
     return structuredClone(binding);
+  }
+
+  async loadQueuedTurns() {
+    const document = await this.#readQueued();
+    return structuredClone(document.queuedTurns || {});
+  }
+
+  async saveQueuedTurns(entries = {}) {
+    let saved;
+    await this.#mutate((document) => {
+      saved = entries && typeof entries === 'object' && !Array.isArray(entries)
+        ? structuredClone(entries)
+        : {};
+      document.queuedTurns = saved;
+    });
+    return structuredClone(saved);
   }
 
   async recordUserInput(sessionId, input, { attachments = [], ownerId = null, turnId = null } = {}) {
@@ -195,7 +254,7 @@ export class EnvironmentSessionStore {
 }
 
 function emptyStore() {
-  return { version: STORE_VERSION, sessions: {}, bindings: {} };
+  return { version: STORE_VERSION, sessions: {}, bindings: {}, queuedTurns: {} };
 }
 
 function publicSession(session) {

@@ -28,7 +28,9 @@ const host = createMinimalHost({
   accessToken: 'browser-smoke-token',
 });
 const listening = await host.start();
-const proxy = createMountProxy(listening.port);
+const mountedProxy = createMountProxy(listening.port);
+const proxy = mountedProxy.server;
+const proxyState = mountedProxy.state;
 const proxyAddress = await listen(proxy);
 const browser = await chromium.launch({
   headless: true,
@@ -40,6 +42,7 @@ try {
   await page.goto(`http://127.0.0.1:${proxyAddress.port}/agent/runtime/`);
   await page.getByRole('button', { name: '新建对话' }).click();
   await page.getByText('1 个对话', { exact: true }).waitFor();
+  await waitFor(() => proxyState.eventConnections >= 2);
 
   await page.getByLabel('添加图片或附件').setInputFiles({
     name: 'browser-canary.txt',
@@ -64,6 +67,19 @@ try {
   await page.getByText('browser smoke', { exact: true }).first().waitFor();
 
   const runtime = provider.createdSessions[0];
+  proxyState.dropEventStreams();
+  runtime.emit('event', {
+    type: 'item_started',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: runtime.activeTurnId,
+    providerEvent: 'item/started',
+    payload: { item: {
+      id: 'browser-smoke-tool',
+      type: 'mcpToolCall',
+      status: 'inProgress',
+      text: 'Browser smoke tool',
+    } },
+  });
   runtime.emit('event', {
     type: 'item_delta',
     runtimeSessionId: runtime.runtimeSessionId,
@@ -73,7 +89,11 @@ try {
   });
   runtime.complete();
   await page.getByText('Browser smoke OK', { exact: true }).waitFor();
-  console.log('Minimal Host browser attachment, title, and running-action smoke passed under /agent/runtime/.');
+  const technicalDetails = page.getByRole('button', { name: /本轮执行详情/ });
+  await technicalDetails.waitFor();
+  await technicalDetails.click();
+  await page.getByText('Tool call', { exact: true }).waitFor();
+  console.log('Minimal Host browser attachment, reconnect, polling fallback, progress, title, and running-action smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);
@@ -82,26 +102,60 @@ try {
 }
 
 function createMountProxy(upstreamPort) {
-  return createServer((incoming, outgoing) => {
+  const activeEventStreams = new Set();
+  const state = {
+    eventConnections: 0,
+    failNextEventStream: true,
+    rejectEventStreams: false,
+    dropEventStreams() {
+      state.rejectEventStreams = true;
+      for (const stream of activeEventStreams) {
+        stream.outgoing.destroy();
+        stream.upstream.destroy();
+      }
+      activeEventStreams.clear();
+    },
+  };
+  const server = createServer((incoming, outgoing) => {
     const mountedPath = incoming.url || '/';
     if (!mountedPath.startsWith('/agent/runtime/')) {
       outgoing.writeHead(404).end('Not found');
       return;
     }
     const path = mountedPath.slice('/agent/runtime'.length) || '/';
-    const upstream = httpRequest({
+    const eventStream = /\/api\/sessions\/[^/]+\/events(?:\?|$)/.test(path);
+    if (eventStream) {
+      state.eventConnections += 1;
+      if (state.failNextEventStream) {
+        state.failNextEventStream = false;
+        outgoing.writeHead(502).end('Synthetic initial event stream failure');
+        return;
+      }
+      if (state.rejectEventStreams) {
+        outgoing.writeHead(502).end('Synthetic event stream outage');
+        return;
+      }
+    }
+    let upstream;
+    upstream = httpRequest({
       host: '127.0.0.1',
       port: upstreamPort,
       method: incoming.method,
       path,
       headers: incoming.headers,
     }, (response) => {
+      const active = { outgoing, upstream };
+      if (eventStream) activeEventStreams.add(active);
+      const cleanup = () => activeEventStreams.delete(active);
+      outgoing.once('close', cleanup);
+      response.once('close', cleanup);
       outgoing.writeHead(response.statusCode || 500, response.headers);
       response.pipe(outgoing);
     });
     upstream.on('error', (error) => outgoing.destroy(error));
     incoming.pipe(upstream);
   });
+  return { server, state };
 }
 
 function browserExecutable() {

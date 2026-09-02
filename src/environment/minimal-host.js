@@ -3,6 +3,8 @@ import { chmod, readFile, rm } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 
 import { MAX_SESSION_ATTACHMENT_BYTES } from '../attachments.js';
+import { SessionBranchController } from '../features/session-branch.js';
+import { SessionTurnQueue, createQueuedTurnDispatcher } from '../features/turn-queue.js';
 import { resolveContainedPath } from './paths.js';
 import {
   commitEnvironmentSessionAttachments,
@@ -15,6 +17,7 @@ import {
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_ATTACHMENT_BODY_BYTES = Math.ceil(MAX_SESSION_ATTACHMENT_BYTES * 4 / 3) + 64 * 1024;
+const EVENT_STREAM_HEARTBEAT_MS = 15_000;
 
 export function createMinimalHost({
   manifest,
@@ -34,6 +37,10 @@ export function createMinimalHost({
   if (!sessionStore?.list || !sessionStore?.create || !sessionStore?.get) throw new TypeError('Session store is required');
   const ownerHeader = normalizeSessionOwnerHeader(sessionOwnerHeader);
   const attachmentsEnabled = manifest.features?.attachments === true;
+  const steerEnabled = featureEnabled(manifest, 'steer');
+  const messageEditEnabled = featureEnabled(manifest, 'messageEdit');
+  const messageForkEnabled = featureEnabled(manifest, 'messageFork');
+  const queuedTurnsEnabled = featureEnabled(manifest, 'queuedTurns');
   const resourcesRoot = manifest.paths.resources || join(manifest.paths.state || manifest.paths.workspace, 'resources');
   const sessionResourceStore = attachmentsEnabled
     ? resourceStore || createEnvironmentSessionResourceStore({ root: resourcesRoot })
@@ -43,6 +50,35 @@ export function createMinimalHost({
     void route(request, response).catch((error) => sendError(response, error));
   });
   let unsubscribeEvents = null;
+  const turnQueueReady = initializeTurnQueue(sessionStore);
+  const dispatcherReady = turnQueueReady.then((turnQueue) => createQueuedTurnDispatcher({
+    queue: turnQueue,
+    activeTurnForSession: (session) => Boolean(session?.runtimeBinding?.activeTurnId),
+    runtime: {
+      readSession: async (sessionId) => sessionHistoryView(await sessionStore.get(sessionId)),
+      startTurn: async (sessionId, input, queuedTurn) => {
+        const result = await kernel.submit(sessionId, input, {
+          mode: 'queue',
+          ...runtimeAttachOptions(manifest),
+        });
+        const attachments = queuedTurn.attachments.length
+          ? await commitEnvironmentSessionAttachments({
+              attachments: queuedTurn.attachments,
+              sessionId,
+              turnId: result.runtimeTurnId,
+              store: sessionResourceStore,
+            })
+          : [];
+        await sessionStore.recordUserInput(sessionId, queuedTurn.prompt || '请查看附件并按其内容处理。', {
+          attachments,
+          ownerId: queuedTurn.context?.ownerId ?? null,
+          turnId: result.runtimeTurnId,
+        });
+        return { ...result, id: result.runtimeTurnId };
+      },
+    },
+  }));
+  const branchController = createMinimalHostBranchController({ manifest, kernel, sessionStore });
 
   async function route(request, response) {
     const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
@@ -76,6 +112,34 @@ export function createMinimalHost({
       const session = await sessionStore.create({ title: body.title || '新对话', ownerId });
       await kernel.attach(session.sessionId, runtimeAttachOptions(manifest));
       return sendJson(response, 201, { session: await sessionStore.get(session.sessionId, { ownerId }) });
+    }
+    const branchRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/branches$/);
+    if (branchRoute && request.method === 'POST') {
+      const sourceSessionId = decodeURIComponent(branchRoute[1]);
+      const source = await sessionStore.get(sourceSessionId, { ownerId });
+      const body = await readJsonBody(request);
+      const intent = body.intent === 'edit' ? 'edit' : 'fork';
+      if (intent === 'edit' && !messageEditEnabled) {
+        throw hostError('HOST_MESSAGE_EDIT_DISABLED', 'Message editing is disabled for this Environment.', 403);
+      }
+      if (intent === 'fork' && !messageForkEnabled) {
+        throw hostError('HOST_MESSAGE_FORK_DISABLED', 'Message forking is disabled for this Environment.', 403);
+      }
+      if (source.runtimeBinding?.activeTurnId) {
+        throw hostError('HOST_SESSION_ACTIVE', 'An active Session cannot be branched.', 409);
+      }
+      const result = await branchController.branch({
+        sourceSessionId,
+        replaceTurnId: body.replaceTurnId,
+        prompt: body.prompt,
+        context: { ownerId },
+      });
+      return sendJson(response, 201, {
+        sourceSessionId,
+        replacedTurnId: result.replacedTurnId,
+        session: await sessionStore.get(result.session.sessionId, { ownerId }),
+        turn: result.turn,
+      });
     }
     const directoryRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/directory-references$/);
     if (directoryRoute) {
@@ -122,6 +186,17 @@ export function createMinimalHost({
         return sendAttachment(response, attachment, body);
       }
     }
+    const queuedTurnRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/queued-turns\/([^/]+)$/);
+    if (queuedTurnRoute && request.method === 'DELETE') {
+      const sessionId = decodeURIComponent(queuedTurnRoute[1]);
+      const queuedTurnId = decodeURIComponent(queuedTurnRoute[2]);
+      await sessionStore.get(sessionId, { ownerId });
+      requireQueuedTurnsEnabled(queuedTurnsEnabled);
+      const queue = await turnQueueReady;
+      const removed = await queue.remove(sessionId, queuedTurnId);
+      if (!removed) throw hostError('HOST_QUEUED_TURN_NOT_FOUND', 'Queued Turn not found.', 404);
+      return sendJson(response, 200, { removed, queueLength: queue.list(sessionId).length });
+    }
     const sessionRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(turns|interrupt|events|requests\/([^/]+)))?$/);
     if (sessionRoute) {
       const sessionId = decodeURIComponent(sessionRoute[1]);
@@ -131,6 +206,7 @@ export function createMinimalHost({
         await kernel.attach(sessionId, runtimeAttachOptions(manifest));
         const session = await sessionStore.get(sessionId, { ownerId });
         session.pendingRequests = kernel.getPendingRequests(sessionId).map(pendingRequestView);
+        session.queuedTurns = queuedTurnsEnabled ? (await turnQueueReady).list(sessionId) : [];
         return sendJson(response, 200, { session });
       }
       if (request.method === 'POST' && action === 'turns') {
@@ -146,8 +222,32 @@ export function createMinimalHost({
             })
           : [];
         const input = runtimeTurnInput(turn, attachmentInputs);
+        const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest));
+        const queue = await turnQueueReady;
+        const requestedMode = String(body.mode || 'auto');
+        const canSteerActiveTurn = steerEnabled && kernel.capabilities().steer === true;
+        if (requestedMode === 'steer' && !canSteerActiveTurn) {
+          throw hostError('HOST_STEER_DISABLED', 'Steering is disabled for this Environment.', 403);
+        }
+        const shouldQueue = requestedMode === 'queue'
+          || queue.list(sessionId).length > 0
+          || (Boolean(binding.activeTurnId) && !canSteerActiveTurn);
+        if (shouldQueue) {
+          requireQueuedTurnsEnabled(queuedTurnsEnabled);
+          const queuedTurn = await queue.enqueue(sessionId, {
+            input,
+            prompt: turn.displayText,
+            attachments: turn.attachments,
+            afterTurnId: binding.activeTurnId || latestTurnId(await sessionStore.get(sessionId, { ownerId })),
+            context: { ownerId },
+          });
+          if (!binding.activeTurnId) {
+            queueMicrotask(() => void dispatcherReady.then((dispatcher) => dispatcher.startNext(sessionId)).catch(() => {}));
+          }
+          return sendJson(response, 202, { queued: true, queuedTurn, queueLength: queue.list(sessionId).length });
+        }
         const result = await kernel.submit(sessionId, input, {
-          mode: body.mode || 'auto',
+          mode: requestedMode,
           ...runtimeAttachOptions(manifest),
         });
         const committedAttachments = turn.attachments.length
@@ -185,6 +285,7 @@ export function createMinimalHost({
       return sendJavascript(response, `globalThis.__AGENT_WORKBENCH_BOOTSTRAP__=${JSON.stringify({
         accessToken,
         features: manifest.features,
+        runtimeCapabilities: kernel.capabilities(),
       })};\n`);
     }
     if (request.method === 'GET' && assetsRoot) return serveAsset(response, assetsRoot, url.pathname);
@@ -203,11 +304,14 @@ export function createMinimalHost({
     });
     const send = (event) => response.write(`id: ${event.eventId}\ndata: ${JSON.stringify(event)}\n\n`);
     const unsubscribe = kernel.subscribe(sessionId, send, { afterEventId });
-    const client = { response, unsubscribe };
+    const heartbeat = setInterval(() => response.write(': heartbeat\n\n'), EVENT_STREAM_HEARTBEAT_MS);
+    heartbeat.unref?.();
+    const client = { response, unsubscribe, heartbeat };
     clients.add(client);
     response.write(': connected\n\n');
     response.on('close', () => {
       clients.delete(client);
+      clearInterval(heartbeat);
       unsubscribe();
     });
   }
@@ -215,7 +319,9 @@ export function createMinimalHost({
   return {
     server,
     async start() {
-      if (!unsubscribeEvents) unsubscribeEvents = subscribeStore(kernel, sessionStore);
+      const dispatcher = await dispatcherReady;
+      if (!unsubscribeEvents) unsubscribeEvents = subscribeStore(kernel, sessionStore, dispatcher);
+      if (queuedTurnsEnabled) await dispatcher.recover();
       if (socketPath) await rm(socketPath, { force: true });
       await new Promise((resolve, reject) => {
         server.once('error', reject);
@@ -237,7 +343,9 @@ export function createMinimalHost({
     async stop() {
       unsubscribeEvents?.();
       unsubscribeEvents = null;
+      (await dispatcherReady).close();
       for (const client of clients) {
+        clearInterval(client.heartbeat);
         client.unsubscribe();
         client.response.end();
       }
@@ -279,10 +387,95 @@ async function chmodSocketPrivate(socketPath) {
   }
 }
 
-function subscribeStore(kernel, sessionStore) {
-  const listener = (event) => void sessionStore.applyEvent(event).catch(() => {});
+function subscribeStore(kernel, sessionStore, dispatcher) {
+  const listener = (event) => void sessionStore.applyEvent(event)
+    .then(() => event.type === 'turn_completed' ? dispatcher.startNext(event.sessionId) : null)
+    .catch(() => {});
   kernel.on?.('event', listener);
   return () => kernel.off?.('event', listener);
+}
+
+function initializeTurnQueue(sessionStore) {
+  return Promise.resolve(sessionStore.loadQueuedTurns?.() ?? {}).then((entries) => new SessionTurnQueue({
+    entries,
+    persist: typeof sessionStore.saveQueuedTurns === 'function'
+      ? (snapshot) => sessionStore.saveQueuedTurns(snapshot)
+      : null,
+  }));
+}
+
+function createMinimalHostBranchController({ manifest, kernel, sessionStore }) {
+  return new SessionBranchController({
+    history: {
+      read: async (sessionId, { context } = {}) => sessionHistoryView(
+        await sessionStore.get(sessionId, { ownerId: context?.ownerId ?? null }),
+      ),
+    },
+    runtime: {
+      create: async ({ reservation }) => kernel.attach(reservation.sessionId, runtimeAttachOptions(manifest)),
+      fork: async ({ sourceSessionId, lastTurnId, reservation }) => kernel.fork(
+        sourceSessionId,
+        reservation.sessionId,
+        { lastTurnId, ...runtimeAttachOptions(manifest) },
+      ),
+      submit: async ({ session, input }) => kernel.submit(session.sessionId, input, {
+        mode: 'queue',
+        ...runtimeAttachOptions(manifest),
+      }),
+    },
+    sessions: {
+      reserve: ({ sourceSessionId, plan, context }) => sessionStore.createBranch(sourceSessionId, {
+        beforeTurnId: plan.replaceTurnId,
+        ownerId: context?.ownerId ?? null,
+      }),
+      register: ({ reservation, context }) => sessionStore.get(reservation.sessionId, {
+        ownerId: context?.ownerId ?? null,
+      }),
+      recordInput: ({ session, turn, input, context }) => sessionStore.recordUserInput(session.sessionId, input, {
+        ownerId: context?.ownerId ?? null,
+        turnId: turn.runtimeTurnId,
+      }),
+      rollback: async ({ reservation, branch, context }) => {
+        if (reservation && !branch) {
+          await sessionStore.remove(reservation.sessionId, {
+            ownerId: context?.ownerId ?? null,
+            requireUnbound: true,
+          }).catch(() => {});
+        }
+      },
+    },
+  });
+}
+
+function sessionHistoryView(session) {
+  const turns = [];
+  const byId = new Map();
+  for (const message of session?.messages || []) {
+    if (!message.turnId) continue;
+    let turn = byId.get(message.turnId);
+    if (!turn) {
+      turn = { id: message.turnId, status: message.turnStatus || 'completed', items: [] };
+      byId.set(message.turnId, turn);
+      turns.push(turn);
+    }
+    turn.items.push({
+      type: message.role === 'user' ? 'userMessage' : 'agentMessage',
+      text: message.content,
+    });
+  }
+  return { ...session, turns };
+}
+
+function latestTurnId(session) {
+  return [...(session?.messages || [])].reverse().find((message) => message.turnId)?.turnId ?? null;
+}
+
+function featureEnabled(manifest, name) {
+  return manifest.features?.[name] !== false;
+}
+
+function requireQueuedTurnsEnabled(enabled) {
+  if (!enabled) throw hostError('HOST_QUEUED_TURNS_DISABLED', 'Queued Turns are disabled for this Environment.', 403);
 }
 
 function runtimeAttachOptions(manifest) {
