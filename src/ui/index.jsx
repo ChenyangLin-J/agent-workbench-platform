@@ -1232,9 +1232,6 @@ export function SessionWorkspace({
         <div className="cwu-session-actions">
           {extensions.renderHeaderActions?.({ session: view }) || null}
           {enabledFeatures.sessionStatus ? <SessionStatus label={view.statusLabel} state={view.status} tone={sessionStatusTone(view.status)} /> : null}
-          {running && actions.onInterrupt ? (
-            <button className="cwu-button" onClick={actions.onInterrupt} type="button">停止</button>
-          ) : null}
           {enabledFeatures.subagents !== 'hidden'
             && (view.subagents.length || actions.onRefreshSubagents || actions.onOpenSubagent) ? (
             <button className="cwu-button" onClick={openSubagents} type="button">
@@ -1551,7 +1548,16 @@ export function SessionWorkspace({
                   </div>
                 ) : view.executionProfile.label ? <span className="cwu-execution-profile">{view.executionProfile.label}</span> : null}
               </div>
-              <div>
+              <div className="cwu-composer-actions">
+                {running && actions.onInterrupt ? (
+                  <button
+                    aria-label="停止当前处理"
+                    className="cwu-button cwu-stop"
+                    onClick={actions.onInterrupt}
+                    title="停止当前处理"
+                    type="button"
+                  >停止</button>
+                ) : null}
                 {composer.showSecondary ? (
                   <button className="cwu-button" disabled={!canSubmit} onClick={() => submit(composer.secondaryMode)} type="button">
                     {composer.secondaryLabel}
@@ -1928,7 +1934,7 @@ function DocumentPreview({
     >
       <section className="cwu-document-preview">
         <header>
-          <div><span>{editing ? '本地 Markdown · 编辑中' : file.attachmentId ? 'Session 附件 · 只读' : '本地文件 · 只读'}</span><h2>{file.name}</h2></div>
+          <div><span>{editing ? '本地 Markdown · 编辑中' : file.attachmentId ? 'Session 附件 · 只读' : file.resource ? 'Session 产物 · 只读' : '本地文件 · 只读'}</span><h2>{file.name}</h2></div>
           <div>
             {editing ? (
               <>

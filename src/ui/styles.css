@@ -364,6 +364,9 @@
 .cwu-composer textarea { width: 100%; min-height: 68px; max-height: 220px; resize: none; overflow-y: auto; border: 0; outline: 0; background: transparent; color: var(--cwu-text); padding: 6px 7px; font: inherit; font-size: 14px; line-height: 1.5; }
 .cwu-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--cwu-muted); font-size: 11px; }
 .cwu-composer-meta { min-width: 0; flex-wrap: wrap; }
+.cwu-composer-actions { flex: 0 0 auto; }
+.cwu-stop { border-color: color-mix(in srgb, var(--cwu-error) 40%, var(--cwu-border)); color: var(--cwu-error); }
+.cwu-stop:hover, .cwu-stop:focus-visible { border-color: var(--cwu-error); background: color-mix(in srgb, var(--cwu-error) 8%, var(--cwu-surface)); outline: 0; }
 .cwu-execution-controls { min-width: 0; display: flex; align-items: center; gap: 5px; }
 .cwu-execution-controls label { min-width: 0; display: inline-flex; align-items: center; gap: 3px; color: var(--cwu-muted); }
 .cwu-execution-controls label > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }

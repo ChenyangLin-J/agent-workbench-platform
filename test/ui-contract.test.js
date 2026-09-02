@@ -414,6 +414,17 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /cwu-history-separator/);
   assert.match(source, /previousTop \+ \(current\.scrollHeight - previousHeight\)/);
   assert.match(source, /cwu-queued-turns/);
+  assert.match(source, /className="cwu-composer-actions"[\s\S]*?className="cwu-button cwu-stop"[\s\S]*?composer\.showSecondary/);
+  const headerActionsStart = source.indexOf('<div className="cwu-session-actions">');
+  const headerActionsEnd = source.indexOf("</header>", headerActionsStart);
+  assert.notEqual(headerActionsStart, -1);
+  assert.notEqual(headerActionsEnd, -1);
+  assert.equal(
+    source.slice(headerActionsStart, headerActionsEnd).includes("actions.onInterrupt"),
+    false,
+  );
+  assert.match(styles, /\.cwu-stop \{[^}]*color: var\(--cwu-error\);/);
+  assert.match(source, /file\.resource \? 'Session 产物 · 只读'/);
   assert.match(source, /const submittedDraft = draft/);
   assert.match(source, /setDraft\(submittedDraft\)/);
   assert.match(source, /useState\(view\.draft\)/);

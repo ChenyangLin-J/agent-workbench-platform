@@ -50,6 +50,12 @@ try {
   await page.getByRole('textbox', { name: '输入问题……' }).fill('browser smoke');
   await page.getByRole('button', { name: '发送' }).click();
   await waitFor(() => provider.createdSessions[0]?.startedTurns.length === 1);
+  await page.getByRole('button', { name: '停止当前处理' }).waitFor();
+  await page.getByRole('button', { name: '下一轮' }).waitFor();
+  const composerActionLabels = await page.locator('.cwu-composer-actions button').allTextContents();
+  if (composerActionLabels[0]?.trim() !== '停止' || composerActionLabels[1]?.trim() !== '下一轮') {
+    throw new Error(`Composer actions are out of order: ${composerActionLabels.join(', ')}`);
+  }
   const runtimeInput = provider.createdSessions[0].startedTurns[0].input;
   if (!Array.isArray(runtimeInput)
     || !runtimeInput.some((item) => String(item?.text || '').includes('BROWSER_ATTACHMENT_CANARY'))) {
@@ -67,7 +73,7 @@ try {
   });
   runtime.complete();
   await page.getByText('Browser smoke OK', { exact: true }).waitFor();
-  console.log('Minimal Host browser attachment and title smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser attachment, title, and running-action smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);
