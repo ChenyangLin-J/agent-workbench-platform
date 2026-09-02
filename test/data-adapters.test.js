@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -198,6 +199,37 @@ test('BigQuery adapter dry-runs every query and executes only allowlisted SELECT
   assert.equal(execution.options.headers.authorization, 'Bearer google-token');
   assert.equal(JSON.parse(execution.options.body).maximumBytesBilled, '1024');
   assert.equal(JSON.parse(execution.options.body).maxResults, '20');
+});
+
+test('BigQuery service-account tokens request the Jobs API scope', async () => {
+  const adapter = adapterProfile().capabilities.adapters.find((entry) => entry.kind === 'bigquery-read');
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  let requestedScope = null;
+  const rpc = createDataAdapterRpcHandler({
+    adapter,
+    credential: { credential: {
+      type: 'service_account',
+      client_email: 'bigquery-reader@example.test',
+      private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+      token_uri: GOOGLE_OAUTH_TARGET,
+    } },
+    now: () => new Date('2026-09-02T00:00:00.000Z'),
+    fetchImpl: async (url, options) => {
+      if (url === GOOGLE_OAUTH_TARGET) {
+        const assertion = new URLSearchParams(options.body).get('assertion');
+        const claims = JSON.parse(Buffer.from(assertion.split('.')[1], 'base64url').toString('utf8'));
+        requestedScope = claims.scope;
+        return jsonResponse({ access_token: 'service-account-token', expires_in: 3600 });
+      }
+      if (url.endsWith('/jobs')) return jsonResponse({ statistics: { query: {
+        statementType: 'SELECT', totalBytesProcessed: '0', referencedTables: [],
+      } } });
+      throw new Error(`unexpected URL: ${url}`);
+    },
+  });
+  const result = await rpc(rpcRequest(1, 'tools/call', { name: 'dry_run_query', arguments: { query: 'SELECT 1' } }));
+  assert.equal(result.error, undefined);
+  assert.equal(requestedScope, 'https://www.googleapis.com/auth/bigquery');
 });
 
 test('module MCP adapter stages named credentials and enforces tool and network allowlists', async (t) => {

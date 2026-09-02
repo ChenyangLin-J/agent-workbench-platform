@@ -129,7 +129,7 @@ This is a trusted-code extension, not an arbitrary plugin sandbox: the reviewed 
 }
 ```
 
-The bindings file must be a `0600` regular file, not a symlink, and contains no credential values. OpenMetadata accepts only an environment binding; BigQuery accepts only a private ADC file binding. Pass the same file when the provider inspects or stages credentials:
+The bindings file must be a `0600` regular file, not a symlink, and contains no credential values. OpenMetadata accepts only an environment binding; BigQuery accepts only a private ADC file binding. Service-account ADC is supported and requests the BigQuery OAuth scope required by the Jobs API; read-only behavior is enforced separately by the adapter's SELECT/project/byte/row gates and the service account's IAM roles. Pass the same file when the provider inspects or stages credentials:
 
 ```bash
 agent-workbench env create --profile ./profile.json --bindings ./bindings.json

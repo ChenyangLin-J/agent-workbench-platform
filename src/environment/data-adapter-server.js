@@ -16,7 +16,10 @@ import {
 } from './data-adapters.js';
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
-const GOOGLE_BIGQUERY_READ_SCOPE = 'https://www.googleapis.com/auth/bigquery.readonly';
+// BigQuery query and dry-run requests both use the Jobs API. Google rejects
+// service-account tokens limited to bigquery.readonly before IAM or the
+// adapter's SELECT-only policy can be evaluated.
+const GOOGLE_BIGQUERY_JOB_SCOPE = 'https://www.googleapis.com/auth/bigquery';
 
 export async function runDataAdapterServer({
   adapter,
@@ -355,7 +358,7 @@ function serviceAccountAssertion(credential, current) {
   const header = base64Json({ alg: 'RS256', typ: 'JWT' });
   const claims = base64Json({
     iss: credential.client_email,
-    scope: GOOGLE_BIGQUERY_READ_SCOPE,
+    scope: GOOGLE_BIGQUERY_JOB_SCOPE,
     aud: GOOGLE_OAUTH_TARGET,
     iat: Math.floor(current / 1_000),
     exp: Math.floor(current / 1_000) + 3_600,
