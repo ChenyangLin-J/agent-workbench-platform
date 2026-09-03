@@ -159,7 +159,7 @@ agent-workbench env stop <environment-id-run-id-or-path>
 
 Use `--root <directory>` on every command to replace the default `~/.agent-workbench/environments`. `env run` on an Environment creates a new immutable Run; running an existing stopped Run resumes its retained Session state. `env stop` on an Environment stops its active Runs.
 
-To adopt portable persistence for existing filesystem state, stop the source Run and call `env migrate-sessions` before starting the first Run that uses the new root. The destination declared by the bindings must not exist. The command copies transcripts and Resources, verifies committed references and managed digests, excludes Runtime bindings and queued Turns, and retains the source. A Session created by the old Run is read-only in the new Run until an explicit continue/fork flow is implemented; reading it never creates a replacement Runtime thread.
+To adopt portable persistence for existing filesystem state, stop the source Run and call `env migrate-sessions` before starting the first Run that uses the new root. The destination declared by the bindings must not exist. The command copies transcripts and Resources, verifies committed references and managed digests, excludes Runtime bindings and queued Turns, and retains the source. A Session created by the old Run remains read-only for direct continuation in the new Run; reading it never creates a replacement Runtime thread. When Edit or Fork is enabled, an owner can explicitly branch an eligible retained user message into a fresh current-Run Runtime with bounded transcript context. The old Runtime binding is never resumed or copied.
 
 The generated layout is:
 

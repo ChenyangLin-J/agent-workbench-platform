@@ -101,6 +101,18 @@ test('Minimal Host reads portable Sessions across Runs without reusing stale Run
     body: JSON.stringify({ prompt: '保留这条消息' }),
   });
   assert.equal(turnResponse.status, 202);
+  const firstTurn = (await turnResponse.json()).result;
+  providerA.createdSessions[0].complete(firstTurn.runtimeTurnId);
+  await eventually(async () => !(await runtimeStoreA.load(created.sessionId)).activeTurnId);
+  const secondTurnResponse = await fetch(`${listeningA.url}/api/sessions/${created.sessionId}/turns`, {
+    method: 'POST',
+    headers: ownerHeaders,
+    body: JSON.stringify({ prompt: '准备跨 Run 编辑' }),
+  });
+  assert.equal(secondTurnResponse.status, 202);
+  const secondTurn = (await secondTurnResponse.json()).result;
+  providerA.createdSessions[0].complete(secondTurn.runtimeTurnId);
+  await eventually(async () => !(await runtimeStoreA.load(created.sessionId)).activeTurnId);
   assert.equal((await runtimeStoreA.load(created.sessionId)).runtimeSessionId != null, true);
   await hostA.stop();
 
@@ -123,7 +135,7 @@ test('Minimal Host reads portable Sessions across Runs without reusing stale Run
   assert.equal(listed.sessions[0].id, created.sessionId);
   assert.equal(listed.sessions[0].runtimeContinuationRequired, true);
   const detail = await fetch(`${listeningB.url}/api/sessions/${created.sessionId}`, { headers: ownerHeaders }).then((response) => response.json());
-  assert.equal(detail.session.messages[0].content, '保留这条消息');
+  assert.deepEqual(detail.session.messages.map((message) => message.content), ['保留这条消息', '准备跨 Run 编辑']);
   assert.equal(detail.session.composerDisabled, true);
   assert.equal(providerB.createdSessions.length, 0);
 
@@ -135,6 +147,46 @@ test('Minimal Host reads portable Sessions across Runs without reusing stale Run
   assert.equal(rejected.status, 409);
   assert.equal((await rejected.json()).error.code, 'HOST_SESSION_CONTINUATION_REQUIRED');
   assert.equal(await runtimeStoreB.load(created.sessionId), null);
+
+  const forkedResponse = await fetch(`${listeningB.url}/api/sessions/${created.sessionId}/branches`, {
+    method: 'POST',
+    headers: ownerHeaders,
+    body: JSON.stringify({
+      replaceTurnId: secondTurn.runtimeTurnId,
+      prompt: '跨 Run 分叉成功',
+      intent: 'fork',
+    }),
+  });
+  assert.equal(forkedResponse.status, 201);
+  const forked = await forkedResponse.json();
+  assert.equal(forked.sourceArchived, false);
+  assert.notEqual(forked.session.sessionId, created.sessionId);
+  assert.deepEqual(forked.session.messages.map((message) => message.content), ['保留这条消息', '跨 Run 分叉成功']);
+  assert.equal((await sessionStoreB.get(created.sessionId, { ownerId: 'user-a' })).archived, false);
+  assert.equal(providerB.createdSessions.length, 1);
+  assert.match(providerB.createdSessions[0].startedTurns[0].input[0].text, /保留这条消息/);
+  assert.equal(providerB.createdSessions[0].startedTurns[0].input[1].text, '跨 Run 分叉成功');
+  assert.equal((await runtimeStoreB.load(forked.session.sessionId)).portableHistory, true);
+
+  const editedResponse = await fetch(`${listeningB.url}/api/sessions/${created.sessionId}/branches`, {
+    method: 'POST',
+    headers: ownerHeaders,
+    body: JSON.stringify({
+      replaceTurnId: secondTurn.runtimeTurnId,
+      prompt: '跨 Run 编辑成功',
+      intent: 'edit',
+    }),
+  });
+  assert.equal(editedResponse.status, 201);
+  const edited = await editedResponse.json();
+  assert.equal(edited.sourceArchived, true);
+  assert.notEqual(edited.session.sessionId, created.sessionId);
+  assert.deepEqual(edited.session.messages.map((message) => message.content), ['保留这条消息', '跨 Run 编辑成功']);
+  assert.equal((await sessionStoreB.get(created.sessionId, { ownerId: 'user-a' })).archived, true);
+  assert.equal(providerB.createdSessions.length, 2);
+  assert.match(providerB.createdSessions[1].startedTurns[0].input[0].text, /保留这条消息/);
+  assert.equal(providerB.createdSessions[1].startedTurns[0].input[1].text, '跨 Run 编辑成功');
+  assert.equal((await runtimeStoreB.load(edited.session.sessionId)).portableHistory, true);
   assert.deepEqual(await fetch(`${listeningB.url}/api/sessions`, {
     headers: { 'x-session-owner': 'user-b' },
   }).then((response) => response.json()), { sessions: [] });
@@ -148,7 +200,7 @@ test('Minimal Host reads portable Sessions across Runs without reusing stale Run
     body: JSON.stringify({ title: 'Run B Session' }),
   }).then((response) => response.json()).then((body) => body.session);
   assert.equal(createdInRunB.createdRunId, 'run-b');
-  assert.equal((await sessionStoreA.list()).length, 2);
+  assert.equal((await sessionStoreA.list()).length, 3);
   assert.equal((await runtimeStoreB.load(createdInRunB.sessionId)).runtimeSessionId != null, true);
 });
 
@@ -604,6 +656,11 @@ test('Minimal Host presentation selects the newest available Session and preserv
   assert.deepEqual(minimalHostSessionPresentation({ title: 'New Session', contextLabel: 'Environment' }), {
     title: '新对话',
     contextLabel: '',
+  });
+  assert.deepEqual(minimalHostSessionPresentation({
+    title: '收入分析', contextId: 'owned', contextLabel: '我的对话',
+  }), {
+    title: '收入分析', contextId: 'owned', contextLabel: '',
   });
 });
 

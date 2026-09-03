@@ -328,6 +328,7 @@ function MinimalHostApp() {
 
   const sharedReadOnly = session?.access?.kind === 'shared';
   const sessionMutable = !session?.runtimeContinuationRequired && !sharedReadOnly;
+  const sessionBranchable = !sharedReadOnly;
   const detail = useMemo(() => session ? {
     session,
     features: {
@@ -349,8 +350,8 @@ function MinimalHostApp() {
       onResolveDroppedDirectories: attachmentsEnabled && sessionMutable ? resolveDroppedDirectories : null,
       onOpenAttachment: attachmentsEnabled ? openAttachment : null,
       onInterrupt: sessionMutable && session.status === 'running' ? interrupt : null,
-      onEditMessage: messageEditEnabled && sessionMutable ? (input) => branchMessage(input, 'edit') : null,
-      onForkMessage: messageForkEnabled && sessionMutable ? (input) => branchMessage(input, 'fork') : null,
+      onEditMessage: messageEditEnabled && sessionBranchable ? (input) => branchMessage(input, 'edit') : null,
+      onForkMessage: messageForkEnabled && sessionBranchable ? (input) => branchMessage(input, 'fork') : null,
       onDeleteQueuedTurn: queuedTurnsEnabled && sessionMutable ? deleteQueuedTurn : null,
       onRespondToRequest: sessionMutable ? respondToRequest : null,
       onError: (nextError) => setError(nextError.message),
@@ -377,7 +378,7 @@ function MinimalHostApp() {
         </div>
       ) : null,
     },
-  } : null, [session, selectedId, sessionMutable, sharedReadOnly, continuing, productRequest]);
+  } : null, [session, selectedId, sessionMutable, sessionBranchable, sharedReadOnly, continuing, productRequest]);
 
   const runtimeError = session?.status === 'error' ? session.runtimeBinding?.lastError : '';
   const visibleError = error || runtimeError;
@@ -904,7 +905,7 @@ function formatDuration(milliseconds) {
 
 function messageActionPresentation(session) {
   const latestUserMessage = [...(session.messages || [])].reverse().find((message) => message.role === 'user');
-  const mutable = !session.runtimeContinuationRequired && session.access?.kind !== 'shared';
+  const branchable = session.access?.kind !== 'shared';
   return {
     ...session,
     messages: (session.messages || []).map((message) => ({
@@ -914,8 +915,8 @@ function messageActionPresentation(session) {
         message,
         isLatestUserMessage: message === latestUserMessage,
         features: {
-          messageEdit: messageEditEnabled && mutable,
-          messageFork: messageForkEnabled && mutable,
+          messageEdit: messageEditEnabled && branchable,
+          messageFork: messageForkEnabled && branchable,
         },
       }),
     })),

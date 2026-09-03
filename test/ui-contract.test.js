@@ -310,6 +310,14 @@ test('Session UI exposes product extension content without owning product naviga
   assert.doesNotMatch(source, /ArtifactCanvas|project-navigation/);
 });
 
+test('Minimal Host keeps owned portable Session Edit and Fork actions available', async () => {
+  const source = await readFile(new URL('../src/environment/host-client.jsx', import.meta.url), 'utf8');
+  assert.match(source, /const sessionBranchable = !sharedReadOnly;/);
+  assert.match(source, /onEditMessage: messageEditEnabled && sessionBranchable/);
+  assert.match(source, /onForkMessage: messageForkEnabled && sessionBranchable/);
+  assert.match(source, /const branchable = session\.access\?\.kind !== 'shared';/);
+});
+
 test('long pasted text becomes an attachment before the Composer hard limit', () => {
   assert.equal(shouldConvertPastedTextToAttachment('', 'a'.repeat(999)), false);
   assert.equal(shouldConvertPastedTextToAttachment('', 'a'.repeat(1000)), true);

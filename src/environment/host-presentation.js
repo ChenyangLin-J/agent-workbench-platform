@@ -8,7 +8,7 @@ export function minimalHostSessionPresentation(session = {}) {
   return {
     ...session,
     title: session.title === 'New Session' ? '新对话' : session.title,
-    contextLabel: session.contextId && session.contextId !== 'environment'
+    contextLabel: session.contextId && !['environment', 'owned'].includes(session.contextId)
       ? session.contextLabel
       : '',
   };
