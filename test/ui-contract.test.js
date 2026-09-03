@@ -442,6 +442,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /const submittedDraft = draft/);
   assert.match(source, /setDraft\(submittedDraft\)/);
   assert.match(source, /useState\(view\.draft\)/);
+  assert.match(source, /target\.setSelectionRange\(view\.draft\.length, view\.draft\.length\)/);
   assert.match(source, /actions\.onDraftChange\?\.\(event\.target\.value\)/);
   assert.match(source, /handleAttachmentDrop/);
   assert.match(source, /actions\.onResolveDroppedDirectories/);

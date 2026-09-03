@@ -24,12 +24,13 @@ test('Minimal Host sharing preserves time groups and keeps shared interactions c
   assert.doesNotMatch(client, /<small>可查看<\/small>/);
   assert.match(client, /className="awb-share-person-button"/);
   assert.match(client, /`共享给 \$\{user\.name\}`/);
-  assert.match(client, /此对话只读 · 点击右上角“继续聊”后可输入/);
+  assert.match(client, /<svg aria-hidden="true" fill="none" viewBox="0 0 24 24">/);
   assert.match(ui, /className="cwu-browser-row-shared"/);
   assert.match(ui, /aria-label="与我共享，只读"/);
   assert.match(ui, /const shared = session\.accessKind === 'shared'/);
   assert.match(ui, /extensions\.renderComposerReplacement \? null : <agent-session-composer/);
   assert.match(model, /accessKind: session\?\.access\?\.kind === 'shared'/);
+  assert.match(client, /此对话只读 · 点击右上角“继续聊”后可输入/);
   assert.match(styles, /\.awb-share-results strong, \.awb-share-users strong \{[^}]*font-size: 12px;/);
   assert.match(styles, /\.awb-share-results \.awb-share-person-button \{[^}]*width: 30px;[^}]*height: 30px;/);
   assert.match(uiStyles, /\.cwu-browser-row-shared \{[^}]*width: 11px;[^}]*color: var\(--cwu-unread\);/);

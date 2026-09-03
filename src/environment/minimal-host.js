@@ -22,6 +22,7 @@ const EVENT_STREAM_HEARTBEAT_MS = 15_000;
 const DIAGNOSTIC_LOG_MAX_BYTES = 64 * 1024;
 const DIAGNOSTIC_LOG_DEFAULT_LINES = 200;
 const DIAGNOSTIC_LOG_MAX_LINES = 500;
+const MAX_INITIAL_SESSION_DRAFT_CHARS = 12_000;
 
 export function createMinimalHost({
   manifest,
@@ -233,9 +234,40 @@ export function createMinimalHost({
     }
     if (request.method === 'POST' && url.pathname === '/api/sessions') {
       const body = await readJsonBody(request);
-      const session = await sessionStore.create({ title: body.title || '新对话', ownerId, runId: manifest.id });
-      await kernel.attach(session.sessionId, runtimeAttachOptions(manifest));
-      return sendJson(response, 201, { session: await readSession(session.sessionId, { ownerId }) });
+      const draft = initialSessionDraft(body.draft);
+      const idempotencyKey = initialSessionIdempotencyKey(
+        request.headers['idempotency-key'] ?? body.idempotencyKey,
+      );
+      if (idempotencyKey && typeof sessionStore.createIdempotent !== 'function') {
+        throw hostError(
+          'HOST_SESSION_IDEMPOTENCY_UNSUPPORTED',
+          'The configured Session store does not support idempotent creation.',
+          501,
+        );
+      }
+      const creation = idempotencyKey
+        ? await sessionStore.createIdempotent({
+            title: body.title || '新对话',
+            ownerId,
+            runId: manifest.id,
+            draft,
+            idempotencyKey,
+          })
+        : {
+            created: true,
+            session: await sessionStore.create({
+              title: body.title || '新对话',
+              ownerId,
+              runId: manifest.id,
+              draft,
+            }),
+          };
+      if (creation.created) {
+        await kernel.attach(creation.session.sessionId, runtimeAttachOptions(manifest));
+      }
+      return sendJson(response, 201, {
+        session: await readSession(creation.session.sessionId, { ownerId }),
+      });
     }
     const continueRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/continue$/);
     if (continueRoute && request.method === 'POST') {
@@ -975,9 +1007,10 @@ async function observerDiagnosticLogs(manifest, { lineLimit } = {}) {
 }
 
 function observerSessionView(session, manifest) {
+  const { draft: _draft, ...visibleSession } = session;
   const binding = session.runtimeBinding;
   return {
-    ...session,
+    ...visibleSession,
     technicalItems: (session.technicalItems || []).map((item) => ({
       ...item,
       detail: redactDiagnosticLog(item.detail, manifest.paths.root),
@@ -1043,6 +1076,33 @@ async function readJsonBody(request, { maxBytes = MAX_BODY_BYTES } = {}) {
   } catch {
     throw hostError('HOST_BODY_INVALID', 'Request body must be valid JSON.', 400);
   }
+}
+
+function initialSessionDraft(value) {
+  if (value == null) return '';
+  if (typeof value !== 'string') {
+    throw hostError('HOST_SESSION_DRAFT_INVALID', 'Session draft must be a string.', 400);
+  }
+  if (value.length > MAX_INITIAL_SESSION_DRAFT_CHARS) {
+    throw hostError(
+      'HOST_SESSION_DRAFT_TOO_LARGE',
+      `Session draft exceeds ${MAX_INITIAL_SESSION_DRAFT_CHARS} characters.`,
+      400,
+    );
+  }
+  return value;
+}
+
+function initialSessionIdempotencyKey(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string') {
+    throw hostError('HOST_SESSION_IDEMPOTENCY_KEY_INVALID', 'Session idempotency key is invalid.', 400);
+  }
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) {
+    throw hostError('HOST_SESSION_IDEMPOTENCY_KEY_INVALID', 'Session idempotency key is invalid.', 400);
+  }
+  return normalized;
 }
 
 function sendAttachment(response, attachment, body) {

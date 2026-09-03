@@ -33,6 +33,22 @@ const mountedProxy = createMountProxy(listening.port);
 const proxy = mountedProxy.server;
 const proxyState = mountedProxy.state;
 const proxyAddress = await listen(proxy);
+const initialDraft = '我正在看 Solver Engine 的实验「测试」（实验 ID：167，daily 视图）。\n我需要：';
+const initialSessionResponse = await fetch(
+  `http://127.0.0.1:${proxyAddress.port}/agent/runtime/api/sessions`,
+  {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'idempotency-key': 'browser-smoke-initial-draft',
+      'x-agent-workbench-token': 'browser-smoke-token',
+    },
+    body: JSON.stringify({ title: '新对话', draft: initialDraft }),
+  },
+);
+if (initialSessionResponse.status !== 201) {
+  throw new Error(`Initial draft Session create failed: ${initialSessionResponse.status}`);
+}
 const browser = await chromium.launch({
   headless: true,
   executablePath: browserExecutable(),
@@ -41,8 +57,13 @@ const browser = await chromium.launch({
 try {
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${proxyAddress.port}/agent/runtime/`);
-  await page.getByRole('button', { name: '新建对话' }).click();
   await page.getByText('1 个对话', { exact: true }).waitFor();
+  const composer = page.getByRole('textbox', { name: '输入问题……' });
+  await composer.waitFor();
+  if (await composer.inputValue() !== initialDraft) {
+    throw new Error('Initial Session draft was not restored into the Composer.');
+  }
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '输入问题……');
   await waitFor(() => proxyState.eventConnections >= 2);
 
   await page.getByLabel('添加图片或附件').setInputFiles({
@@ -51,7 +72,7 @@ try {
     buffer: Buffer.from('BROWSER_ATTACHMENT_CANARY'),
   });
   await page.getByText('已就绪', { exact: false }).waitFor();
-  await page.getByRole('textbox', { name: '输入问题……' }).fill('browser smoke');
+  await composer.fill('browser smoke');
   await page.getByRole('button', { name: '发送' }).click();
   await waitFor(() => provider.createdSessions[0]?.startedTurns.length === 1);
   await page.getByRole('button', { name: '停止当前处理' }).waitFor();
@@ -170,7 +191,7 @@ try {
   if (activeSessions.length !== 1 || allSessions.length !== 2 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping one replacement Session active.');
   }
-  console.log('Minimal Host browser attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, Edit archival, and read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, Edit archival, and read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

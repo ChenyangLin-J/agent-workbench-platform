@@ -936,6 +936,17 @@ export function SessionWorkspace({
     setAwayFromLatest(false);
     setHasNewMessagesBelow(false);
     messageActivityRef.current = { sessionId: view.sessionId, key: latestMessageActivityKey };
+    const focusFrame = view.draft
+      ? requestAnimationFrame(() => {
+          const target = composerRef.current;
+          if (!target) return;
+          target.focus();
+          target.setSelectionRange(view.draft.length, view.draft.length);
+        })
+      : null;
+    return () => {
+      if (focusFrame != null) cancelAnimationFrame(focusFrame);
+    };
   }, [view.sessionId]);
 
   useEffect(() => {

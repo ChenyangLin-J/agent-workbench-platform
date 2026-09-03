@@ -72,6 +72,68 @@ test('Session store serializes concurrent binding updates without losing fields'
   });
 });
 
+test('Session store persists an initial draft and creates once per owner-scoped idempotency key', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-draft-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  let sequence = 0;
+  const store = new EnvironmentSessionStore({
+    stateRoot,
+    uuid: () => `draft-${++sequence}`,
+  });
+  const first = await store.createIdempotent({
+    title: '新对话',
+    ownerId: 'user-a',
+    draft: '我正在看实验 167。\n我需要：',
+    idempotencyKey: 'solver-launch:launch-1',
+  });
+  const retried = await store.createIdempotent({
+    title: '新对话',
+    ownerId: 'user-a',
+    draft: '我正在看实验 167。\n我需要：',
+    idempotencyKey: 'solver-launch:launch-1',
+  });
+  const otherOwner = await store.createIdempotent({
+    title: '新对话',
+    ownerId: 'user-b',
+    draft: '我正在看实验 167。\n我需要：',
+    idempotencyKey: 'solver-launch:launch-1',
+  });
+
+  assert.equal(first.created, true);
+  assert.equal(retried.created, false);
+  assert.equal(retried.session.sessionId, first.session.sessionId);
+  assert.equal(first.session.draft, '我正在看实验 167。\n我需要：');
+  assert.notEqual(otherOwner.session.sessionId, first.session.sessionId);
+  assert.equal((await store.list({ ownerId: 'user-a' }))[0].draft, undefined);
+  await assert.rejects(
+    store.createIdempotent({
+      title: '新对话',
+      ownerId: 'user-a',
+      draft: '不同内容',
+      idempotencyKey: 'solver-launch:launch-1',
+    }),
+    (error) => error.code === 'SESSION_CREATE_IDEMPOTENCY_CONFLICT' && error.status === 409,
+  );
+
+  await store.recordUserInput(first.session.sessionId, '请分析实验结果', { ownerId: 'user-a' });
+  assert.equal((await store.get(first.session.sessionId, { ownerId: 'user-a' })).draft, '');
+});
+
+test('two Session stores converge concurrent idempotent creation', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-idempotent-lock-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  let sequence = 0;
+  const options = { stateRoot, crossProcess: true, uuid: () => `idempotent-${++sequence}` };
+  const first = new EnvironmentSessionStore(options);
+  const second = new EnvironmentSessionStore(options);
+  const results = await Promise.all([
+    first.createIdempotent({ ownerId: 'user-a', draft: 'draft', idempotencyKey: 'launch-1' }),
+    second.createIdempotent({ ownerId: 'user-a', draft: 'draft', idempotencyKey: 'launch-1' }),
+  ]);
+  assert.equal(results.filter((result) => result.created).length, 1);
+  assert.equal(new Set(results.map((result) => result.session.sessionId)).size, 1);
+  assert.equal((await first.list({ ownerId: 'user-a' })).length, 1);
+});
 test('Session store hides archived Sessions from the owner list while retaining them for history and observation', async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-archive-'));
   t.after(() => rm(stateRoot, { recursive: true, force: true }));

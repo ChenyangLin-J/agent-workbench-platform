@@ -69,6 +69,80 @@ test('Minimal Host creates and runs project-free Sessions through the Core Kerne
   assert.equal('projectId' in detail.session, false);
 });
 
+test('Minimal Host creates an idempotent Session with an unsent draft', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-initial-draft-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const provider = new FakeRuntimeProvider();
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({
+    manifest: runManifest(root),
+    kernel,
+    sessionStore: store,
+    sessionOwnerHeader: 'x-session-owner',
+    sessionObserverHeader: 'x-session-observer',
+  });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const draft = '我正在看 Solver Engine 的实验 167。\n我需要：';
+  const headers = {
+    'content-type': 'application/json',
+    'x-session-owner': 'user-a',
+    'idempotency-key': 'solver-launch:launch-1',
+  };
+  const create = () => fetch(`${listening.url}/api/sessions`, {
+    method: 'POST', headers, body: JSON.stringify({ title: '新对话', draft }),
+  });
+  const firstResponse = await create();
+  const first = (await firstResponse.json()).session;
+  const retry = (await (await create()).json()).session;
+  assert.equal(firstResponse.status, 201);
+  assert.equal(first.sessionId, retry.sessionId);
+  assert.equal(first.draft, draft);
+  assert.equal(provider.createdSessions.length, 1);
+
+  const conflict = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ title: '新对话', draft: '不同草稿' }),
+  });
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).error.code, 'SESSION_CREATE_IDEMPOTENCY_CONFLICT');
+  const otherOwner = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST',
+    headers: { ...headers, 'x-session-owner': 'user-b' },
+    body: JSON.stringify({ title: '新对话', draft }),
+  }).then((response) => response.json()).then((body) => body.session);
+  assert.notEqual(otherOwner.sessionId, first.sessionId);
+  assert.equal(provider.createdSessions.length, 2);
+
+  const observed = await fetch(`${listening.url}/api/observer/sessions/${first.sessionId}`, {
+    headers: { 'x-session-observer': 'true' },
+  }).then((response) => response.json()).then((body) => body.session);
+  assert.equal('draft' in observed, false);
+
+  const turnResponse = await fetch(`${listening.url}/api/sessions/${first.sessionId}/turns`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-session-owner': 'user-a' },
+    body: JSON.stringify({ prompt: `${draft}分析收入` }),
+  });
+  assert.equal(turnResponse.status, 202);
+  const detail = await fetch(`${listening.url}/api/sessions/${first.sessionId}`, {
+    headers: { 'x-session-owner': 'user-a' },
+  }).then((response) => response.json()).then((body) => body.session);
+  assert.equal(detail.draft, '');
+  assert.equal(detail.messages[0].content, `${draft}分析收入`);
+
+  for (const invalidDraft of [{ prompt: 'object' }, 'x'.repeat(12_001)]) {
+    const response = await fetch(`${listening.url}/api/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-session-owner': 'user-a' },
+      body: JSON.stringify({ draft: invalidDraft }),
+    });
+    assert.equal(response.status, 400);
+  }
+});
+
 test('Minimal Host reads portable Sessions across Runs without reusing stale Runtime bindings', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-portable-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -666,7 +740,6 @@ test('Minimal Host presentation selects the newest available Session and preserv
 
 test('Minimal Host isolates Sessions by a verified owner header', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-owner-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider();
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
@@ -679,7 +752,10 @@ test('Minimal Host isolates Sessions by a verified owner header', async (t) => {
     sessionObserverHeader: 'x-datamama-agent-observer',
   });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => {
+    await host.stop();
+    await rm(root, { recursive: true, force: true });
+  });
   const headersFor = (ownerId) => ({
     'content-type': 'application/json',
     'x-agent-workbench-token': 'test-token',
@@ -925,6 +1001,7 @@ test('Minimal Host projects scoped shared Sessions and continues them into a fre
 
   const detail = await fetch(`${listening.url}/api/sessions/${source.sessionId}`, { headers: sharedHeaders })
     .then((response) => response.json()).then((body) => body.session);
+  assert.equal('draft' in detail, false);
   assert.deepEqual(detail.messages.map((message) => message.content), ['请记住 42']);
   assert.equal('turnId' in detail.messages[0], false);
   assert.equal(detail.messages[0].attachments[0].name, 'shared.txt');

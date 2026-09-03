@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -11,6 +11,7 @@ const MAX_TECHNICAL_ITEMS_PER_SESSION = 2_000;
 const MUTATION_LOCK_STALE_MS = 30_000;
 const MUTATION_LOCK_RETRIES = 250;
 const MAX_TECHNICAL_DETAIL_CHARS = 16_000;
+const MAX_SESSION_DRAFT_CHARS = 12_000;
 
 export class EnvironmentSessionStore {
   constructor({ stateRoot, runId = null, crossProcess = false, now = () => new Date(), uuid = randomUUID } = {}) {
@@ -35,16 +36,51 @@ export class EnvironmentSessionStore {
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   }
 
-  async create({ title = '新对话', ownerId = null, runId = this.runId } = {}) {
-    const sessionId = `session-${this.uuid()}`;
-    const timestamp = this.#time();
+  async create(options = {}) {
+    return (await this.createIdempotent(options)).session;
+  }
+
+  async createIdempotent({
+    title = '新对话',
+    ownerId = null,
+    runId = this.runId,
+    draft = '',
+    idempotencyKey = null,
+  } = {}) {
     const normalizedOwnerId = ownerId == null ? null : nonEmptyString(ownerId, 'Session owner');
+    const normalizedTitle = nonEmptyString(title, 'Session title');
+    const normalizedDraft = sessionDraft(draft);
+    const normalizedIdempotencyKey = idempotencyKey == null
+      ? null
+      : sessionCreateIdempotencyKey(idempotencyKey);
+    const fingerprint = sessionCreateFingerprint({ title: normalizedTitle, draft: normalizedDraft });
+    let result;
     await this.#mutate((document) => {
+      if (normalizedIdempotencyKey) {
+        const existing = Object.values(document.sessions).find((session) => (
+          session.ownerId === normalizedOwnerId
+          && session.creationIdempotency?.key === normalizedIdempotencyKey
+        ));
+        if (existing) {
+          if (existing.creationIdempotency.fingerprint !== fingerprint) {
+            throw storeError(
+              'SESSION_CREATE_IDEMPOTENCY_CONFLICT',
+              'The Session idempotency key was already used with different input.',
+              409,
+            );
+          }
+          result = { created: false, sessionId: existing.id };
+          return;
+        }
+      }
+      const sessionId = `session-${this.uuid()}`;
+      const timestamp = this.#time();
       document.sessions[sessionId] = {
         id: sessionId,
         ownerId: normalizedOwnerId,
         ...(runId == null ? {} : { createdRunId: nonEmptyString(runId, 'Run id') }),
-        title: nonEmptyString(title, 'Session title'),
+        title: normalizedTitle,
+        draft: normalizedDraft,
         status: 'idle',
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -52,9 +88,20 @@ export class EnvironmentSessionStore {
         messages: [],
         technicalItems: [],
         plan: [],
+        ...(normalizedIdempotencyKey ? {
+          creationIdempotency: {
+            key: normalizedIdempotencyKey,
+            fingerprint,
+            createdAt: timestamp,
+          },
+        } : {}),
       };
+      result = { created: true, sessionId };
     });
-    return this.get(sessionId);
+    return {
+      ...result,
+      session: await this.get(result.sessionId, { ownerId: normalizedOwnerId }),
+    };
   }
 
   async createBranch(sourceSessionId, { beforeTurnId, ownerId = null, title = null } = {}) {
@@ -232,6 +279,7 @@ export class EnvironmentSessionStore {
     await this.#mutate((document) => {
       const session = requireSession(document, sessionId);
       requireOwnedSession(session, sessionId, ownerId);
+      session.draft = '';
       if (!session.messages.length && defaultSessionTitle(session.title)) {
         session.title = titleFromUserInput(content, normalizedAttachments);
       }
@@ -515,6 +563,7 @@ function sessionView(session, binding = null, { includeOwnerId = false } = {}) {
   return {
     ...publicSession(session, { includeOwnerId }),
     sessionId: session.id,
+    draft: typeof session.draft === 'string' ? session.draft : '',
     messages: structuredClone(session.messages),
     technicalItems: structuredClone(session.technicalItems),
     plan: structuredClone(session.plan),
@@ -770,6 +819,33 @@ async function writeJsonAtomic(path, document) {
 function nonEmptyString(value, label) {
   if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${label} must be a non-empty string`);
   return value.trim().slice(0, 200);
+}
+
+function sessionDraft(value) {
+  if (typeof value !== 'string') throw new TypeError('Session draft must be a string');
+  if (value.length > MAX_SESSION_DRAFT_CHARS) {
+    throw storeError(
+      'SESSION_DRAFT_TOO_LARGE',
+      `Session draft exceeds ${MAX_SESSION_DRAFT_CHARS} characters.`,
+      400,
+    );
+  }
+  return value;
+}
+
+function sessionCreateIdempotencyKey(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw storeError('SESSION_CREATE_IDEMPOTENCY_KEY_INVALID', 'Session idempotency key is invalid.', 400);
+  }
+  const normalized = value.trim();
+  if (normalized.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) {
+    throw storeError('SESSION_CREATE_IDEMPOTENCY_KEY_INVALID', 'Session idempotency key is invalid.', 400);
+  }
+  return normalized;
+}
+
+function sessionCreateFingerprint({ title, draft }) {
+  return createHash('sha256').update(JSON.stringify({ title, draft })).digest('hex');
 }
 
 function plainObject(value) {
