@@ -76,6 +76,7 @@ export function sessionMessageBranchEligibility({
   const userMessage = message.type === 'userMessage' || message.role === 'user';
   const idle = !session.isDraft
     && !session.isArchived
+    && !session.archived
     && !activeTurnId
     && !session.connectionError;
   const eligible = idle && userMessage && Boolean(message.turnId) && Boolean(isLatestUserMessage);

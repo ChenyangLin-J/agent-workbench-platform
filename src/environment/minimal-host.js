@@ -195,7 +195,7 @@ export function createMinimalHost({
     }
     if (request.method === 'GET' && url.pathname === '/api/observer/sessions') {
       return sendJson(response, 200, {
-        sessions: await sessionStore.list({ includeOwnerId: true }),
+        sessions: await sessionStore.list({ includeOwnerId: true, includeArchived: true }),
         observedAt: new Date().toISOString(),
       });
     }
@@ -300,8 +300,10 @@ export function createMinimalHost({
         prompt: body.prompt,
         context: { ownerId },
       });
+      if (intent === 'edit') await sessionStore.archive(sourceSessionId, { ownerId });
       return sendJson(response, 201, {
         sourceSessionId,
+        sourceArchived: intent === 'edit',
         replacedTurnId: result.replacedTurnId,
         session: await readSession(result.session.sessionId, { ownerId }),
         turn: result.turn,

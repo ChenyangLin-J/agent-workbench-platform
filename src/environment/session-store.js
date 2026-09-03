@@ -26,10 +26,11 @@ export class EnvironmentSessionStore {
     this.ready = this.#initialize();
   }
 
-  async list({ ownerId = null, includeOwnerId = false } = {}) {
+  async list({ ownerId = null, includeOwnerId = false, includeArchived = false } = {}) {
     const document = await this.#readQueued();
     return Object.values(document.sessions)
       .filter((session) => ownerId == null || session.ownerId === ownerId)
+      .filter((session) => includeArchived || !session.archivedAt)
       .map((session) => publicSession(session, { includeOwnerId }))
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   }
@@ -157,6 +158,15 @@ export class EnvironmentSessionStore {
       if (document.queuedTurns) delete document.queuedTurns[sessionId];
     });
     return removed;
+  }
+
+  async archive(sessionId, { ownerId = null } = {}) {
+    await this.#mutate((document) => {
+      const session = requireSession(document, sessionId);
+      requireOwnedSession(session, sessionId, ownerId);
+      session.archivedAt ||= this.#time();
+    });
+    return this.get(sessionId, { ownerId });
   }
 
   async get(sessionId, { ownerId = null, includeOwnerId = false } = {}) {
@@ -375,6 +385,7 @@ function publicSession(session, { includeOwnerId = false } = {}) {
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     completedAt: session.completedAt,
+    archived: Boolean(session.archivedAt),
     canArchive: false,
     canEnd: false,
     canFavorite: false,

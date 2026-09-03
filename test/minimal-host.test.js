@@ -478,13 +478,18 @@ test('Minimal Host persists a queued Turn and starts it after the active Turn co
   ]);
 });
 
-test('Minimal Host edits or forks a completed message into an independent Session', async (t) => {
+test('Minimal Host Edit archives the source after creating an independent replacement Session', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-branch-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider({ capabilities: { fork: true } });
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
-  const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store });
+  const host = createMinimalHost({
+    manifest: runManifest(root),
+    kernel,
+    sessionStore: store,
+    sessionObserverHeader: 'x-test-observer',
+  });
   const listening = await host.start();
   t.after(() => host.stop());
   const headers = { 'content-type': 'application/json' };
@@ -514,14 +519,69 @@ test('Minimal Host edits or forks a completed message into an independent Sessio
     }),
   });
   assert.equal(branchResponse.status, 201);
-  const branch = (await branchResponse.json()).session;
+  const branchBody = await branchResponse.json();
+  const branch = branchBody.session;
+  assert.equal(branchBody.sourceArchived, true);
   assert.notEqual(branch.sessionId, sourceSessionId);
-  assert.equal((await store.get(sourceSessionId)).runtimeBinding.runtimeSessionId, sourceRuntimeId);
+  const archivedSource = await store.get(sourceSessionId);
+  assert.equal(archivedSource.archived, true);
+  assert.equal(archivedSource.runtimeBinding.runtimeSessionId, sourceRuntimeId);
   assert.notEqual(branch.runtimeBinding.runtimeSessionId, sourceRuntimeId);
   assert.deepEqual(branch.messages.filter((message) => message.role === 'user').map((message) => message.content), [
     'first',
     'replacement',
   ]);
+  const activeList = await fetch(`${listening.url}/api/sessions`, { headers }).then((response) => response.json());
+  assert.deepEqual(activeList.sessions.map((session) => session.id), [branch.sessionId]);
+  assert.deepEqual(
+    new Set((await store.list({ includeArchived: true })).map((session) => session.id)),
+    new Set([sourceSessionId, branch.sessionId]),
+  );
+  const observed = await fetch(`${listening.url}/api/observer/sessions`, {
+    headers: { 'x-test-observer': 'true' },
+  }).then((response) => response.json());
+  assert.deepEqual(new Set(observed.sessions.map((session) => session.id)), new Set([sourceSessionId, branch.sessionId]));
+  assert.equal(observed.sessions.find((session) => session.id === sourceSessionId).archived, true);
+});
+
+test('Minimal Host Fork keeps the source and branch in the active Session list', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-fork-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const provider = new FakeRuntimeProvider({ capabilities: { fork: true } });
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = { 'content-type': 'application/json' };
+  const created = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST', headers, body: '{}',
+  }).then((response) => response.json());
+  const sourceSessionId = created.session.sessionId;
+  const sourceTurn = await fetch(`${listening.url}/api/sessions/${sourceSessionId}/turns`, {
+    method: 'POST', headers, body: JSON.stringify({ prompt: 'original' }),
+  }).then((response) => response.json());
+  provider.createdSessions[0].complete(sourceTurn.result.runtimeTurnId);
+  await eventually(async () => !(await store.get(sourceSessionId)).runtimeBinding.activeTurnId);
+
+  const branchResponse = await fetch(`${listening.url}/api/sessions/${sourceSessionId}/branches`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      replaceTurnId: sourceTurn.result.runtimeTurnId,
+      prompt: 'forked',
+      intent: 'fork',
+    }),
+  });
+  assert.equal(branchResponse.status, 201);
+  const branchBody = await branchResponse.json();
+  assert.equal(branchBody.sourceArchived, false);
+  assert.equal((await store.get(sourceSessionId)).archived, false);
+  const activeList = await fetch(`${listening.url}/api/sessions`, { headers }).then((response) => response.json());
+  assert.deepEqual(
+    new Set(activeList.sessions.map((session) => session.id)),
+    new Set([sourceSessionId, branchBody.session.sessionId]),
+  );
 });
 
 test('Minimal Host client resolves APIs inside its mounted product namespace', () => {

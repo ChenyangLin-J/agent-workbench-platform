@@ -150,7 +150,27 @@ try {
     await observerPage.screenshot({ path: process.env.OBSERVER_SCREENSHOT_PATH, fullPage: true });
   }
   await observerPage.close();
-  console.log('Minimal Host browser attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, and read-only Observer smoke passed under /agent/runtime/.');
+
+  const sourceSessionId = (await store.list())[0].id;
+  await page.locator('.cwu-message.is-user').hover();
+  await page.getByRole('button', { name: '编辑', exact: true }).click();
+  const editBox = page.getByRole('textbox', { name: '编辑消息' });
+  await editBox.fill('browser smoke edited');
+  await page.locator('.cwu-message-editor').getByRole('button', { name: '发送', exact: true }).click();
+  await editBox.waitFor({ state: 'detached' });
+  await page.getByText('browser smoke edited', { exact: true }).waitFor();
+  await page.getByText('1 个对话', { exact: true }).waitFor();
+  await page.waitForTimeout(400);
+  if (await page.locator('.cwu-transcript').getByText('Browser smoke OK', { exact: true }).count()) {
+    throw new Error('Edit kept the replaced answer visible in the replacement Session.');
+  }
+  const activeSessions = await store.list();
+  const allSessions = await store.list({ includeArchived: true });
+  const archivedSource = await store.get(sourceSessionId);
+  if (activeSessions.length !== 1 || allSessions.length !== 2 || archivedSource.archived !== true) {
+    throw new Error('Edit did not archive the source while keeping one replacement Session active.');
+  }
+  console.log('Minimal Host browser attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, Edit archival, and read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

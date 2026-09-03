@@ -28,6 +28,7 @@ function hostUrl(path) {
 function MinimalHostApp() {
   const [sessions, setSessions] = useState([]);
   const [selectedId, setSelectedId] = useState(initialSessionId);
+  const selectedIdRef = useRef(initialSessionId);
   const [session, setSession] = useState(null);
   const [listCollapsed, setListCollapsed] = useState(false);
   const [error, setError] = useState('');
@@ -51,6 +52,19 @@ function MinimalHostApp() {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error?.message || `Request failed (${response.status})`);
     return body;
+  }, []);
+
+  const selectSessionId = useCallback((nextValue) => {
+    if (typeof nextValue !== 'function') {
+      selectedIdRef.current = nextValue;
+      setSelectedId(nextValue);
+      return;
+    }
+    setSelectedId((current) => {
+      const next = nextValue(current);
+      selectedIdRef.current = next;
+      return next;
+    });
   }, []);
 
   const productRequest = useCallback(async (path, options = {}) => {
@@ -91,17 +105,17 @@ function MinimalHostApp() {
       (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
     );
     setSessions(nextSessions);
-    setSelectedId((current) => selectMinimalHostSession(nextSessions, current));
+    selectSessionId((current) => selectMinimalHostSession(nextSessions, current));
     return nextSessions;
-  }, [request]);
+  }, [request, selectSessionId]);
 
-  const refreshSession = useCallback(async (sessionId = selectedId) => {
+  const refreshSession = useCallback(async (sessionId = selectedIdRef.current) => {
     if (!sessionId) return null;
     const body = await request(`api/sessions/${encodeURIComponent(sessionId)}`);
     const nextSession = messageActionPresentation(minimalHostSessionPresentation(body.session));
-    setSession(nextSession);
+    if (selectedIdRef.current === sessionId) setSession(nextSession);
     return nextSession;
-  }, [request, selectedId]);
+  }, [request]);
 
   const scheduleRefresh = useCallback(() => {
     refreshQueued.current = true;
@@ -185,8 +199,8 @@ function MinimalHostApp() {
     setError('');
     try {
       const body = await request('api/sessions', { method: 'POST', body: JSON.stringify({}) });
+      selectSessionId(body.session.sessionId);
       await refreshSessions();
-      setSelectedId(body.session.sessionId);
     } catch (nextError) {
       setError(nextError.message);
     }
@@ -207,9 +221,9 @@ function MinimalHostApp() {
       });
       continuationKey.current = null;
       const nextSession = messageActionPresentation(minimalHostSessionPresentation(body.session));
+      selectSessionId(nextSession.sessionId);
       setSession(nextSession);
       await refreshSessions();
-      setSelectedId(nextSession.sessionId);
       setNotice('已创建副本，可以继续提问。');
       if (sourceShareId && sessionSharing) {
         void productRequest(`session-shares/${encodeURIComponent(sourceShareId)}/forked`, {
@@ -286,9 +300,9 @@ function MinimalHostApp() {
         body: JSON.stringify({ replaceTurnId: turnId, prompt, intent }),
       });
       const nextSession = messageActionPresentation(minimalHostSessionPresentation(body.session));
+      selectSessionId(nextSession.sessionId);
       setSession(nextSession);
       await refreshSessions();
-      setSelectedId(nextSession.sessionId);
       scheduleRefresh();
       return nextSession;
     } catch (nextError) {
@@ -373,7 +387,7 @@ function MinimalHostApp() {
       <SessionBrowser
         actions={{
           onCreate: createSession,
-          onSelect: (nextSession) => setSelectedId(nextSession.id),
+          onSelect: (nextSession) => selectSessionId(nextSession.id),
           onToggleList: setListCollapsed,
         }}
         browser={{

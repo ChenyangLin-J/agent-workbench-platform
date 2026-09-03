@@ -72,6 +72,28 @@ test('Session store serializes concurrent binding updates without losing fields'
   });
 });
 
+test('Session store hides archived Sessions from the owner list while retaining them for history and observation', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-archive-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot });
+  const source = await store.create({ title: 'Original', ownerId: 'owner-a' });
+  const replacement = await store.create({ title: 'Replacement', ownerId: 'owner-a' });
+
+  const archived = await store.archive(source.sessionId, { ownerId: 'owner-a' });
+
+  assert.equal(archived.archived, true);
+  assert.deepEqual((await store.list({ ownerId: 'owner-a' })).map((session) => session.id), [replacement.sessionId]);
+  assert.deepEqual(
+    new Set((await store.list({ ownerId: 'owner-a', includeArchived: true })).map((session) => session.id)),
+    new Set([source.sessionId, replacement.sessionId]),
+  );
+  assert.equal((await store.get(source.sessionId, { ownerId: 'owner-a' })).archived, true);
+  await assert.rejects(
+    store.archive(source.sessionId, { ownerId: 'owner-b' }),
+    (error) => error.code === 'SESSION_NOT_FOUND',
+  );
+});
+
 test('Session store derives the default title from the first user input and retains attachment metadata', async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-'));
   t.after(() => rm(stateRoot, { recursive: true, force: true }));

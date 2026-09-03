@@ -58,4 +58,10 @@ test('message Branch eligibility honors the shared feature profile', () => {
     isLatestUserMessage: true,
     features: { messageEdit: false, messageFork: true },
   }), { canEdit: false, canFork: true });
+  assert.deepEqual(sessionMessageBranchEligibility({
+    session: { archived: true, runtimeBinding: { activeTurnId: null } },
+    message: { role: 'user', turnId: 'turn-1' },
+    isLatestUserMessage: true,
+    features: { messageEdit: true, messageFork: true },
+  }), { canEdit: false, canFork: false });
 });
