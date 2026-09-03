@@ -824,6 +824,20 @@ export function SessionList(props) {
   return <SessionBrowser {...props} detail={null} listOnly />;
 }
 
+function CommentaryGroup({ children, initiallyOpen = false, messageCount }) {
+  const [open, setOpen] = useState(initiallyOpen);
+  return (
+    <details
+      className="cwu-commentary-group"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      open={open}
+    >
+      <summary><span>过程 · {messageCount} 条</span><small /></summary>
+      <div className="cwu-commentary-group-body">{children}</div>
+    </details>
+  );
+}
+
 export function SessionWorkspace({
   session,
   attachmentPolicy = {},
@@ -835,6 +849,9 @@ export function SessionWorkspace({
 }) {
   const view = useMemo(() => normalizeSessionViewModel(session), [session]);
   const messageEntries = useMemo(() => groupSessionMessages(view.messages), [view.messages]);
+  const latestCommentaryGroupId = [...messageEntries]
+    .reverse()
+    .find((entry) => entry.kind === 'commentary-group')?.id || null;
   const enabledFeatures = useMemo(() => normalizeSessionFeatures(features), [features]);
   const uploadPolicy = useMemo(() => normalizeAttachmentPolicy(attachmentPolicy), [attachmentPolicy]);
   const transcriptRef = useRef(null);
@@ -1368,10 +1385,10 @@ export function SessionWorkspace({
               return (
                 <React.Fragment key={entry.id}>
                   {entry.kind === 'commentary-group' ? (
-                    <details className="cwu-commentary-group">
-                      <summary><span>过程 · {messages.length} 条</span><small /></summary>
-                      <div className="cwu-commentary-group-body">{renderedMessages}</div>
-                    </details>
+                    <CommentaryGroup
+                      initiallyOpen={entry.id === latestCommentaryGroupId}
+                      messageCount={messages.length}
+                    >{renderedMessages}</CommentaryGroup>
                   ) : renderedMessages}
                   {enabledFeatures.technicalDetails
                     && trailingMessage.turnId

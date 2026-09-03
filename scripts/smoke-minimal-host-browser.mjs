@@ -74,6 +74,19 @@ try {
     runtimeTurnId: runtime.activeTurnId,
     providerEvent: 'item/started',
     payload: { item: {
+      id: 'browser-smoke-commentary',
+      type: 'agentMessage',
+      phase: 'commentary',
+      status: 'inProgress',
+      text: 'Preparing browser smoke',
+    } },
+  });
+  runtime.emit('event', {
+    type: 'item_started',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: runtime.activeTurnId,
+    providerEvent: 'item/started',
+    payload: { item: {
       id: 'browser-smoke-tool',
       type: 'mcpToolCall',
       status: 'inProgress',
@@ -89,11 +102,16 @@ try {
   });
   runtime.complete();
   await page.getByText('Browser smoke OK', { exact: true }).waitFor();
+  const latestProcess = page.locator('details.cwu-commentary-group').last();
+  await latestProcess.getByText('Preparing browser smoke', { exact: true }).waitFor();
+  if (!await latestProcess.evaluate((details) => details.open)) {
+    throw new Error('The latest completed process collapsed after the Turn finished.');
+  }
   const technicalDetails = page.getByRole('button', { name: /本轮执行详情/ });
   await technicalDetails.waitFor();
   await technicalDetails.click();
   await page.getByText('Tool call', { exact: true }).waitFor();
-  console.log('Minimal Host browser attachment, reconnect, polling fallback, progress, title, and running-action smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser attachment, reconnect, polling fallback, visible completed process, progress, title, and running-action smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

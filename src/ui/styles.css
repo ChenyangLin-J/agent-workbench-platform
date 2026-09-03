@@ -172,6 +172,8 @@
 .cwu-message.is-commentary { border-left: 2px solid var(--cwu-border); padding-left: 14px; color: var(--cwu-muted); }
 .cwu-message-label { margin-bottom: 6px; color: var(--cwu-muted); font-size: 11px; font-weight: 650; }
 .cwu-message-body { overflow-wrap: anywhere; font-size: 15px; line-height: 1.68; }
+.cwu-message .cwu-message-body img { display: block; width: auto; height: auto; max-width: min(100%, 640px); max-height: min(420px, 50vh); margin: 12px 0; object-fit: contain; object-position: left top; border: 1px solid var(--cwu-border); border-radius: 10px; }
+.cwu-message .cwu-message-body a:has(> img) { display: block; width: fit-content; max-width: 100%; cursor: zoom-in; }
 .cwu-message.is-commentary .cwu-message-body { font-size: 13px; }
 .cwu-commentary-group { margin: 0 0 26px; border-left: 2px solid var(--cwu-border); padding-left: 14px; }
 .cwu-commentary-group > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; color: var(--cwu-muted); font-size: 11px; font-weight: 650; list-style: none; }

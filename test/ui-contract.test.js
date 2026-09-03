@@ -550,7 +550,7 @@ test('Composer drop payload separates directories from files and preserves host 
   assert.equal(appendComposerReferences('1234', [{ text: '/long' }], { textLimit: 7 }), '1234\n/l');
 });
 
-test('completed consecutive commentary is grouped behind one compact disclosure per turn', async () => {
+test('completed consecutive commentary keeps the latest process visible without forcing older groups open', async () => {
   const [source, styles] = await Promise.all([
     readFile(uiUrl, 'utf8'),
     readFile(stylesUrl, 'utf8'),
@@ -567,8 +567,14 @@ test('completed consecutive commentary is grouped behind one compact disclosure 
   assert.deepEqual(groups[0].messages.map((message) => message.id), ['c1', 'c2']);
   assert.deepEqual(groups[2].messages.map((message) => message.id), ['c3']);
   assert.equal(new Set(groups.map((entry) => entry.id)).size, groups.length);
+  assert.match(source, /function CommentaryGroup/);
+  assert.match(source, /initiallyOpen=\{entry\.id === latestCommentaryGroupId\}/);
+  assert.match(source, /onToggle=\{\(event\) => setOpen\(event\.currentTarget\.open\)\}/);
+  assert.match(source, /open=\{open\}/);
   assert.match(source, /cwu-commentary-group/);
-  assert.match(source, /过程 · \{messages\.length\} 条/);
+  assert.match(source, /过程 · \{messageCount\} 条/);
   assert.match(styles, /\.cwu-commentary-group/);
+  assert.match(styles, /\.cwu-message \.cwu-message-body img \{[^}]*max-width: min\(100%, 640px\);[^}]*max-height: min\(420px, 50vh\);/);
+  assert.match(styles, /\.cwu-message \.cwu-message-body a:has\(> img\) \{[^}]*cursor: zoom-in;/);
   assert.doesNotMatch(source, /cwu-commentary-collapse/);
 });
