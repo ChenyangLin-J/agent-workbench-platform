@@ -221,6 +221,7 @@ function MinimalHostApp() {
     scheduleRefresh();
   }
 
+  const sessionMutable = !session?.runtimeContinuationRequired;
   const detail = useMemo(() => session ? {
     session,
     features: {
@@ -238,22 +239,22 @@ function MinimalHostApp() {
     },
     actions: {
       onSubmit: submit,
-      onUploadAttachments: attachmentsEnabled ? uploadAttachments : null,
-      onResolveDroppedDirectories: attachmentsEnabled ? resolveDroppedDirectories : null,
+      onUploadAttachments: attachmentsEnabled && sessionMutable ? uploadAttachments : null,
+      onResolveDroppedDirectories: attachmentsEnabled && sessionMutable ? resolveDroppedDirectories : null,
       onOpenAttachment: attachmentsEnabled ? openAttachment : null,
       onInterrupt: session.status === 'running' ? interrupt : null,
-      onEditMessage: messageEditEnabled ? (input) => branchMessage(input, 'edit') : null,
-      onForkMessage: messageForkEnabled ? (input) => branchMessage(input, 'fork') : null,
-      onDeleteQueuedTurn: queuedTurnsEnabled ? deleteQueuedTurn : null,
-      onRespondToRequest: respondToRequest,
+      onEditMessage: messageEditEnabled && sessionMutable ? (input) => branchMessage(input, 'edit') : null,
+      onForkMessage: messageForkEnabled && sessionMutable ? (input) => branchMessage(input, 'fork') : null,
+      onDeleteQueuedTurn: queuedTurnsEnabled && sessionMutable ? deleteQueuedTurn : null,
+      onRespondToRequest: sessionMutable ? respondToRequest : null,
       onError: (nextError) => setError(nextError.message),
     },
     labels: {
-      composerPlaceholder: '输入问题……',
+      composerPlaceholder: sessionMutable ? '输入问题……' : '历史 Session 需要先继续或分叉',
       emptyTitle: '开始对话',
       emptyBody: '直接输入问题即可开始。',
     },
-  } : null, [session, selectedId]);
+  } : null, [session, selectedId, sessionMutable]);
 
   const runtimeError = session?.status === 'error' ? session.runtimeBinding?.lastError : '';
   const visibleError = error || runtimeError;
@@ -298,6 +299,7 @@ createRoot(document.getElementById('root')).render(<MinimalHostApp />);
 
 function messageActionPresentation(session) {
   const latestUserMessage = [...(session.messages || [])].reverse().find((message) => message.role === 'user');
+  const mutable = !session.runtimeContinuationRequired;
   return {
     ...session,
     messages: (session.messages || []).map((message) => ({
@@ -307,8 +309,8 @@ function messageActionPresentation(session) {
         message,
         isLatestUserMessage: message === latestUserMessage,
         features: {
-          messageEdit: messageEditEnabled,
-          messageFork: messageForkEnabled,
+          messageEdit: messageEditEnabled && mutable,
+          messageFork: messageForkEnabled && mutable,
         },
       }),
     })),

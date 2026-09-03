@@ -11,7 +11,8 @@ import {
   writeHostIdentity,
 } from './process.js';
 import { createDevelopmentIsolationProvider, inspectIsolationProvider } from './providers.js';
-import { EnvironmentSessionStore } from './session-store.js';
+import { createEnvironmentSessionResourceStore } from './session-attachments.js';
+import { EnvironmentSessionRuntimeStore, EnvironmentSessionStore } from './session-store.js';
 import { prepareMinimalRuntimeConfiguration } from './runtime-config.js';
 import {
   markRunStopped,
@@ -56,18 +57,31 @@ export async function runInternalMinimalHost(runTarget, {
     manifest.paths.runtime,
     manifest.paths.state,
     manifest.paths.resources || join(manifest.paths.root, 'resources'),
+    manifest.paths.sessionState,
+    manifest.paths.sessionResources,
     manifest.paths.workspace,
     manifest.paths.temporary,
     join(manifest.paths.runtime, 'home'),
     join(manifest.paths.runtime, 'codex-home'),
-  ]) await mkdir(path, { recursive: true, mode: 0o700 });
+  ].filter(Boolean)) await mkdir(path, { recursive: true, mode: 0o700 });
   const assetsRoot = join(manifest.paths.state, 'minimal-host-assets');
   await buildMinimalHostAssets({ outputDirectory: assetsRoot });
-  const sessionStore = new EnvironmentSessionStore({ stateRoot: manifest.paths.state });
+  const externalSessionPersistence = Boolean(manifest.paths.sessionState && manifest.paths.sessionResources);
+  const sessionStore = new EnvironmentSessionStore({
+    stateRoot: manifest.paths.sessionState || manifest.paths.state,
+    runId: manifest.id,
+    crossProcess: externalSessionPersistence,
+  });
+  const runtimeStateStore = externalSessionPersistence
+    ? new EnvironmentSessionRuntimeStore({ stateRoot: manifest.paths.state })
+    : sessionStore;
+  const resourceStore = externalSessionPersistence
+    ? createEnvironmentSessionResourceStore({ root: manifest.paths.sessionResources })
+    : null;
   const runtimeConfiguration = await prepareMinimalRuntimeConfiguration({ manifest });
   const runtime = createMinimalCodexRuntime({
     manifest,
-    bindingStore: sessionStore,
+    bindingStore: runtimeStateStore,
     runtimeEnvironmentOverrides: runtimeConfiguration.environment,
   });
   let stopping = false;
@@ -89,12 +103,14 @@ export async function runInternalMinimalHost(runTarget, {
     manifest,
     kernel: runtime.kernel,
     sessionStore,
+    runtimeStateStore,
     assetsRoot,
     host: bindHost,
     port,
     socketPath,
     accessToken: await hostAccessToken(),
     sessionOwnerHeader: manifest.extensions?.['ai.ddit.agent-workbench.minimal-host']?.sessionOwnerHeader || null,
+    resourceStore,
     onStopRequested: async () => {
       await shutdown();
       process.exit(0);

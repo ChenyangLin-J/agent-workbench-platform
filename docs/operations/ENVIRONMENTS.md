@@ -122,6 +122,9 @@ This is a trusted-code extension, not an arbitrary plugin sandbox: the reviewed 
 ```json
 {
   "schema": "agent-workbench.environment-bindings/v1",
+  "storage": {
+    "sessionPersistence": { "root": "./private-session-data" }
+  },
   "credentials": {
     "credentials.openmetadata-pat": { "source": "environment", "key": "OPENMETADATA_PAT" },
     "credentials.google-adc": { "source": "file", "path": "/private/controller/application_default_credentials.json" }
@@ -136,6 +139,8 @@ agent-workbench env create --profile ./profile.json --bindings ./bindings.json
 agent-workbench env run <environment> --bindings ./bindings.json
 ```
 
+`storage.sessionPersistence.root` is optional and is resolved relative to the bindings file. The root must be a private non-symlink directory. When present, new Runs use its `state/` and `resources/` children for durable Session transcripts and managed Resources; Runtime bindings and queued Turns continue to use the Run's own `state/` directory. Keep the bindings and the effective storage root under consumer backup and authorization policy.
+
 OpenMetadata fixes one HTTPS target and a non-empty subset of `search_metadata`, `get_entity_details`, and `get_entity_lineage`. Its sidecar filters discovery and rejects every other tool call before upstream contact. BigQuery fixes a billing project, readable-project allowlist, `maximumBytesBilled`, and `maximumRows`. It exposes only `dry_run_query` and `run_query`; execution repeats the dry run, requires BigQuery to classify the exact SQL as `SELECT`, rejects referenced projects outside the allowlist, and then uses the fixed BigQuery REST endpoint. The workload receives neither PAT, ADC nor `bq`.
 
 The Profile's `credentialReferences`, `networkTargets`, and `externalEffects` must exactly equal the union required by the model broker and declared adapters. Surplus declarations fail closed like missing ones. Bindings and upstream values never enter the public manifest.
@@ -147,11 +152,14 @@ If the launching host has `HTTPS_PROXY` or `HTTP_PROXY`, the Docker Supervisor d
 ```bash
 agent-workbench env create --profile ./profile.json
 agent-workbench env run <environment-id-or-path>
+agent-workbench env migrate-sessions <stopped-run> --bindings ./bindings.json
 agent-workbench env inspect <environment-id-run-id-or-path>
 agent-workbench env stop <environment-id-run-id-or-path>
 ```
 
 Use `--root <directory>` on every command to replace the default `~/.agent-workbench/environments`. `env run` on an Environment creates a new immutable Run; running an existing stopped Run resumes its retained Session state. `env stop` on an Environment stops its active Runs.
+
+To adopt portable persistence for existing filesystem state, stop the source Run and call `env migrate-sessions` before starting the first Run that uses the new root. The destination declared by the bindings must not exist. The command copies transcripts and Resources, verifies committed references and managed digests, excludes Runtime bindings and queued Turns, and retains the source. A Session created by the old Run is read-only in the new Run until an explicit continue/fork flow is implemented; reading it never creates a replacement Runtime thread.
 
 The generated layout is:
 
@@ -171,6 +179,8 @@ The generated layout is:
     └── credentials/
 ```
 
+With portable persistence enabled, the Run manifest additionally records `paths.sessionState` and `paths.sessionResources`. They point to the consumer-selected private root and are mounted separately by the Docker provider; `paths.state` and `paths.resources` remain Run-local operational paths.
+
 The Host does not create `policies/`, `evaluations/` or `gold/`. A consumer or separate Evaluator may own those when its domain needs them.
 
 ## What to trust
@@ -181,7 +191,7 @@ Docker Runs use a read-only workload container with dropped capabilities, no-new
 
 For an `ephemeral-machine` Run with `no-external-effects` or the enforced `read-only-data-adapter-allowlist`, Docker is the executable sandbox boundary. Codex therefore runs with `danger-full-access` and no per-command approval *inside that container*; nesting bubblewrap is not required and is not assumed to work on Docker Desktop. This does not grant host access: outer mounts, constructed environment, dropped capabilities, internal network, fixed brokers and per-Run identity remain the enforcement facts. Development mode and unenforced external effects keep interactive approval. Domain credentials must stay in enforcing sidecars.
 
-Stopping a Run removes its child processes and provider-owned ephemeral resources, then recreates an empty private transient-credential directory. It retains the manifest, Runtime, Session state, and managed `resources` store. Retention or deletion of that state is consumer policy and is not an implicit part of `stop`.
+Stopping a Run removes its child processes and provider-owned ephemeral resources, then recreates an empty private transient-credential directory. It retains the manifest and Runtime state. Run-scoped Sessions/resources remain under that Run; portable Sessions/resources remain under the consumer-bound root. Retention or deletion of either is consumer policy and is not an implicit part of `stop`.
 
 ## Verification
 

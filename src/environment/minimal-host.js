@@ -23,6 +23,7 @@ export function createMinimalHost({
   manifest,
   kernel,
   sessionStore,
+  runtimeStateStore = null,
   assetsRoot = null,
   host = '127.0.0.1',
   port = 0,
@@ -35,6 +36,8 @@ export function createMinimalHost({
   assertRunManifest(manifest);
   if (!kernel?.attach || !kernel?.submit || !kernel?.subscribe) throw new TypeError('Session Kernel is required');
   if (!sessionStore?.list || !sessionStore?.create || !sessionStore?.get) throw new TypeError('Session store is required');
+  const sessionRuntimeStore = runtimeStateStore || sessionStore;
+  if (!sessionRuntimeStore?.load || !sessionRuntimeStore?.save) throw new TypeError('Session Runtime store is required');
   const ownerHeader = normalizeSessionOwnerHeader(sessionOwnerHeader);
   const attachmentsEnabled = manifest.features?.attachments === true;
   const steerEnabled = featureEnabled(manifest, 'steer');
@@ -50,7 +53,7 @@ export function createMinimalHost({
     void route(request, response).catch((error) => sendError(response, error));
   });
   let unsubscribeEvents = null;
-  const turnQueueReady = initializeTurnQueue(sessionStore);
+  const turnQueueReady = initializeTurnQueue(sessionRuntimeStore);
   const dispatcherReady = turnQueueReady.then((turnQueue) => createQueuedTurnDispatcher({
     queue: turnQueue,
     activeTurnForSession: (session) => Boolean(session?.runtimeBinding?.activeTurnId),
@@ -80,6 +83,29 @@ export function createMinimalHost({
   }));
   const branchController = createMinimalHostBranchController({ manifest, kernel, sessionStore });
 
+  async function readSession(sessionId, { ownerId = null, includeOwnerId = false } = {}) {
+    const session = await sessionStore.get(sessionId, { ownerId, includeOwnerId });
+    return decorateSessionForCurrentRun(session);
+  }
+
+  async function listSessions({ ownerId = null } = {}) {
+    return Promise.all((await sessionStore.list({ ownerId })).map(decorateSessionForCurrentRun));
+  }
+
+  async function decorateSessionForCurrentRun(session) {
+    if (sessionRuntimeStore === sessionStore) return session;
+    const runtimeBinding = await sessionRuntimeStore.load(session.sessionId || session.id);
+    const detachedFromCurrentRun = !runtimeBinding
+      && session.createdRunId !== manifest.id;
+    return {
+      ...session,
+      runtimeBinding,
+      composerDisabled: detachedFromCurrentRun,
+      runtimeContinuationRequired: detachedFromCurrentRun,
+      ...(detachedFromCurrentRun ? { status: 'idle', statusLabel: '历史记录' } : {}),
+    };
+  }
+
   async function route(request, response) {
     const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
     if (accessToken && request.headers['x-agent-workbench-token'] !== accessToken && url.pathname.startsWith('/api/')) {
@@ -105,18 +131,18 @@ export function createMinimalHost({
       return;
     }
     if (request.method === 'GET' && url.pathname === '/api/sessions') {
-      return sendJson(response, 200, { sessions: await sessionStore.list({ ownerId }) });
+      return sendJson(response, 200, { sessions: await listSessions({ ownerId }) });
     }
     if (request.method === 'POST' && url.pathname === '/api/sessions') {
       const body = await readJsonBody(request);
-      const session = await sessionStore.create({ title: body.title || '新对话', ownerId });
+      const session = await sessionStore.create({ title: body.title || '新对话', ownerId, runId: manifest.id });
       await kernel.attach(session.sessionId, runtimeAttachOptions(manifest));
-      return sendJson(response, 201, { session: await sessionStore.get(session.sessionId, { ownerId }) });
+      return sendJson(response, 201, { session: await readSession(session.sessionId, { ownerId }) });
     }
     const branchRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/branches$/);
     if (branchRoute && request.method === 'POST') {
       const sourceSessionId = decodeURIComponent(branchRoute[1]);
-      const source = await sessionStore.get(sourceSessionId, { ownerId });
+      const source = await readSession(sourceSessionId, { ownerId });
       const body = await readJsonBody(request);
       const intent = body.intent === 'edit' ? 'edit' : 'fork';
       if (intent === 'edit' && !messageEditEnabled) {
@@ -128,6 +154,7 @@ export function createMinimalHost({
       if (source.runtimeBinding?.activeTurnId) {
         throw hostError('HOST_SESSION_ACTIVE', 'An active Session cannot be branched.', 409);
       }
+      requireCurrentRunSession(source);
       const result = await branchController.branch({
         sourceSessionId,
         replaceTurnId: body.replaceTurnId,
@@ -137,16 +164,17 @@ export function createMinimalHost({
       return sendJson(response, 201, {
         sourceSessionId,
         replacedTurnId: result.replacedTurnId,
-        session: await sessionStore.get(result.session.sessionId, { ownerId }),
+        session: await readSession(result.session.sessionId, { ownerId }),
         turn: result.turn,
       });
     }
     const directoryRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/directory-references$/);
     if (directoryRoute) {
       const sessionId = decodeURIComponent(directoryRoute[1]);
-      await sessionStore.get(sessionId, { ownerId });
+      const session = await readSession(sessionId, { ownerId });
       requireAttachmentsEnabled(attachmentsEnabled);
       if (request.method === 'POST') {
+        requireCurrentRunSession(session);
         const body = await readJsonBody(request);
         const resources = await registerEnvironmentSessionDirectories({
           directories: body.directories,
@@ -162,9 +190,10 @@ export function createMinimalHost({
     if (attachmentRoute) {
       const sessionId = decodeURIComponent(attachmentRoute[1]);
       const attachmentId = attachmentRoute[2] ? decodeURIComponent(attachmentRoute[2]) : null;
-      await sessionStore.get(sessionId, { ownerId });
+      const session = await readSession(sessionId, { ownerId });
       requireAttachmentsEnabled(attachmentsEnabled);
       if (request.method === 'POST' && !attachmentId) {
+        requireCurrentRunSession(session);
         const body = await readJsonBody(request, { maxBytes: MAX_ATTACHMENT_BODY_BYTES });
         const attachment = await saveEnvironmentSessionAttachment({
           attachment: body.attachment,
@@ -190,7 +219,8 @@ export function createMinimalHost({
     if (queuedTurnRoute && request.method === 'DELETE') {
       const sessionId = decodeURIComponent(queuedTurnRoute[1]);
       const queuedTurnId = decodeURIComponent(queuedTurnRoute[2]);
-      await sessionStore.get(sessionId, { ownerId });
+      const session = await readSession(sessionId, { ownerId });
+      requireCurrentRunSession(session);
       requireQueuedTurnsEnabled(queuedTurnsEnabled);
       const queue = await turnQueueReady;
       const removed = await queue.remove(sessionId, queuedTurnId);
@@ -201,15 +231,18 @@ export function createMinimalHost({
     if (sessionRoute) {
       const sessionId = decodeURIComponent(sessionRoute[1]);
       const action = sessionRoute[2] || '';
-      await sessionStore.get(sessionId, { ownerId });
+      let session = await readSession(sessionId, { ownerId });
       if (request.method === 'GET' && !action) {
-        await kernel.attach(sessionId, runtimeAttachOptions(manifest));
-        const session = await sessionStore.get(sessionId, { ownerId });
+        if (!session.runtimeContinuationRequired) {
+          await kernel.attach(sessionId, runtimeAttachOptions(manifest));
+          session = await readSession(sessionId, { ownerId });
+        }
         session.pendingRequests = kernel.getPendingRequests(sessionId).map(pendingRequestView);
         session.queuedTurns = queuedTurnsEnabled ? (await turnQueueReady).list(sessionId) : [];
         return sendJson(response, 200, { session });
       }
       if (request.method === 'POST' && action === 'turns') {
+        requireCurrentRunSession(session);
         const body = await readJsonBody(request);
         const turn = normalizeTurnRequest(body);
         if (turn.attachments.length) requireAttachmentsEnabled(attachmentsEnabled);
@@ -266,12 +299,14 @@ export function createMinimalHost({
         return sendJson(response, 202, { result });
       }
       if (request.method === 'POST' && action === 'interrupt') {
+        requireCurrentRunSession(session);
         const body = await readJsonBody(request);
         return sendJson(response, 202, {
           result: await kernel.interrupt(sessionId, body.expectedTurnId),
         });
       }
       if (request.method === 'POST' && action.startsWith('requests/')) {
+        requireCurrentRunSession(session);
         const body = await readJsonBody(request);
         return sendJson(response, 200, {
           result: await kernel.respondToRequest(sessionId, decodeURIComponent(sessionRoute[3]), body.response),
@@ -529,6 +564,15 @@ function inputText(input) {
 
 function requireAttachmentsEnabled(enabled) {
   if (!enabled) throw hostError('HOST_ATTACHMENTS_DISABLED', 'Attachments are disabled for this Environment.', 403);
+}
+
+function requireCurrentRunSession(session) {
+  if (!session?.runtimeContinuationRequired) return;
+  throw hostError(
+    'HOST_SESSION_CONTINUATION_REQUIRED',
+    'This Session belongs to an earlier execution Run and is read-only until it is continued in the current Run.',
+    409,
+  );
 }
 
 function pendingRequestView(request) {

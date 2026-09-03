@@ -382,8 +382,9 @@ export async function clearDockerSupervisorGeneratedState({
   ]);
 }
 
-function containerRunManifest(manifest, profile, inspection, { modelBroker = null, dataAdapters = [] } = {}) {
+export function containerRunManifest(manifest, profile, inspection, { modelBroker = null, dataAdapters = [] } = {}) {
   const root = '/run/workbench';
+  const externalSessionPersistence = Boolean(manifest.paths.sessionState && manifest.paths.sessionResources);
   const paths = {
     root,
     runtime: `${root}/runtime`,
@@ -393,6 +394,10 @@ function containerRunManifest(manifest, profile, inspection, { modelBroker = nul
     temporary: `${root}/tmp`,
     credentials: '/run/credentials',
     capabilities: `${root}/capabilities`,
+    ...(externalSessionPersistence ? {
+      sessionState: `${root}/session-state`,
+      sessionResources: `${root}/session-resources`,
+    } : {}),
   };
   return {
     ...manifest,
@@ -426,9 +431,11 @@ function containerRunManifest(manifest, profile, inspection, { modelBroker = nul
           paths.runtime,
           paths.state,
           paths.resources,
+          paths.sessionState,
+          paths.sessionResources,
           paths.workspace,
           paths.temporary,
-        ])],
+        ].filter(Boolean))],
       },
     },
     process: { pid: null, port: null, providerState: {} },
@@ -436,7 +443,7 @@ function containerRunManifest(manifest, profile, inspection, { modelBroker = nul
   };
 }
 
-function dockerRunArguments({ manifest, profile, image, containerName, networkName, workloadSecretRoot, configRoot, modelBroker }) {
+export function dockerRunArguments({ manifest, profile, image, containerName, networkName, workloadSecretRoot, configRoot, modelBroker }) {
   const args = [
     'run', '--detach',
     '--name', containerName,
@@ -468,6 +475,12 @@ function dockerRunArguments({ manifest, profile, image, containerName, networkNa
     '--env', 'AGENT_WORKBENCH_HOST_TOKEN_FILE=/run/credentials/host-token',
     '--env', 'AGENT_WORKBENCH_READY_FILE=/run/workbench/state/container-ready.json',
   ];
+  if (manifest.paths.sessionState && manifest.paths.sessionResources) {
+    args.push(
+      '--mount', mount(manifest.paths.sessionState, '/run/workbench/session-state', false),
+      '--mount', mount(manifest.paths.sessionResources, '/run/workbench/session-resources', false),
+    );
+  }
   if (modelBroker) {
     args.push('--env', 'AGENT_WORKBENCH_MODEL_BROKER_TOKEN_FILE=/run/credentials/model-broker-token');
   }

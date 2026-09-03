@@ -19,7 +19,7 @@ Start with the [`docs/README.md`](docs/README.md) documentation map. The stable 
 - Product-neutral capability plugins: skill sources, MCP servers, CLI tools, and credential providers
 - A versioned common Capability Registry, schema, dependency resolver, install plan, portable lock, host-backed Capability Manager, and React management panel
 - Codex connection preparation, Skill-root inventory validation, execution-profile translation, and grouped/incremental Session pagination policy
-- A runnable, project-free Minimal Host with Environment manifests, lifecycle CLI, immutable Skill and trusted read-only MCP snapshots, honest isolation reporting, fixed Codex model access, and isolated read-only adapter sidecars
+- A runnable, project-free Minimal Host with Environment manifests, lifecycle CLI, optional consumer-owned portable Session persistence, immutable Skill and trusted read-only MCP snapshots, honest isolation reporting, fixed Codex model access, and isolated read-only adapter sidecars
 
 ## Product boundary
 

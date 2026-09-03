@@ -14,8 +14,8 @@ The same mechanism should support a simple local Workbench, a constrained Data S
 | --- | --- |
 | Minimal Host | Platform-provided HTTP/streaming host and Session UI with no project, task, memory, evaluation, or domain model |
 | Environment | A named instance with its own effective Profile, Runtime, state paths, capability lock, isolation provider and lifecycle |
-| Run | One immutable environment configuration plus mutable Session/output state created under it |
-| Session | A Runtime conversation inside a Run; it does not require a project |
+| Run | One execution revision of an immutable Environment configuration, with its own Runtime bindings, queue, processes and workspace |
+| Session | A durable conversation that does not require a project and may remain readable across Runs |
 | Consumer Profile | Consumer-owned declaration of capabilities, feature visibility, isolation requirements and host adapters |
 | Evaluator | Optional external component that compares outputs or reads Gold; it is not part of the Minimal Host contract |
 
@@ -44,6 +44,7 @@ The Minimal Host must not require or create `policies/`, `evaluations/`, `gold/`
 ```text
 agent-workbench env create --profile <profile>
 agent-workbench env run <environment-or-run>
+agent-workbench env migrate-sessions <stopped-run> --bindings <private-bindings>
 agent-workbench env inspect <environment-or-run>
 agent-workbench env stop <environment-or-run>
 ```
@@ -56,6 +57,7 @@ Implemented in Platform:
 
 - strict Profile normalization, stable hashing and secret-value rejection;
 - atomic Environment/Run creation, contained paths, symlink escape checks and retained project-free Session state;
+- optional consumer-owned Session transcript/Resource roots, separate Run-local Runtime bindings and queued Turns, and a source-retaining migration from one stopped Run;
 - `env create`, `run`, `inspect` and `stop` plus the built-in Session UI and Codex Runtime lifecycle;
 - effective isolation derived from nine enforcement facets rather than provider self-report;
 - a real Docker ephemeral provider for offline Profiles and immutable `skill-source` snapshots, including exact owned-resource cleanup and a repeatable Docker smoke test;
@@ -81,7 +83,7 @@ The resolved manifest records only reproducibility and enforcement facts:
 
 - schema, Platform and Runtime versions;
 - source Profile identity and hash;
-- Runtime, state, managed-resource, workspace and temporary paths;
+- Runtime, Run-local state, managed-resource, optional portable Session state/resource, workspace and temporary paths;
 - feature configuration, resolved Capability lock and content-addressed snapshot metadata;
 - isolation provider, requested level and effective enforcement;
 - allowed filesystem roots, environment keys, network targets and credential references;
@@ -110,7 +112,7 @@ Every isolated provider must cover:
 4. **Capabilities and execution**: load only the resolved Skill/MCP/CLI lock; enforce tool and command restrictions outside prompt text.
 5. **Credentials and network**: inject references or short-lived least-privilege material at startup, restrict destinations/actions, redact output, and remove material on stop.
 6. **External effects**: require the Profile to declare allowed read/write classes; a manifest statement such as `readOnly` is not enforcement by itself.
-7. **Cross-run contamination**: prevent access to previous Runs, alternative Skills, expected answers and evaluator-only assets.
+7. **Cross-run contamination**: prevent access to previous Runtime bindings, workspaces, alternative Skills, expected answers and evaluator-only assets. An explicitly bound portable Session store is the only cross-Run data surface and remains subject to Host authorization.
 
 An environment can remain useful without being fully offline. Required model and data services are explicit controlled channels, not exceptions hidden inside inherited host access.
 
@@ -118,7 +120,7 @@ An environment can remain useful without being fully offline. Required model and
 
 The first host includes only:
 
-- create/open/list the Run's Sessions;
+- create/open/list authorized Sessions; by default these are Run-scoped, while a consumer-bound portable store can expose retained history from earlier Runs;
 - `SessionWorkspace` transcript, Composer, requests, interruption and supported attachments;
 - persistent queued Turns with delete/recovery, plus independent message Edit/Fork branches when the Profile flags and Runtime capabilities allow them;
 - optional host extensions declared by the Consumer Profile.
@@ -127,7 +129,9 @@ Run identity, isolation evidence and lifecycle controls remain available through
 
 Live synchronization is part of this minimum surface, not an optional product feature. The Host sends event-stream heartbeats; the client reconnects with replay from the last observed event id and polls the authoritative Session while it is running or waiting. The transcript exposes persisted commentary and a collapsed technical-progress summary so a transient stream failure cannot leave the page permanently showing stale work.
 
-When `features.attachments` is enabled, the Minimal Host stages uploaded files through the Platform `ResourceStore` under the current Run's private `resources` root. A Turn may reference only resources previously uploaded to that same Session; Runtime acceptance commits them as Session-durable resources and the persisted transcript contains normalized descriptors, not host paths. A rejected Turn leaves its staged resources recoverable for retry. The first accepted user message also replaces the default Session title while preserving titles explicitly supplied by a consumer.
+When `features.attachments` is enabled, the Minimal Host stages uploaded files through the Platform `ResourceStore` under the effective Session resource root. That is the current Run's private `resources` root by default or the consumer-bound portable root when configured. A Turn may reference only resources previously uploaded to that same Session; Runtime acceptance commits them as Session-durable resources and the persisted transcript contains normalized descriptors, not host paths. A rejected Turn leaves its staged resources recoverable for retry. The first accepted user message also replaces the default Session title while preserving titles explicitly supplied by a consumer.
+
+Portable persistence deliberately does not make Runtime threads portable. `sessions.json` and managed Resources are durable facts; `session-runtime.json`, Runtime homes and queued Turns remain inside one Run. When a new Run reads a Session created by an earlier Run, list/detail remain available, Composer and mutation routes return `HOST_SESSION_CONTINUATION_REQUIRED`, and no Runtime thread is created. A future continue/fork action may explicitly rehydrate context, but a GET must never create a blank replacement thread.
 
 `steer`, `queuedTurns`, `messageEdit`, and `messageFork` are independent Profile controls; disabling one removes its action without implying that the others are disabled. Projects, tasks, assets, memory, Side Chat, Subagents, Browser, Capability mutation and evidence dashboards are hidden unless the Profile explicitly enables an existing Platform feature or a consumer extension. The built-in host does not invent fallback domain objects to satisfy its UI.
 

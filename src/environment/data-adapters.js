@@ -93,7 +93,7 @@ export function dataAdapterRequest(profile = {}) {
 
 export function normalizeEnvironmentBindings(document, { baseDirectory = process.cwd() } = {}) {
   if (!plainObject(document)) throw new TypeError('environment bindings must be an object');
-  rejectUnknownKeys(document, new Set(['schema', '$schema', 'credentials']), 'environment bindings');
+  rejectUnknownKeys(document, new Set(['schema', '$schema', 'credentials', 'storage']), 'environment bindings');
   const schema = document.schema || document.$schema || ENVIRONMENT_BINDINGS_SCHEMA;
   if (schema !== ENVIRONMENT_BINDINGS_SCHEMA) throw new TypeError(`unsupported environment bindings schema: ${schema}`);
   const credentials = document.credentials ?? {};
@@ -118,7 +118,27 @@ export function normalizeEnvironmentBindings(document, { baseDirectory = process
     }
     throw new TypeError(`environment binding ${id} has unsupported source: ${source}`);
   }
-  return deepFreeze({ schema: ENVIRONMENT_BINDINGS_SCHEMA, credentials: normalized });
+  const storage = normalizeStorageBindings(document.storage, baseDirectory);
+  return deepFreeze({
+    schema: ENVIRONMENT_BINDINGS_SCHEMA,
+    credentials: normalized,
+    ...(storage ? { storage } : {}),
+  });
+}
+
+function normalizeStorageBindings(value, baseDirectory) {
+  if (value == null) return null;
+  if (!plainObject(value)) throw new TypeError('environment bindings storage must be an object');
+  rejectUnknownKeys(value, new Set(['sessionPersistence']), 'environment bindings storage');
+  if (value.sessionPersistence == null) return null;
+  const binding = value.sessionPersistence;
+  if (!plainObject(binding)) throw new TypeError('environment bindings storage.sessionPersistence must be an object');
+  rejectUnknownKeys(binding, new Set(['root']), 'environment bindings storage.sessionPersistence');
+  return {
+    sessionPersistence: {
+      root: resolve(baseDirectory, nonEmptyString(binding.root, 'environment bindings storage.sessionPersistence.root')),
+    },
+  };
 }
 
 export async function readEnvironmentBindings(path) {

@@ -21,7 +21,8 @@ export {
   providerError,
 } from './providers.js';
 export { isPathContained, resolveContainedPath } from './paths.js';
-export { EnvironmentSessionStore } from './session-store.js';
+export { EnvironmentSessionRuntimeStore, EnvironmentSessionStore } from './session-store.js';
+export { migrateRunSessionPersistence } from './session-persistence.js';
 export {
   commitEnvironmentSessionAttachments,
   createEnvironmentSessionResourceStore,

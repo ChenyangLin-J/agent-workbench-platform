@@ -2,7 +2,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -19,6 +19,7 @@ import {
   runModelEgressBroker,
   launchEnvironmentRun,
   listEnvironmentRuns,
+  migrateRunSessionPersistence,
   readEnvironmentBindings,
   readEnvironmentManifest,
   readStoredEnvironmentProfile,
@@ -140,7 +141,10 @@ async function main(argv) {
     const target = await resolveEnvironmentTarget(requiredTarget(positional), { storageRoot });
     const selected = await readEnvironmentManifest(target);
     const run = selected.kind === 'environment'
-      ? await createEnvironmentRun(target, { providers })
+      ? await createEnvironmentRun(target, {
+          providers,
+          sessionPersistenceRoot: bindings.storage?.sessionPersistence?.root || null,
+        })
       : selected;
     const profile = await readStoredEnvironmentProfile(run.paths.root);
     const provider = providers.get(profile.isolation.provider);
@@ -155,6 +159,23 @@ async function main(argv) {
       url: result.url,
       reused: result.reused,
       next: `agent-workbench env inspect ${result.manifest.paths.root}`,
+    });
+  }
+
+  if (command === 'migrate-sessions') {
+    const target = await resolveEnvironmentTarget(requiredTarget(positional), { storageRoot });
+    const run = await readEnvironmentManifest(target);
+    const destinationRoot = bindings.storage?.sessionPersistence?.root;
+    if (!destinationRoot) {
+      throw cliError(
+        'CLI_SESSION_PERSISTENCE_BINDING_REQUIRED',
+        'A --bindings file with storage.sessionPersistence.root is required.',
+      );
+    }
+    const migration = await migrateRunSessionPersistence(run.paths.root, { destinationRoot });
+    return print({
+      migration,
+      next: `agent-workbench env run ${dirname(dirname(run.paths.root))} --bindings ${resolve(options.bindings)}`,
     });
   }
 
@@ -236,7 +257,7 @@ function print(value) {
 }
 
 function helpText() {
-  return `Agent Workbench runnable Minimal Host\n\nUsage:\n  agent-workbench env create --profile <profile.json> [--bindings <private-bindings.json>] [--root <storage>] [--id <id>]\n  agent-workbench env run <environment-or-run> [--bindings <private-bindings.json>] [--root <storage>] [--port <port>]\n  agent-workbench env inspect <environment-or-run> [--root <storage>]\n  agent-workbench env stop <environment-or-run> [--root <storage>]\n\nThe built-in development provider is explicitly non-isolated. A Profile that requires\nguarded-host or ephemeral-machine will fail at run time instead of downgrading.\n`;
+  return `Agent Workbench runnable Minimal Host\n\nUsage:\n  agent-workbench env create --profile <profile.json> [--bindings <private-bindings.json>] [--root <storage>] [--id <id>]\n  agent-workbench env run <environment-or-run> [--bindings <private-bindings.json>] [--root <storage>] [--port <port>]\n  agent-workbench env migrate-sessions <run> --bindings <private-bindings.json> [--root <storage>]\n  agent-workbench env inspect <environment-or-run> [--root <storage>]\n  agent-workbench env stop <environment-or-run> [--root <storage>]\n\nThe built-in development provider is explicitly non-isolated. A Profile that requires\nguarded-host or ephemeral-machine will fail at run time instead of downgrading.\n`;
 }
 
 function cliError(code, message) {

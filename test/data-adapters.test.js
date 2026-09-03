@@ -55,11 +55,17 @@ test('controller-only bindings reject embedded values and resolve file paths', (
       'credentials.metadata-pat': { source: 'environment', key: 'OPENMETADATA_PAT' },
       'credentials.google-adc': { source: 'file', path: './adc.json' },
     },
+    storage: { sessionPersistence: { root: './sessions' } },
   }, { baseDirectory: '/private/controller' });
   assert.equal(bindings.credentials['credentials.google-adc'].path, '/private/controller/adc.json');
+  assert.equal(bindings.storage.sessionPersistence.root, '/private/controller/sessions');
   assert.throws(() => normalizeEnvironmentBindings({
     credentials: { 'credentials.metadata-pat': { source: 'environment', key: 'OPENMETADATA_PAT', value: 'secret' } },
   }), /unsupported field: value/);
+  assert.throws(() => normalizeEnvironmentBindings({
+    credentials: {},
+    storage: { sessionPersistence: { root: './sessions', token: 'not-allowed' } },
+  }), /unsupported field: token/);
 });
 
 test('data adapter broker stages one private credential per adapter without leaking bindings', async (t) => {

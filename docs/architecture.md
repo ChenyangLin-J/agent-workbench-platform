@@ -49,7 +49,7 @@ Data Skill Lab currently incubates inside the Personal repository, but all of it
 | Attachment metadata, limits, input and transcript envelopes | Attachment bytes, URLs, path authorization and file actions |
 | Shared Session/Feature React UI and extension slots | Page shell, theme, placement and business extensions |
 | Capability schema, common catalog, dependency resolution, plans and portable locks | Product Profile, custom catalog, host checks, install handlers and authentication |
-| Environment/Run schema, Minimal Host, lifecycle/provider enforcement, immutable Skill snapshots, fixed Codex model broker and built-in read-only adapter enforcement | Profile selection, data allowlists, credential bindings, evaluation policy, retention and deployment |
+| Environment/Run schema, Minimal Host, lifecycle/provider enforcement, portable Session/Run-state separation, immutable Skill snapshots, fixed Codex model broker and built-in read-only adapter enforcement | Profile selection, data allowlists, Session storage root and authorization, evaluation policy, retention and deployment |
 | Browser Provider lifecycle primitives and product-neutral proxy behavior | Browser profile, MCP endpoint, authorization and user-facing controls |
 | Project-free and project-scoped contract fixtures | Consumer integration, end-to-end and manual acceptance evidence |
 
@@ -91,7 +91,7 @@ Platform never reads a product database, chooses a package manager, stores crede
 - The built-in Host runs Sessions without projects, tasks, memory, evaluation policy or a consumer checkout. `policies/`, `evaluations/` and `gold/` are optional consumer/evaluator assets and are never required Host directories.
 - Requested isolation is not evidence. The effective level is derived from provider enforcement facets and startup fails when it is below the Profile minimum.
 - Development mode is useful but explicitly non-isolated. The Docker provider proves strong isolation for offline Runs, immutable `skill-source` snapshots, one fixed Codex model channel, and locked OpenMetadata/BigQuery read-only adapters. Skill sources are hash-verified, mounted read-only and Runtime-allowlisted. Model and data credentials stay in separate sidecars; the workload receives only Run-local service channels. BigQuery execution is dry-run gated by statement type, referenced-project allowlist and byte/row ceilings; OpenMetadata is tool-allowlisted before upstream contact. Exact credential, network and effect declarations fail closed. For self-contained `ephemeral-machine` Runs, including enforced read-only adapters, Docker is the executable sandbox and nested Codex command approvals are disabled.
-- Each Run owns its Runtime home, Session state, workspace, temporary paths and transient credential directory. Stop removes transient credentials and child resources while retaining the Run manifest and Session state.
+- Each Run owns its Runtime home, Runtime bindings, queued Turns, workspace, temporary paths and transient credential directory. By default its Session transcript and managed resources remain Run-scoped for compatibility; a consumer may instead bind them to one private stable root shared by successive Runs. A Session from an earlier Run is readable there but is not silently attached to a blank Runtime thread. Stop removes transient credentials and child resources while retaining durable state.
 
 ## Placement test
 

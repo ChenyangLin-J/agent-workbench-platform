@@ -1,18 +1,24 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { normalizeSessionAttachment } from '../attachments.js';
 
 const STORE_VERSION = 1;
 const MAX_MESSAGES_PER_SESSION = 2_000;
 const MAX_TECHNICAL_ITEMS_PER_SESSION = 2_000;
+const MUTATION_LOCK_STALE_MS = 30_000;
+const MUTATION_LOCK_RETRIES = 250;
 
 export class EnvironmentSessionStore {
-  constructor({ stateRoot, now = () => new Date(), uuid = randomUUID } = {}) {
+  constructor({ stateRoot, runId = null, crossProcess = false, now = () => new Date(), uuid = randomUUID } = {}) {
     if (typeof stateRoot !== 'string' || !stateRoot.trim()) throw new TypeError('stateRoot is required');
     this.stateRoot = stateRoot;
     this.path = join(stateRoot, 'sessions.json');
+    this.lockPath = `${this.path}.lock`;
+    this.runId = runId == null ? null : nonEmptyString(runId, 'Run id');
+    this.crossProcess = crossProcess === true;
     this.now = now;
     this.uuid = uuid;
     this.queue = Promise.resolve();
@@ -27,7 +33,7 @@ export class EnvironmentSessionStore {
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   }
 
-  async create({ title = '新对话', ownerId = null } = {}) {
+  async create({ title = '新对话', ownerId = null, runId = this.runId } = {}) {
     const sessionId = `session-${this.uuid()}`;
     const timestamp = this.#time();
     const normalizedOwnerId = ownerId == null ? null : nonEmptyString(ownerId, 'Session owner');
@@ -35,6 +41,7 @@ export class EnvironmentSessionStore {
       document.sessions[sessionId] = {
         id: sessionId,
         ownerId: normalizedOwnerId,
+        ...(runId == null ? {} : { createdRunId: nonEmptyString(runId, 'Run id') }),
         title: nonEmptyString(title, 'Session title'),
         status: 'idle',
         createdAt: timestamp,
@@ -62,6 +69,7 @@ export class EnvironmentSessionStore {
       document.sessions[sessionId] = {
         id: sessionId,
         ownerId: source.ownerId,
+        ...(this.runId == null ? {} : { createdRunId: this.runId }),
         title: title == null ? source.title : nonEmptyString(title, 'Session title'),
         status: 'idle',
         createdAt: timestamp,
@@ -190,7 +198,8 @@ export class EnvironmentSessionStore {
       } else if (event.type === 'request_opened') {
         session.status = 'waiting';
       } else if (['request_resolved', 'request_rejected', 'request_expired'].includes(event.type)) {
-        session.status = document.bindings[event.sessionId]?.activeTurnId ? 'running' : 'idle';
+        const binding = document.bindings[event.sessionId];
+        session.status = binding && !binding.activeTurnId ? 'idle' : 'running';
       } else if (event.type === 'connection_exited') {
         session.status = 'error';
       } else if (event.type === 'plan_updated') {
@@ -219,6 +228,9 @@ export class EnvironmentSessionStore {
       });
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
+      await waitForInitializedDocument(this.path, (document) => (
+        document?.version === STORE_VERSION && plainObject(document.sessions) && plainObject(document.bindings)
+      ));
     }
   }
 
@@ -227,6 +239,148 @@ export class EnvironmentSessionStore {
     const document = JSON.parse(await readFile(this.path, 'utf8'));
     if (document?.version !== STORE_VERSION || !document.sessions || !document.bindings) {
       throw storeError('SESSION_STORE_INVALID', `Invalid Session store: ${this.path}`, 500);
+    }
+    return document;
+  }
+
+  #readQueued() {
+    const operation = this.queue.catch(() => {}).then(() => this.#read());
+    this.queue = operation.then(() => undefined);
+    return operation;
+  }
+
+  #mutate(updater) {
+    const operation = this.queue.catch(() => {}).then(async () => {
+      const release = this.crossProcess ? await this.#acquireMutationLock() : async () => {};
+      try {
+        const document = await this.#read();
+        await updater(document);
+        await writeJsonAtomic(this.path, document);
+      } finally {
+        await release();
+      }
+    });
+    this.queue = operation;
+    return operation;
+  }
+
+  #time() {
+    const date = this.now();
+    return (date instanceof Date ? date : new Date(date)).toISOString();
+  }
+
+  async #acquireMutationLock() {
+    await this.ready;
+    for (let attempt = 0; attempt < MUTATION_LOCK_RETRIES; attempt += 1) {
+      try {
+        await mkdir(this.lockPath, { mode: 0o700 });
+        return () => rm(this.lockPath, { recursive: true, force: true });
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+      }
+      const info = await stat(this.lockPath).catch((error) => {
+        if (error?.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (!info) continue;
+      if (Date.now() - info.mtimeMs > MUTATION_LOCK_STALE_MS) {
+        await rm(this.lockPath, { recursive: true, force: true });
+        continue;
+      }
+      await delay(20);
+    }
+    throw storeError('SESSION_STORE_BUSY', 'Session persistence is busy in another process.', 503);
+  }
+}
+
+function emptyStore() {
+  return { version: STORE_VERSION, sessions: {}, bindings: {}, queuedTurns: {} };
+}
+
+function publicSession(session) {
+  return {
+    id: session.id,
+    ...(session.createdRunId ? { createdRunId: session.createdRunId } : {}),
+    title: session.title,
+    contextId: 'environment',
+    contextLabel: '',
+    status: session.status,
+    statusLabel: statusLabel(session.status),
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    completedAt: session.completedAt,
+    canArchive: false,
+    canEnd: false,
+    canFavorite: false,
+  };
+}
+
+export class EnvironmentSessionRuntimeStore {
+  constructor({ stateRoot, now = () => new Date() } = {}) {
+    if (typeof stateRoot !== 'string' || !stateRoot.trim()) throw new TypeError('stateRoot is required');
+    this.stateRoot = stateRoot;
+    this.path = join(stateRoot, 'session-runtime.json');
+    this.now = now;
+    this.queue = Promise.resolve();
+    this.ready = this.#initialize();
+  }
+
+  async load(sessionId) {
+    const document = await this.#readQueued();
+    return document.bindings[sessionId] ? structuredClone(document.bindings[sessionId]) : null;
+  }
+
+  async save(sessionId, patch = {}) {
+    let binding;
+    await this.#mutate((document) => {
+      binding = {
+        ...(document.bindings[sessionId] || {}),
+        ...structuredClone(patch),
+        sessionId,
+        updatedAt: this.#time(),
+      };
+      document.bindings[sessionId] = binding;
+    });
+    return structuredClone(binding);
+  }
+
+  async loadQueuedTurns() {
+    const document = await this.#readQueued();
+    return structuredClone(document.queuedTurns || {});
+  }
+
+  async saveQueuedTurns(entries = {}) {
+    let saved;
+    await this.#mutate((document) => {
+      saved = entries && typeof entries === 'object' && !Array.isArray(entries)
+        ? structuredClone(entries)
+        : {};
+      document.queuedTurns = saved;
+    });
+    return structuredClone(saved);
+  }
+
+  async #initialize() {
+    await mkdir(this.stateRoot, { recursive: true, mode: 0o700 });
+    try {
+      await open(this.path, 'wx', 0o600).then(async (handle) => {
+        try {
+          await handle.writeFile(`${JSON.stringify(emptyRuntimeStore(), null, 2)}\n`, 'utf8');
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+      });
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+  }
+
+  async #read() {
+    await this.ready;
+    const document = JSON.parse(await readFile(this.path, 'utf8'));
+    if (document?.version !== STORE_VERSION || !document.bindings || !document.queuedTurns) {
+      throw storeError('SESSION_RUNTIME_STORE_INVALID', `Invalid Session Runtime store: ${this.path}`, 500);
     }
     return document;
   }
@@ -253,25 +407,21 @@ export class EnvironmentSessionStore {
   }
 }
 
-function emptyStore() {
-  return { version: STORE_VERSION, sessions: {}, bindings: {}, queuedTurns: {} };
+function emptyRuntimeStore() {
+  return { version: STORE_VERSION, bindings: {}, queuedTurns: {} };
 }
 
-function publicSession(session) {
-  return {
-    id: session.id,
-    title: session.title,
-    contextId: 'environment',
-    contextLabel: '',
-    status: session.status,
-    statusLabel: statusLabel(session.status),
-    createdAt: session.createdAt,
-    updatedAt: session.updatedAt,
-    completedAt: session.completedAt,
-    canArchive: false,
-    canEnd: false,
-    canFavorite: false,
-  };
+async function waitForInitializedDocument(path, validate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      const document = JSON.parse(await readFile(path, 'utf8'));
+      if (validate(document)) return;
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+    }
+    await delay(5);
+  }
+  throw storeError('SESSION_STORE_INVALID', `Session store did not finish initializing: ${path}`, 500);
 }
 
 function sessionView(session, binding = null) {
@@ -451,6 +601,10 @@ async function writeJsonAtomic(path, document) {
 function nonEmptyString(value, label) {
   if (typeof value !== 'string' || !value.trim()) throw new TypeError(`${label} must be a non-empty string`);
   return value.trim().slice(0, 200);
+}
+
+function plainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function storeError(code, message, status) {

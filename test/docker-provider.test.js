@@ -15,6 +15,8 @@ import {
 } from '../src/environment/index.js';
 import {
   clearDockerSupervisorGeneratedState,
+  containerRunManifest,
+  dockerRunArguments,
   httpsProxyTarget,
 } from '../src/environment/docker-supervisor.js';
 
@@ -44,6 +46,53 @@ test('Docker supervisor clears generated launch evidence without deleting retain
     await assert.rejects(() => stat(generatedPath), { code: 'ENOENT' });
   }
   assert.equal((await stat(sessionsPath)).isFile(), true);
+});
+
+test('Docker workload mounts portable Session state separately from Run-local state', () => {
+  const root = '/private/fixture/run';
+  const profile = normalizeEnvironmentProfile({
+    id: 'portable-session-container',
+    isolation: { provider: 'docker', minimumLevel: 'ephemeral-machine' },
+  });
+  const manifest = {
+    id: 'portable-session-run',
+    profile: { id: profile.id, hash: 'fixture' },
+    runtime: { provider: 'codex' },
+    isolation: { filesystem: { readableRoots: [], writableRoots: [] } },
+    paths: {
+      root,
+      runtime: `${root}/runtime`,
+      state: `${root}/state`,
+      resources: `${root}/resources`,
+      sessionState: '/private/fixture/shared/state',
+      sessionResources: '/private/fixture/shared/resources',
+      workspace: `${root}/workspace`,
+      temporary: `${root}/tmp`,
+      credentials: `${root}/credentials`,
+      capabilities: `${root}/capabilities`,
+    },
+    lifecycle: { createdAt: '2026-09-03T00:00:00.000Z' },
+  };
+  const containerManifest = containerRunManifest(manifest, profile, {
+    available: true,
+    effectiveLevel: 'ephemeral-machine',
+    enforcement: {},
+  });
+  assert.equal(containerManifest.paths.sessionState, '/run/workbench/session-state');
+  assert.equal(containerManifest.paths.sessionResources, '/run/workbench/session-resources');
+  assert.equal(containerManifest.isolation.filesystem.writableRoots.includes('/run/workbench/session-state'), true);
+  const arguments_ = dockerRunArguments({
+    manifest,
+    profile,
+    image: 'fixture-image',
+    containerName: 'fixture-workload',
+    networkName: 'fixture-network',
+    workloadSecretRoot: `${root}/credentials/workload`,
+    configRoot: `${root}/credentials/workload/config`,
+    modelBroker: null,
+  });
+  assert.equal(arguments_.includes('type=bind,src=/private/fixture/shared/state,dst=/run/workbench/session-state'), true);
+  assert.equal(arguments_.includes('type=bind,src=/private/fixture/shared/resources,dst=/run/workbench/session-resources'), true);
 });
 
 test('Docker provider proves ephemeral isolation only for enforceable offline Profiles', async () => {
@@ -346,6 +395,15 @@ test('Docker provider rejects symlinked or sibling-exposing mount roots', async 
   const symlinkInspection = await inspectIsolationProvider(provider, { profile: symlinkProfile, paths: { root: runRoot } });
   assert.equal(symlinkInspection.available, false);
   assert.equal(symlinkInspection.enforcement.filesystem.enforced, false);
+  const portableSessionInspection = await inspectIsolationProvider(provider, {
+    profile: normalizeEnvironmentProfile({
+      id: 'portable-session-symlink',
+      isolation: { provider: 'docker', minimumLevel: 'ephemeral-machine' },
+    }),
+    paths: { root: runRoot, sessionState: link, sessionResources: outside },
+  });
+  assert.equal(portableSessionInspection.available, false);
+  assert.equal(portableSessionInspection.enforcement.filesystem.enforced, false);
   const siblingProfile = normalizeEnvironmentProfile({
     id: 'sibling-mount',
     isolation: { provider: 'docker', minimumLevel: 'ephemeral-machine', filesystem: { readableRoots: [root] } },

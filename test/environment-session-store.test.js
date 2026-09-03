@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { EnvironmentSessionStore } from '../src/environment/index.js';
+import { EnvironmentSessionRuntimeStore, EnvironmentSessionStore } from '../src/environment/index.js';
 
 test('project-free Session store persists bindings and Runtime events', async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-'));
@@ -117,4 +117,38 @@ test('Session store serializes public reads with active mutations', async (t) =>
   const results = await Promise.all(operations);
   assert.equal(results.filter(Array.isArray).every((sessions) => sessions.length === 1), true);
   assert.equal((await store.get(session.sessionId)).sessionId, session.sessionId);
+});
+
+test('portable Session state keeps execution bindings and queues in the Run-local Runtime store', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-portable-sessions-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sessionStore = new EnvironmentSessionStore({
+    stateRoot: join(root, 'shared'),
+    runId: 'run-a',
+  });
+  const runtimeStore = new EnvironmentSessionRuntimeStore({ stateRoot: join(root, 'run-a') });
+  const session = await sessionStore.create({ title: 'Portable' });
+  assert.equal(session.createdRunId, 'run-a');
+  await runtimeStore.save(session.sessionId, { runtimeSessionId: 'runtime-a', status: 'running' });
+  await runtimeStore.saveQueuedTurns({ [session.sessionId]: [{ id: 'queued-a' }] });
+  assert.equal((await sessionStore.get(session.sessionId)).runtimeBinding, null);
+  assert.equal((await runtimeStore.load(session.sessionId)).runtimeSessionId, 'runtime-a');
+  assert.deepEqual(await runtimeStore.loadQueuedTurns(), { [session.sessionId]: [{ id: 'queued-a' }] });
+  const durableDocument = JSON.parse(await readFile(join(root, 'shared', 'sessions.json'), 'utf8'));
+  assert.deepEqual(durableDocument.bindings, {});
+  assert.deepEqual(durableDocument.queuedTurns, {});
+});
+
+test('two Session store instances serialize shared persistence mutations', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-shared-session-lock-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  let sequence = 0;
+  const uuid = () => `shared-${++sequence}`;
+  const first = new EnvironmentSessionStore({ stateRoot, crossProcess: true, uuid });
+  const second = new EnvironmentSessionStore({ stateRoot, crossProcess: true, uuid });
+  await Promise.all([
+    first.create({ title: 'First' }),
+    second.create({ title: 'Second' }),
+  ]);
+  assert.deepEqual((await first.list()).map((session) => session.title).sort(), ['First', 'Second']);
 });

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -47,6 +47,53 @@ test('environment and Run manifests are created atomically with private instance
   assert.equal(run.isolation.filesystem.writableRoots.includes(run.paths.resources), true);
   for (const path of Object.values(run.paths)) await access(path);
   assert.deepEqual(await inspectEnvironment(run.paths.root), run);
+});
+
+test('a Run can bind Session state and resources to a private consumer-owned persistence root', async (t) => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'awb-env-persistence-'));
+  t.after(() => rm(storageRoot, { recursive: true, force: true }));
+  const environment = await createEnvironment({ storageRoot, profile: { id: 'portable-sessions' } });
+  const persistenceRoot = join(storageRoot, 'consumer-session-data');
+  const run = await createEnvironmentRun(environment.paths.root, { sessionPersistenceRoot: persistenceRoot });
+  const canonicalPersistenceRoot = await realpath(persistenceRoot);
+  assert.equal(run.paths.sessionState, join(canonicalPersistenceRoot, 'state'));
+  assert.equal(run.paths.sessionResources, join(canonicalPersistenceRoot, 'resources'));
+  assert.notEqual(run.paths.sessionState, run.paths.state);
+  assert.equal(run.isolation.filesystem.writableRoots.includes(run.paths.sessionState), true);
+  assert.equal(run.isolation.filesystem.writableRoots.includes(run.paths.sessionResources), true);
+  assert.equal((await stat(persistenceRoot)).mode & 0o077, 0);
+  await access(run.paths.sessionState);
+  await access(run.paths.sessionResources);
+
+  const unsafeRoot = join(storageRoot, 'world-readable');
+  await mkdir(unsafeRoot);
+  await chmod(unsafeRoot, 0o755);
+  await assert.rejects(
+    () => createEnvironmentRun(environment.paths.root, {
+      runId: 'unsafe-persistence',
+      sessionPersistenceRoot: unsafeRoot,
+    }),
+    { code: 'SESSION_PERSISTENCE_ROOT_UNSAFE' },
+  );
+  await assert.rejects(
+    () => createEnvironmentRun(environment.paths.root, {
+      runId: 'environment-tree-persistence',
+      sessionPersistenceRoot: join(environment.paths.root, 'portable-sessions'),
+    }),
+    { code: 'SESSION_PERSISTENCE_ROOT_UNSAFE' },
+  );
+  const linkedChildRoot = join(storageRoot, 'linked-child-root');
+  const linkedChildTarget = join(storageRoot, 'linked-child-target');
+  await mkdir(linkedChildRoot, { mode: 0o700 });
+  await mkdir(linkedChildTarget, { mode: 0o700 });
+  await symlink(linkedChildTarget, join(linkedChildRoot, 'state'));
+  await assert.rejects(
+    () => createEnvironmentRun(environment.paths.root, {
+      runId: 'linked-persistence-child',
+      sessionPersistenceRoot: linkedChildRoot,
+    }),
+    { code: 'SESSION_PERSISTENCE_ROOT_UNSAFE' },
+  );
 });
 
 test('manifests never persist credential values and reject profile tampering', async (t) => {

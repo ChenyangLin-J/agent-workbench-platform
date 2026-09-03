@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { AgentSessionKernel } from '../src/runtime/core/index.js';
 import {
+  EnvironmentSessionRuntimeStore,
   EnvironmentSessionStore,
   buildMinimalHostAssets,
   createMinimalHost,
@@ -66,6 +67,89 @@ test('Minimal Host creates and runs project-free Sessions through the Core Kerne
   }
   assert.deepEqual(detail.session.messages.map((message) => message.content), ['hello', 'hi']);
   assert.equal('projectId' in detail.session, false);
+});
+
+test('Minimal Host reads portable Sessions across Runs without reusing stale Runtime bindings', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-portable-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sharedState = join(root, 'shared-state');
+  const sharedResources = new FilesystemResourceStore({ root: join(root, 'shared-resources') });
+
+  const runARoot = join(root, 'run-a');
+  const sessionStoreA = new EnvironmentSessionStore({ stateRoot: sharedState, runId: 'run-a' });
+  const runtimeStoreA = new EnvironmentSessionRuntimeStore({ stateRoot: join(runARoot, 'state') });
+  const providerA = new FakeRuntimeProvider();
+  const hostA = createMinimalHost({
+    manifest: runManifest(runARoot, 'run-a'),
+    kernel: new AgentSessionKernel({ provider: providerA, bindingStore: runtimeStoreA, validateRequest: () => {} }),
+    sessionStore: sessionStoreA,
+    runtimeStateStore: runtimeStoreA,
+    resourceStore: sharedResources,
+    sessionOwnerHeader: 'x-session-owner',
+  });
+  const listeningA = await hostA.start();
+  t.after(() => hostA.stop());
+  const ownerHeaders = { 'content-type': 'application/json', 'x-session-owner': 'user-a' };
+  const created = await fetch(`${listeningA.url}/api/sessions`, {
+    method: 'POST',
+    headers: ownerHeaders,
+    body: JSON.stringify({ title: '跨 Run 历史' }),
+  }).then((response) => response.json()).then((body) => body.session);
+  const turnResponse = await fetch(`${listeningA.url}/api/sessions/${created.sessionId}/turns`, {
+    method: 'POST',
+    headers: ownerHeaders,
+    body: JSON.stringify({ prompt: '保留这条消息' }),
+  });
+  assert.equal(turnResponse.status, 202);
+  assert.equal((await runtimeStoreA.load(created.sessionId)).runtimeSessionId != null, true);
+  await hostA.stop();
+
+  const runBRoot = join(root, 'run-b');
+  const sessionStoreB = new EnvironmentSessionStore({ stateRoot: sharedState, runId: 'run-b' });
+  const runtimeStoreB = new EnvironmentSessionRuntimeStore({ stateRoot: join(runBRoot, 'state') });
+  const providerB = new FakeRuntimeProvider();
+  const hostB = createMinimalHost({
+    manifest: runManifest(runBRoot, 'run-b'),
+    kernel: new AgentSessionKernel({ provider: providerB, bindingStore: runtimeStoreB, validateRequest: () => {} }),
+    sessionStore: sessionStoreB,
+    runtimeStateStore: runtimeStoreB,
+    resourceStore: sharedResources,
+    sessionOwnerHeader: 'x-session-owner',
+  });
+  const listeningB = await hostB.start();
+  t.after(() => hostB.stop());
+
+  const listed = await fetch(`${listeningB.url}/api/sessions`, { headers: ownerHeaders }).then((response) => response.json());
+  assert.equal(listed.sessions[0].id, created.sessionId);
+  assert.equal(listed.sessions[0].runtimeContinuationRequired, true);
+  const detail = await fetch(`${listeningB.url}/api/sessions/${created.sessionId}`, { headers: ownerHeaders }).then((response) => response.json());
+  assert.equal(detail.session.messages[0].content, '保留这条消息');
+  assert.equal(detail.session.composerDisabled, true);
+  assert.equal(providerB.createdSessions.length, 0);
+
+  const rejected = await fetch(`${listeningB.url}/api/sessions/${created.sessionId}/turns`, {
+    method: 'POST',
+    headers: ownerHeaders,
+    body: JSON.stringify({ prompt: '不能静默接到空白 Runtime' }),
+  });
+  assert.equal(rejected.status, 409);
+  assert.equal((await rejected.json()).error.code, 'HOST_SESSION_CONTINUATION_REQUIRED');
+  assert.equal(await runtimeStoreB.load(created.sessionId), null);
+  assert.deepEqual(await fetch(`${listeningB.url}/api/sessions`, {
+    headers: { 'x-session-owner': 'user-b' },
+  }).then((response) => response.json()), { sessions: [] });
+  assert.equal((await fetch(`${listeningB.url}/api/sessions/${created.sessionId}`, {
+    headers: { 'x-session-owner': 'user-b' },
+  })).status, 404);
+
+  const createdInRunB = await fetch(`${listeningB.url}/api/sessions`, {
+    method: 'POST',
+    headers: ownerHeaders,
+    body: JSON.stringify({ title: 'Run B Session' }),
+  }).then((response) => response.json()).then((body) => body.session);
+  assert.equal(createdInRunB.createdRunId, 'run-b');
+  assert.equal((await sessionStoreA.list()).length, 2);
+  assert.equal((await runtimeStoreB.load(createdInRunB.sessionId)).runtimeSessionId != null, true);
 });
 
 test('Minimal Host assets build without consumer source', async (t) => {
@@ -526,11 +610,11 @@ test('Codex Runtime constructs an allowlisted environment without inherited secr
   assert.equal(environment.TMPDIR, '/tmp/runtime-environment-test/tmp');
 });
 
-function runManifest(root) {
+function runManifest(root, id = 'run-test') {
   return {
     schema: 'agent-workbench.environment/v1',
     kind: 'run',
-    id: 'run-test',
+    id,
     environmentId: 'environment-test',
     status: 'running',
     versions: { platform: 'test', runtime: 'test' },

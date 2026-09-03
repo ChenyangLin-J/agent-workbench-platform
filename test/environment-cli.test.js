@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
+
+import {
+  EnvironmentSessionStore,
+  createEnvironment,
+  createEnvironmentRun,
+} from '../src/environment/index.js';
 
 const execFileAsync = promisify(execFile);
 const CLI = new URL('../bin/agent-workbench.js', import.meta.url).pathname;
@@ -55,6 +61,55 @@ test('CLI refuses to downgrade an unmet isolation requirement', async (t) => {
     () => cli(['env', 'run', created.environment.paths.root, '--root', storageRoot]),
     (error) => error.payload?.error?.code === 'ISOLATION_REQUIREMENT_UNSATISFIED',
   );
+});
+
+test('CLI migrates a stopped Run into consumer-owned Session persistence used by the next Run', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-cli-session-migration-'));
+  const storageRoot = join(root, 'environments');
+  let activeRunRoot = null;
+  t.after(async () => {
+    if (activeRunRoot) await cli(['env', 'stop', activeRunRoot, '--root', storageRoot]).catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  });
+  const environment = await createEnvironment({
+    storageRoot,
+    environmentId: 'portable-cli-environment',
+    profile: { id: 'portable-cli-profile' },
+  });
+  const sourceRun = await createEnvironmentRun(environment.paths.root, { runId: 'portable-source-run' });
+  const sourceStore = new EnvironmentSessionStore({ stateRoot: sourceRun.paths.state, runId: sourceRun.id });
+  const sourceSession = await sourceStore.create({ title: 'CLI portable Session' });
+  await sourceStore.recordUserInput(sourceSession.sessionId, '跨 Run 可见');
+  const bindingsPath = join(root, 'bindings.json');
+  await writeFile(bindingsPath, `${JSON.stringify({
+    schema: 'agent-workbench.environment-bindings/v1',
+    credentials: {},
+    storage: { sessionPersistence: { root: './portable-session-data' } },
+  }, null, 2)}\n`, { mode: 0o600 });
+
+  const migrated = await cli([
+    'env', 'migrate-sessions', sourceRun.paths.root,
+    '--bindings', bindingsPath,
+    '--root', storageRoot,
+  ]);
+  assert.equal(migrated.migration.sessions, 1);
+  const portableRoot = await realpath(join(root, 'portable-session-data'));
+  assert.equal(migrated.migration.destinationRoot, portableRoot);
+
+  const running = await cli([
+    'env', 'run', environment.paths.root,
+    '--bindings', bindingsPath,
+    '--root', storageRoot,
+  ]);
+  activeRunRoot = running.run.paths.root;
+  assert.equal(running.run.paths.sessionState, join(portableRoot, 'state'));
+  const bootstrap = await fetch(`${running.url}/bootstrap.js`).then((response) => response.text());
+  const accessToken = JSON.parse(bootstrap.match(/=(.*);\n$/s)[1]).accessToken;
+  const sessions = await fetch(`${running.url}/api/sessions`, {
+    headers: { 'x-agent-workbench-token': accessToken },
+  }).then((response) => response.json());
+  assert.equal(sessions.sessions[0].id, sourceSession.sessionId);
+  assert.equal(sessions.sessions[0].runtimeContinuationRequired, true);
 });
 
 async function cli(args) {

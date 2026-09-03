@@ -45,6 +45,7 @@ export function createDockerIsolationProvider({
         capabilitySnapshots,
       });
       const filesystem = await dockerFilesystemFacts(profile, context);
+      const portableSessions = Boolean(context.paths?.sessionState && context.paths?.sessionResources);
       const docker = await inspectDocker(dockerCommand);
       const available = docker.available && facts.ready && filesystem.ready;
       const enforced = (condition = true) => docker.available && condition;
@@ -96,7 +97,16 @@ export function createDockerIsolationProvider({
             enforced: enforced(facts.externalEffects),
             mode: mode(facts.externalEffects, facts.dataAdapters ? 'read-only-data-adapter-allowlist' : 'no-external-effects', 'effect-adapter-required'),
           },
-          crossRun: { enforced: enforced(), mode: mode(true, 'unique-container-network-and-run-mounts', 'docker-unavailable') },
+          crossRun: {
+            enforced: enforced(),
+            mode: mode(
+              true,
+              portableSessions
+                ? 'unique-run-mounts-with-explicit-portable-session-store'
+                : 'unique-container-network-and-run-mounts',
+              'docker-unavailable',
+            ),
+          },
           ephemeralIdentity: { enforced: enforced(), mode: mode(true, 'auto-removed-container', 'docker-unavailable') },
         },
       };
@@ -198,6 +208,7 @@ async function dockerFilesystemFacts(profile = {}, context = {}) {
   const paths = [
     ...(profile.isolation?.filesystem?.readableRoots || []),
     ...(profile.isolation?.filesystem?.writableRoots || []),
+    ...[context.paths?.sessionState, context.paths?.sessionResources].filter(Boolean),
   ];
   const environmentRoot = context.paths?.runs
     ? context.paths.root

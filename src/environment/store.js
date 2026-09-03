@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  lstat,
   mkdir,
   open,
   readFile,
@@ -103,6 +104,7 @@ export async function createEnvironment({
 export async function createEnvironmentRun(environmentTarget, {
   providers = [createDevelopmentIsolationProvider()],
   runId = null,
+  sessionPersistenceRoot = null,
   now = () => new Date(),
   uuid = randomUUID,
 } = {}) {
@@ -121,7 +123,10 @@ export async function createEnvironmentRun(environmentTarget, {
   const id = runId == null ? generatedId('run', createdAt, uuid()) : instanceId(runId, 'run id');
   const runRoot = join(runsRoot, id);
   const temporaryRoot = join(runsRoot, `.${id}.creating-${uuid()}`);
-  const paths = runPaths(runRoot);
+  const persistence = sessionPersistenceRoot == null
+    ? null
+    : await prepareSessionPersistenceRoot(sessionPersistenceRoot, { forbiddenRoot: environmentRoot });
+  const paths = runPaths(runRoot, persistence);
 
   await assertMissing(runRoot, `Run already exists: ${id}`);
   await mkdir(temporaryRoot, { recursive: false, mode: 0o700 });
@@ -331,7 +336,7 @@ function isolationManifest(profile, inspection, paths) {
       ]),
       writableRoots: uniqueSorted([
         ...profile.isolation.filesystem.writableRoots,
-        ...['runs', 'runtime', 'state', 'resources', 'workspace', 'temporary', 'credentials']
+        ...['runs', 'runtime', 'state', 'resources', 'sessionState', 'sessionResources', 'workspace', 'temporary', 'credentials']
           .map((name) => paths[name])
           .filter(Boolean),
       ]),
@@ -343,7 +348,7 @@ function isolationManifest(profile, inspection, paths) {
   };
 }
 
-function runPaths(root) {
+function runPaths(root, sessionPersistence = null) {
   return {
     root,
     runtime: join(root, 'runtime'),
@@ -353,7 +358,54 @@ function runPaths(root) {
     temporary: join(root, 'tmp'),
     credentials: join(root, 'credentials'),
     capabilities: join(root, 'capabilities'),
+    ...(sessionPersistence ? {
+      sessionState: sessionPersistence.state,
+      sessionResources: sessionPersistence.resources,
+    } : {}),
   };
+}
+
+async function prepareSessionPersistenceRoot(value, { forbiddenRoot = null } = {}) {
+  if (typeof value !== 'string' || !value.trim()) throw new TypeError('sessionPersistenceRoot must be a non-empty path');
+  const requested = resolve(value);
+  if (requested === resolve('/') || (forbiddenRoot && isPathContained(forbiddenRoot, requested))) {
+    throw environmentError(
+      'SESSION_PERSISTENCE_ROOT_UNSAFE',
+      'Session persistence root must be outside the Environment tree and cannot be the filesystem root.',
+    );
+  }
+  await mkdir(requested, { recursive: true, mode: 0o700 });
+  const [info, canonical] = await Promise.all([lstat(requested), realpath(requested)]);
+  if (!info.isDirectory()
+    || info.isSymbolicLink()
+    || (info.mode & 0o077) !== 0
+    || (forbiddenRoot && isPathContained(forbiddenRoot, canonical))) {
+    throw environmentError(
+      'SESSION_PERSISTENCE_ROOT_UNSAFE',
+      'Session persistence root must be a private canonical directory and not a symlink.',
+    );
+  }
+  const state = join(canonical, 'state');
+  const resources = join(canonical, 'resources');
+  await Promise.all([
+    mkdir(state, { recursive: true, mode: 0o700 }),
+    mkdir(resources, { recursive: true, mode: 0o700 }),
+  ]);
+  const [stateInfo, resourcesInfo, canonicalState, canonicalResources] = await Promise.all([
+    lstat(state),
+    lstat(resources),
+    realpath(state),
+    realpath(resources),
+  ]);
+  if ([stateInfo, resourcesInfo].some((child) => (
+    !child.isDirectory() || child.isSymbolicLink() || (child.mode & 0o077) !== 0
+  )) || !isPathContained(canonical, canonicalState) || !isPathContained(canonical, canonicalResources)) {
+    throw environmentError(
+      'SESSION_PERSISTENCE_ROOT_UNSAFE',
+      'Session persistence state and resources must be private non-symlink directories inside the persistence root.',
+    );
+  }
+  return { root: canonical, state: canonicalState, resources: canonicalResources };
 }
 
 async function mutateRun(target, updater) {

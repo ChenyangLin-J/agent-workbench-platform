@@ -24,12 +24,14 @@ Implemented in the active Platform worktree:
 - `agent-workbench.resource/v1` normalization and public package exports;
 - `FilesystemResourceStore` staging, atomic records, Session/Run ownership checks, commit, external-handle registration, temporary-output staging, integrity-checked idempotent promotion, usage inspection, and side-effect-free expired-draft/transient planning;
 - a distinct retained `resources` root in Environment Run manifests and Docker mounts;
+- optional consumer-bound `sessionState` and `sessionResources` roots that retain transcripts and managed resources across Runs while Runtime bindings and queues stay Run-local;
+- `env migrate-sessions`, which copies a stopped Run into a new absent destination, verifies referenced Resource identities and managed SHA-256 digests, omits Runtime bindings/queues, and leaves the source untouched;
 - Minimal Host attachment staging before Send and Session-durable commit only after Runtime acceptance;
 - authorized `workspace-directory` registration, reauthorization at Runtime resolve, and persistent directory chips;
 - stable Resource metadata in Session messages with no public storage path;
 - failed-Turn recovery and cross-Session rejection tests.
 
-Still unresolved or unimplemented: explicit reference-edge recording, quarantine/purge, consumer compatibility adapters, and migration of existing stores. No cleanup is enabled by this slice.
+Still unresolved or unimplemented: explicit reference-edge recording, quarantine/purge, consumer-specific compatibility adapters, and resumable migration journals. No cleanup is enabled by this slice.
 
 ## Why this belongs in Platform
 
@@ -326,8 +328,10 @@ Platform defines roles, not universal absolute paths:
 | Logical root | Contents | Durability |
 | --- | --- | --- |
 | `stateRoot` | Consumer state and Resource metadata | Durable |
+| `sessionStateRoot` | Portable Session transcripts and public state selected by the consumer | Consumer-policy durable |
 | `runtimeRoot` | Provider Thread/Session history and Runtime databases | Runtime-defined durable |
 | `resourceRoot` | Managed blobs, staging, metadata journals, quarantine | Policy durable |
+| `runStateRoot` | Runtime bindings, queued Turns and one Run's operational state | Run-scoped |
 | `workspaceRoot` | External authoritative files or isolated Run workspace | Workspace/Run-defined |
 | `browserProfileRoot` | Cookies, login/profile state, Browser provider data | Consumer security policy |
 | `cacheRoot` | Rebuildable caches and previews | Disposable |
@@ -418,6 +422,8 @@ Recommended adoption modes:
 5. `retire`: source deletion requires a separate reviewed collection plan.
 
 Migration code belongs with the consumer adapter when it knows a consumer-specific layout. Generic manifest import and integrity verification belong in Platform.
+
+The implemented generic Run migration is intentionally narrower than the final journaled protocol: the source Run must be stopped, the destination root must not exist, committed Resource ids and managed digests are verified, and the source remains the rollback copy. It is a safe one-time cutover helper for the filesystem reference store, not an in-place rewrite or a source-retirement command.
 
 ## Acceptance
 
