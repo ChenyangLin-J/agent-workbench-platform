@@ -143,6 +143,47 @@ test('Minimal Host creates an idempotent Session with an unsent draft', async (t
   }
 });
 
+test('Minimal Host accepts one Turn for an idempotency key and replays its response', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-turn-idempotent-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const provider = new FakeRuntimeProvider();
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({
+    manifest: runManifest(root),
+    kernel,
+    sessionStore: store,
+    sessionOwnerHeader: 'x-session-owner',
+  });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = {
+    'content-type': 'application/json',
+    'x-session-owner': 'user-a',
+  };
+  const created = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST', headers, body: JSON.stringify({ title: 'Dashboard' }),
+  }).then((response) => response.json()).then((body) => body.session);
+  const turnHeaders = { ...headers, 'idempotency-key': 'dashboard-agent:job-1:turn' };
+  const submit = (prompt = '分析这张图') => fetch(
+    `${listening.url}/api/sessions/${created.sessionId}/turns`,
+    { method: 'POST', headers: turnHeaders, body: JSON.stringify({ prompt }) },
+  );
+
+  const first = await submit();
+  const firstBody = await first.json();
+  const retried = await submit();
+  const retriedBody = await retried.json();
+  assert.equal(first.status, 202);
+  assert.equal(retried.status, 202);
+  assert.deepEqual(retriedBody, firstBody);
+  assert.equal(provider.createdSessions[0].startedTurns.length, 1);
+
+  const conflict = await submit('换一个问题');
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).error.code, 'SESSION_TURN_IDEMPOTENCY_CONFLICT');
+});
+
 test('Minimal Host reads portable Sessions across Runs without reusing stale Runtime bindings', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-portable-'));
   t.after(() => rm(root, { recursive: true, force: true }));

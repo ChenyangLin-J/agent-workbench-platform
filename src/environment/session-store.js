@@ -303,6 +303,74 @@ export class EnvironmentSessionStore {
     });
   }
 
+  async reserveTurnSubmission(
+    sessionId,
+    { ownerId = null, idempotencyKey, fingerprint } = {},
+  ) {
+    const key = turnIdempotencyKey(idempotencyKey);
+    const normalizedFingerprint = nonEmptyString(fingerprint, 'Turn fingerprint');
+    let result;
+    await this.#mutate((document) => {
+      const session = requireSession(document, sessionId);
+      requireOwnedSession(session, sessionId, ownerId);
+      session.turnSubmissions ||= {};
+      const existing = session.turnSubmissions[key];
+      if (existing) {
+        if (existing.fingerprint !== normalizedFingerprint) {
+          throw storeError(
+            'SESSION_TURN_IDEMPOTENCY_CONFLICT',
+            'The Turn idempotency key was already used with different input.',
+            409,
+          );
+        }
+        result = { created: false, submission: structuredClone(existing) };
+        return;
+      }
+      const submission = {
+        key,
+        fingerprint: normalizedFingerprint,
+        status: 'reserved',
+        responseStatus: null,
+        response: null,
+        createdAt: this.#time(),
+        updatedAt: this.#time(),
+      };
+      session.turnSubmissions[key] = submission;
+      result = { created: true, submission: structuredClone(submission) };
+    });
+    return result;
+  }
+
+  async completeTurnSubmission(
+    sessionId,
+    { ownerId = null, idempotencyKey, responseStatus = 202, response } = {},
+  ) {
+    const key = turnIdempotencyKey(idempotencyKey);
+    await this.#mutate((document) => {
+      const session = requireSession(document, sessionId);
+      requireOwnedSession(session, sessionId, ownerId);
+      const submission = session.turnSubmissions?.[key];
+      if (!submission) {
+        throw storeError('SESSION_TURN_IDEMPOTENCY_NOT_FOUND', 'Turn reservation not found.', 409);
+      }
+      submission.status = 'accepted';
+      submission.responseStatus = Number(responseStatus) || 202;
+      submission.response = structuredClone(response);
+      submission.updatedAt = this.#time();
+    });
+  }
+
+  async releaseTurnSubmission(sessionId, { ownerId = null, idempotencyKey } = {}) {
+    const key = turnIdempotencyKey(idempotencyKey);
+    await this.#mutate((document) => {
+      const session = requireSession(document, sessionId);
+      requireOwnedSession(session, sessionId, ownerId);
+      if (session.turnSubmissions?.[key]?.status === 'reserved') {
+        delete session.turnSubmissions[key];
+      }
+    });
+  }
+
   async applyEvent(event) {
     if (!event?.sessionId) return;
     await this.#mutate((document) => {
@@ -840,6 +908,17 @@ function sessionCreateIdempotencyKey(value) {
   const normalized = value.trim();
   if (normalized.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) {
     throw storeError('SESSION_CREATE_IDEMPOTENCY_KEY_INVALID', 'Session idempotency key is invalid.', 400);
+  }
+  return normalized;
+}
+
+function turnIdempotencyKey(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw storeError('SESSION_TURN_IDEMPOTENCY_KEY_INVALID', 'Turn idempotency key is invalid.', 400);
+  }
+  const normalized = value.trim();
+  if (normalized.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) {
+    throw storeError('SESSION_TURN_IDEMPOTENCY_KEY_INVALID', 'Turn idempotency key is invalid.', 400);
   }
   return normalized;
 }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { chmod, open as openFile, readFile, rm } from 'node:fs/promises';
 import { extname, join } from 'node:path';
@@ -436,68 +437,113 @@ export function createMinimalHost({
         requireCurrentRunSession(session);
         const body = await readJsonBody(request);
         const turn = normalizeTurnRequest(body);
-        if (turn.attachments.length) requireAttachmentsEnabled(attachmentsEnabled);
-        const attachmentInputs = attachmentsEnabled
-          ? await resolveEnvironmentSessionAttachmentInputs({
-              attachments: turn.attachments,
-              sessionId,
-              authorizedRoots: authorizedResourceRoots(manifest),
-              store: sessionResourceStore,
-            })
-          : [];
-        const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest));
-        const continuationContext = (await sessionRuntimeStore.load(sessionId))?.continuationContext;
-        const input = runtimeTurnInputWithContinuation(
-          runtimeTurnInput(turn, attachmentInputs),
-          continuationContext,
-        );
-        const queue = await turnQueueReady;
         const requestedMode = String(body.mode || 'auto');
-        const canSteerActiveTurn = steerEnabled && kernel.capabilities().steer === true;
-        if (requestedMode === 'steer' && !canSteerActiveTurn) {
-          throw hostError('HOST_STEER_DISABLED', 'Steering is disabled for this Environment.', 403);
+        const idempotencyKey = turnIdempotencyKey(
+          request.headers['idempotency-key'] ?? body.idempotencyKey,
+        );
+        if (idempotencyKey && typeof sessionStore.reserveTurnSubmission !== 'function') {
+          throw hostError(
+            'HOST_TURN_IDEMPOTENCY_UNSUPPORTED',
+            'The configured Session store does not support idempotent Turn submission.',
+            501,
+          );
         }
-        const shouldQueue = requestedMode === 'queue'
-          || queue.list(sessionId).length > 0
-          || (Boolean(binding.activeTurnId) && !canSteerActiveTurn);
-        if (shouldQueue) {
-          requireQueuedTurnsEnabled(queuedTurnsEnabled);
-          const queuedTurn = await queue.enqueue(sessionId, {
-            input,
-            prompt: turn.displayText,
-            attachments: turn.attachments,
-            afterTurnId: binding.activeTurnId || latestTurnId(await sessionStore.get(sessionId, { ownerId })),
-            context: { ownerId },
+        if (idempotencyKey) {
+          const reservation = await sessionStore.reserveTurnSubmission(sessionId, {
+            ownerId,
+            idempotencyKey,
+            fingerprint: turnIdempotencyFingerprint(turn, requestedMode),
           });
-          if (!binding.activeTurnId) {
-            queueMicrotask(() => void dispatcherReady.then((dispatcher) => dispatcher.startNext(sessionId)).catch(() => {}));
+          if (!reservation.created) {
+            if (reservation.submission.status === 'accepted') {
+              return sendJson(
+                response,
+                reservation.submission.responseStatus || 202,
+                reservation.submission.response,
+              );
+            }
+            return sendJson(response, 202, { idempotent: true, pending: true });
+          }
+        }
+        let turnAccepted = false;
+        try {
+          if (turn.attachments.length) requireAttachmentsEnabled(attachmentsEnabled);
+          const attachmentInputs = attachmentsEnabled
+            ? await resolveEnvironmentSessionAttachmentInputs({
+                attachments: turn.attachments,
+                sessionId,
+                authorizedRoots: authorizedResourceRoots(manifest),
+                store: sessionResourceStore,
+              })
+            : [];
+          const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest));
+          const continuationContext = (await sessionRuntimeStore.load(sessionId))?.continuationContext;
+          const input = runtimeTurnInputWithContinuation(
+            runtimeTurnInput(turn, attachmentInputs),
+            continuationContext,
+          );
+          const queue = await turnQueueReady;
+          const canSteerActiveTurn = steerEnabled && kernel.capabilities().steer === true;
+          if (requestedMode === 'steer' && !canSteerActiveTurn) {
+            throw hostError('HOST_STEER_DISABLED', 'Steering is disabled for this Environment.', 403);
+          }
+          const shouldQueue = requestedMode === 'queue'
+            || queue.list(sessionId).length > 0
+            || (Boolean(binding.activeTurnId) && !canSteerActiveTurn);
+          let payload;
+          if (shouldQueue) {
+            requireQueuedTurnsEnabled(queuedTurnsEnabled);
+            const queuedTurn = await queue.enqueue(sessionId, {
+              input,
+              prompt: turn.displayText,
+              attachments: turn.attachments,
+              afterTurnId: binding.activeTurnId || latestTurnId(await sessionStore.get(sessionId, { ownerId })),
+              context: { ownerId },
+            });
+            turnAccepted = true;
+            if (!binding.activeTurnId) {
+              queueMicrotask(() => void dispatcherReady.then((dispatcher) => dispatcher.startNext(sessionId)).catch(() => {}));
+            }
+            payload = { queued: true, queuedTurn, queueLength: queue.list(sessionId).length };
+          } else {
+            const result = await kernel.submit(sessionId, input, {
+              mode: requestedMode,
+              ...runtimeAttachOptions(manifest),
+            });
+            turnAccepted = true;
+            const committedAttachments = turn.attachments.length
+              ? await commitEnvironmentSessionAttachments({
+                  attachments: turn.attachments,
+                  sessionId,
+                  turnId: result.runtimeTurnId,
+                  store: sessionResourceStore,
+                })
+              : [];
+            await sessionStore.recordUserInput(sessionId, turn.displayText, {
+              attachments: committedAttachments,
+              ownerId,
+              turnId: result.runtimeTurnId,
+            });
+            payload = { result };
           }
           if (continuationContext) {
             await sessionRuntimeStore.save(sessionId, { continuationContext: null });
           }
-          return sendJson(response, 202, { queued: true, queuedTurn, queueLength: queue.list(sessionId).length });
+          if (idempotencyKey) {
+            await sessionStore.completeTurnSubmission(sessionId, {
+              ownerId,
+              idempotencyKey,
+              responseStatus: 202,
+              response: payload,
+            });
+          }
+          return sendJson(response, 202, payload);
+        } catch (error) {
+          if (idempotencyKey && !turnAccepted) {
+            await sessionStore.releaseTurnSubmission(sessionId, { ownerId, idempotencyKey });
+          }
+          throw error;
         }
-        const result = await kernel.submit(sessionId, input, {
-          mode: requestedMode,
-          ...runtimeAttachOptions(manifest),
-        });
-        const committedAttachments = turn.attachments.length
-          ? await commitEnvironmentSessionAttachments({
-              attachments: turn.attachments,
-              sessionId,
-              turnId: result.runtimeTurnId,
-              store: sessionResourceStore,
-            })
-          : [];
-        await sessionStore.recordUserInput(sessionId, turn.displayText, {
-          attachments: committedAttachments,
-          ownerId,
-          turnId: result.runtimeTurnId,
-        });
-        if (continuationContext) {
-          await sessionRuntimeStore.save(sessionId, { continuationContext: null });
-        }
-        return sendJson(response, 202, { result });
       }
       if (request.method === 'POST' && action === 'interrupt') {
         requireCurrentRunSession(session);
@@ -1103,6 +1149,26 @@ function initialSessionIdempotencyKey(value) {
     throw hostError('HOST_SESSION_IDEMPOTENCY_KEY_INVALID', 'Session idempotency key is invalid.', 400);
   }
   return normalized;
+}
+
+function turnIdempotencyKey(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string') {
+    throw hostError('HOST_TURN_IDEMPOTENCY_KEY_INVALID', 'Turn idempotency key is invalid.', 400);
+  }
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) {
+    throw hostError('HOST_TURN_IDEMPOTENCY_KEY_INVALID', 'Turn idempotency key is invalid.', 400);
+  }
+  return normalized;
+}
+
+function turnIdempotencyFingerprint(turn, mode) {
+  return createHash('sha256').update(JSON.stringify({
+    prompt: turn.displayText,
+    attachments: turn.attachments,
+    mode,
+  })).digest('hex');
 }
 
 function sendAttachment(response, attachment, body) {

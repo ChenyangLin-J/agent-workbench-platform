@@ -134,6 +134,45 @@ test('two Session stores converge concurrent idempotent creation', async (t) => 
   assert.equal(new Set(results.map((result) => result.session.sessionId)).size, 1);
   assert.equal((await first.list({ ownerId: 'user-a' })).length, 1);
 });
+
+test('Session store reserves and replays one owner-scoped Turn submission', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-turn-idempotent-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot });
+  const session = await store.create({ ownerId: 'user-a' });
+  const request = {
+    ownerId: 'user-a',
+    idempotencyKey: 'dashboard-agent:turn-1',
+    fingerprint: 'fingerprint-1',
+  };
+
+  const first = await store.reserveTurnSubmission(session.sessionId, request);
+  const pending = await store.reserveTurnSubmission(session.sessionId, request);
+  assert.equal(first.created, true);
+  assert.equal(pending.created, false);
+  assert.equal(pending.submission.status, 'reserved');
+
+  await store.completeTurnSubmission(session.sessionId, {
+    ownerId: 'user-a',
+    idempotencyKey: request.idempotencyKey,
+    responseStatus: 202,
+    response: { result: { runtimeTurnId: 'turn-1' } },
+  });
+  const replayed = await store.reserveTurnSubmission(session.sessionId, request);
+  assert.equal(replayed.created, false);
+  assert.equal(replayed.submission.status, 'accepted');
+  assert.equal(replayed.submission.response.result.runtimeTurnId, 'turn-1');
+  assert.equal('turnSubmissions' in await store.get(session.sessionId, { ownerId: 'user-a' }), false);
+
+  await assert.rejects(
+    store.reserveTurnSubmission(session.sessionId, { ...request, fingerprint: 'different' }),
+    (error) => error.code === 'SESSION_TURN_IDEMPOTENCY_CONFLICT' && error.status === 409,
+  );
+  await assert.rejects(
+    store.reserveTurnSubmission(session.sessionId, { ...request, ownerId: 'user-b' }),
+    (error) => error.code === 'SESSION_NOT_FOUND',
+  );
+});
 test('Session store hides archived Sessions from the owner list while retaining them for history and observation', async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-archive-'));
   t.after(() => rm(stateRoot, { recursive: true, force: true }));
