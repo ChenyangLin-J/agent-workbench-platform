@@ -26,6 +26,7 @@ const host = createMinimalHost({
   sessionStore: store,
   assetsRoot,
   accessToken: 'browser-smoke-token',
+  sessionObserverHeader: 'x-browser-observer',
 });
 const listening = await host.start();
 const mountedProxy = createMountProxy(listening.port);
@@ -73,6 +74,7 @@ try {
     runtimeSessionId: runtime.runtimeSessionId,
     runtimeTurnId: runtime.activeTurnId,
     providerEvent: 'item/started',
+    createdAt: Date.parse('2026-09-03T10:19:37.000Z'),
     payload: { item: {
       id: 'browser-smoke-commentary',
       type: 'agentMessage',
@@ -89,8 +91,10 @@ try {
     payload: { item: {
       id: 'browser-smoke-tool',
       type: 'mcpToolCall',
+      server: 'browser',
+      tool: 'browser_query',
       status: 'inProgress',
-      text: 'Browser smoke tool',
+      arguments: { query: 'browser smoke' },
     } },
   });
   runtime.emit('event', {
@@ -99,6 +103,23 @@ try {
     runtimeTurnId: runtime.activeTurnId,
     providerEvent: 'item/agentMessage/delta',
     payload: { itemId: 'browser-smoke-response', delta: 'Browser smoke OK' },
+  });
+  runtime.emit('event', {
+    type: 'item_completed',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: runtime.activeTurnId,
+    providerEvent: 'item/completed',
+    createdAt: Date.parse('2026-09-03T10:19:38.250Z'),
+    payload: { item: {
+      id: 'browser-smoke-tool',
+      type: 'mcpToolCall',
+      server: 'browser',
+      tool: 'browser_query',
+      status: 'completed',
+      arguments: { query: 'browser smoke' },
+      result: { content: [{ type: 'text', text: 'browser result' }] },
+      durationMs: 1_250,
+    } },
   });
   runtime.complete();
   await page.getByText('Browser smoke OK', { exact: true }).waitFor();
@@ -110,8 +131,26 @@ try {
   const technicalDetails = page.getByRole('button', { name: /本轮执行详情/ });
   await technicalDetails.waitFor();
   await technicalDetails.click();
-  await page.getByText('Tool call', { exact: true }).waitFor();
-  console.log('Minimal Host browser attachment, reconnect, polling fallback, visible completed process, progress, title, and running-action smoke passed under /agent/runtime/.');
+  await page.getByText('Tool call · browser.browser_query', { exact: true }).waitFor();
+
+  const observerPage = await browser.newPage({
+    extraHTTPHeaders: { 'x-browser-observer': 'true' },
+  });
+  await observerPage.goto(`http://127.0.0.1:${proxyAddress.port}/agent/runtime/?view=observer`);
+  await observerPage.getByRole('heading', { name: 'Session 过程' }).waitFor();
+  await observerPage.getByText('browser smoke', { exact: true }).first().waitFor();
+  await observerPage.getByText('Browser smoke OK', { exact: true }).waitFor();
+  const observerToolStep = observerPage.locator('.awb-observer-steps summary')
+    .filter({ hasText: '调用工具 · browser.browser_query' });
+  await observerToolStep.waitFor();
+  await observerToolStep.click();
+  await observerPage.waitForFunction(() => document.querySelector('.awb-observer-steps pre')
+    ?.textContent.includes('browser result'));
+  if (process.env.OBSERVER_SCREENSHOT_PATH) {
+    await observerPage.screenshot({ path: process.env.OBSERVER_SCREENSHOT_PATH, fullPage: true });
+  }
+  await observerPage.close();
+  console.log('Minimal Host browser attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, and read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

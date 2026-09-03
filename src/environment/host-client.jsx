@@ -579,7 +579,299 @@ function SessionShareControl({ request, sessionId }) {
   );
 }
 
-createRoot(document.getElementById('root')).render(<MinimalHostApp />);
+function MinimalHostObserverApp() {
+  const [sessions, setSessions] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [session, setSession] = useState(null);
+  const [query, setQuery] = useState('');
+  const [error, setError] = useState('');
+
+  const request = useCallback(async (path) => {
+    const response = await fetch(hostUrl(path), {
+      headers: {
+        accept: 'application/json',
+        'x-agent-workbench-token': bootstrap.accessToken || '',
+      },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error?.message || `Request failed (${response.status})`);
+    return body;
+  }, []);
+
+  const refreshSessions = useCallback(async () => {
+    const body = await request('api/observer/sessions');
+    const next = body.sessions || [];
+    setSessions(next);
+    setSelectedId((current) => selectMinimalHostSession(next, current));
+    return next;
+  }, [request]);
+
+  const refreshSession = useCallback(async (sessionId = selectedId) => {
+    if (!sessionId) return null;
+    const body = await request(`api/observer/sessions/${encodeURIComponent(sessionId)}`);
+    setSession(body.session || null);
+    return body.session || null;
+  }, [request, selectedId]);
+
+  useEffect(() => {
+    void refreshSessions()
+      .then(() => setError(''))
+      .catch((nextError) => setError(nextError.message));
+    const timer = setInterval(() => {
+      void refreshSessions()
+        .then(() => setError(''))
+        .catch((nextError) => setError(nextError.message));
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [refreshSessions]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setSession(null);
+      return undefined;
+    }
+    refreshSession(selectedId).catch((nextError) => setError(nextError.message));
+    const controller = new AbortController();
+    void maintainMinimalHostEventStream({
+      open: ({ afterEventId, signal }) => fetch(hostUrl(
+        `api/observer/sessions/${encodeURIComponent(selectedId)}/events?after=${encodeURIComponent(afterEventId)}`,
+      ), {
+        headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
+        signal,
+      }),
+      onEvent: () => {
+        void Promise.all([refreshSessions(), refreshSession(selectedId)])
+          .then(() => setError(''))
+          .catch((nextError) => setError(nextError.message));
+      },
+      signal: controller.signal,
+    }).catch((nextError) => {
+      if (nextError.name !== 'AbortError') setError(nextError.message);
+    });
+    const timer = setInterval(() => {
+      void refreshSession(selectedId).catch((nextError) => setError(nextError.message));
+    }, 2_000);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [refreshSession, refreshSessions, selectedId]);
+
+  const filteredSessions = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return sessions.filter((item) => {
+      if (!needle) return true;
+      return [item.id, item.ownerId, item.title]
+        .some((value) => String(value || '').toLowerCase().includes(needle));
+    });
+  }, [query, sessions]);
+  const turns = useMemo(() => observerTurns(session), [session]);
+
+  return (
+    <main className="awb-observer">
+      <header className="awb-observer-header">
+        <div><span>只读观察</span><h1>Session 过程</h1></div>
+        <p>{sessions.length} 个 Session</p>
+      </header>
+      <div className="awb-observer-body">
+        <aside className="awb-observer-sidebar">
+          <div className="awb-observer-filters">
+            <input
+              aria-label="搜索全部 Session"
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="用户、标题或 Session ID"
+              type="search"
+              value={query}
+            />
+          </div>
+          <div className="awb-observer-session-list">
+            {filteredSessions.map((item) => {
+              const stale = ['running', 'waiting'].includes(item.status)
+                && Date.now() - Date.parse(item.updatedAt) > 5 * 60_000;
+              return (
+                <button
+                  className={item.id === selectedId ? 'is-selected' : ''}
+                  key={item.id}
+                  onClick={() => setSelectedId(item.id)}
+                  type="button"
+                >
+                  <span><i data-status={stale ? 'stale' : item.status} />{item.ownerId || '无 owner'}</span>
+                  <strong>{item.title || '新对话'}</strong>
+                  <small>{observerStatusLabel(item.status, stale)} · {relativeTime(item.updatedAt)}</small>
+                </button>
+              );
+            })}
+            {!filteredSessions.length ? <p>没有匹配的 Session。</p> : null}
+          </div>
+        </aside>
+        <section className="awb-observer-detail">
+          {session ? (
+            <>
+              <header>
+                <div>
+                  <span>Owner {session.ownerId || '—'} · {session.id}</span>
+                  <h2>{session.title}</h2>
+                </div>
+                <em data-status={session.status}>{observerStatusLabel(session.status)}</em>
+              </header>
+              <div className="awb-observer-process">
+                {turns.map((turn, turnIndex) => {
+                  const visibleSteps = observerVisibleSteps(turn.technicalItems);
+                  const omittedSteps = turn.technicalItems.length - visibleSteps.length;
+                  return (
+                    <section className="awb-observer-turn" key={turn.id}>
+                      <header><strong>第 {turnIndex + 1} 轮</strong><span>{formatTime(turn.startedAt)}</span></header>
+                      {turn.userMessages.map((message) => (
+                        <article data-kind="user" key={message.id}>
+                          <small>用户问题</small><p>{message.content || '（无文本内容）'}</p>
+                        </article>
+                      ))}
+                      {turn.commentaryMessages.map((message) => (
+                        <article data-kind="commentary" key={message.id}>
+                          <small>模型过程</small><p>{message.content || '（暂无外显过程）'}</p>
+                        </article>
+                      ))}
+                      {turn.technicalItems.length ? (
+                        <section className="awb-observer-steps">
+                          <h3>执行步骤 <small>{visibleSteps.length}/{turn.technicalItems.length} 个有详情</small></h3>
+                          {omittedSteps ? <p className="awb-observer-legacy-note">{omittedSteps} 个旧步骤没有保存名称或详情，已省略。</p> : null}
+                          <ol>
+                            {visibleSteps.map((item, stepIndex) => (
+                              <li key={item.id}>
+                                <details open={['running', 'inProgress', 'failed'].includes(item.status)}>
+                                  <summary>
+                                    <span><b>{stepIndex + 1}</b>{observerStepTitle(item)}</span>
+                                    <em>{observerStepStatus(item.status)}{itemDuration(item) ? ` · ${itemDuration(item)}` : ''}</em>
+                                  </summary>
+                                  {item.detail ? <pre>{item.detail}</pre> : <p>旧记录未保存该步骤的输入或错误详情。</p>}
+                                </details>
+                              </li>
+                            ))}
+                          </ol>
+                        </section>
+                      ) : null}
+                      {turn.answerMessages.map((message) => (
+                        <article data-kind="answer" key={message.id}>
+                          <small>最终回答</small><p>{message.content || '（暂无回答）'}</p>
+                        </article>
+                      ))}
+                    </section>
+                  );
+                })}
+                {!turns.length ? <p className="awb-observer-empty">这个 Session 暂无过程记录。</p> : null}
+              </div>
+            </>
+          ) : <div className="awb-observer-placeholder">选择一个 Session 查看实时过程。</div>}
+        </section>
+      </div>
+      {error ? <div className="awb-host-error" role="alert">{error}</div> : null}
+    </main>
+  );
+}
+
+const observerMode = new URLSearchParams(globalThis.location?.search || '').get('view') === 'observer';
+createRoot(document.getElementById('root')).render(observerMode ? <MinimalHostObserverApp /> : <MinimalHostApp />);
+
+function observerStatusLabel(status, stale = false) {
+  if (stale) return '疑似停滞';
+  return ({ running: '运行中', waiting: '等待输入', error: '异常', idle: '空闲' })[status] || String(status || '未知');
+}
+
+function observerTurns(session) {
+  if (!session) return [];
+  const turns = [];
+  const byId = new Map();
+  const ensureTurn = (turnId, fallbackId) => {
+    const id = String(turnId || fallbackId);
+    if (!byId.has(id)) {
+      const turn = { id, messages: [], technicalItems: [], startedAt: null };
+      byId.set(id, turn);
+      turns.push(turn);
+    }
+    return byId.get(id);
+  };
+  for (const message of session.messages || []) {
+    const turn = ensureTurn(message.turnId, `message-${message.id}`);
+    turn.messages.push(message);
+    turn.startedAt ||= message.createdAt || null;
+  }
+  for (const item of session.technicalItems || []) {
+    const turn = ensureTurn(item.turnId, `step-${item.id}`);
+    turn.technicalItems.push(item);
+    turn.startedAt ||= item.startedAt || item.updatedAt || null;
+  }
+  return turns.map((turn) => ({
+    ...turn,
+    userMessages: turn.messages.filter((message) => message.role === 'user'),
+    commentaryMessages: turn.messages.filter((message) => message.role === 'assistant' && message.phase === 'commentary'),
+    answerMessages: turn.messages.filter((message) => message.role === 'assistant' && message.phase !== 'commentary'),
+  }));
+}
+
+function observerVisibleSteps(items = []) {
+  return items.filter((item) => {
+    const detail = String(item.detail || '').trim();
+    const named = String(item.title || '').includes(' · ');
+    const notableStatus = ['running', 'inProgress', 'failed'].includes(item.status);
+    return detail || named || notableStatus || Number.isFinite(Number(item.durationMs));
+  });
+}
+
+function observerStepTitle(item) {
+  const title = String(item.title || 'Runtime item');
+  const separator = title.indexOf(' · ');
+  const prefix = separator >= 0 ? title.slice(0, separator) : title;
+  const subject = separator >= 0 ? title.slice(separator + 3) : '';
+  const localized = ({
+    Reasoning: '分析摘要',
+    Command: '执行命令',
+    'File change': '修改文件',
+    'Tool call': '调用工具',
+    'Web search': '网页搜索',
+  })[prefix] || prefix;
+  return subject ? `${localized} · ${subject}` : localized;
+}
+
+function observerStepStatus(status) {
+  return ({ inProgress: '执行中', running: '执行中', completed: '完成', failed: '失败', cancelled: '已取消', canceled: '已取消' })[status]
+    || String(status || '未知');
+}
+
+function formatTime(value) {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp)
+    ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(timestamp)
+    : '—';
+}
+
+function relativeTime(value) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return '未知时间';
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1_000));
+  if (seconds < 60) return `${seconds} 秒前`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return `${Math.round(hours / 24)} 天前`;
+}
+
+function itemDuration(item) {
+  const reportedMilliseconds = Number(item?.durationMs);
+  if (Number.isFinite(reportedMilliseconds) && reportedMilliseconds >= 0) {
+    return formatDuration(reportedMilliseconds);
+  }
+  const startedAt = Date.parse(item?.startedAt);
+  const endedAt = Date.parse(item?.completedAt || item?.updatedAt);
+  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt) return '';
+  return formatDuration(endedAt - startedAt);
+}
+
+function formatDuration(milliseconds) {
+  if (milliseconds < 1_000) return `${milliseconds}ms`;
+  if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(1)}s`;
+  return `${Math.floor(milliseconds / 60_000)}m ${Math.round((milliseconds % 60_000) / 1_000)}s`;
+}
 
 function messageActionPresentation(session) {
   const latestUserMessage = [...(session.messages || [])].reverse().find((message) => message.role === 'user');

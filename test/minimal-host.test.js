@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -173,6 +173,7 @@ test('Minimal Host assets build without consumer source', async (t) => {
   assert.match(scriptResponse, /onUploadAttachments/);
   assert.match(scriptResponse, /onResolveDroppedDirectories/);
   assert.match(scriptResponse, /directory-references/);
+  assert.match(scriptResponse, /api\/observer\/sessions/);
   assert.doesNotMatch(scriptResponse, /Stop Run|Isolation:/);
   assert.doesNotMatch(scriptResponse, /\/api\/environment/);
   assert.ok(scriptResponse.length > 1_000);
@@ -558,6 +559,7 @@ test('Minimal Host isolates Sessions by a verified owner header', async (t) => {
     sessionStore: store,
     accessToken: 'test-token',
     sessionOwnerHeader: 'x-datamama-user-id',
+    sessionObserverHeader: 'x-datamama-agent-observer',
   });
   const listening = await host.start();
   t.after(() => host.stop());
@@ -589,9 +591,115 @@ test('Minimal Host isolates Sessions by a verified owner header', async (t) => {
   }).then((response) => response.json());
   assert.deepEqual(listA.sessions.map((session) => session.id), [first.session.id]);
   assert.deepEqual(listB.sessions.map((session) => session.id), [second.session.id]);
+  assert.equal(listA.sessions[0].ownerId, undefined);
   assert.equal((await fetch(`${listening.url}/api/sessions/${first.session.id}`, {
     headers: headersFor('user-b'),
   })).status, 404);
+
+  const observerHeaders = {
+    'x-agent-workbench-token': 'test-token',
+    'x-datamama-agent-observer': 'true',
+  };
+  assert.equal((await fetch(`${listening.url}/api/observer/sessions`, {
+    headers: { ...observerHeaders, 'x-datamama-agent-observer': 'false' },
+  })).status, 403);
+  const observed = await fetch(`${listening.url}/api/observer/sessions`, {
+    headers: observerHeaders,
+  }).then((response) => response.json());
+  assert.deepEqual(
+    new Map(observed.sessions.map((session) => [session.id, session.ownerId])),
+    new Map([[first.session.id, 'user-a'], [second.session.id, 'user-b']]),
+  );
+  await store.applyEvent({
+    type: 'item_started',
+    sessionId: second.session.id,
+    runtimeTurnId: 'observer-turn',
+    createdAt: '2026-09-03T01:02:03.000Z',
+    payload: { item: {
+      id: 'observer-tool',
+      type: 'mcpToolCall',
+      server: 'bigquery',
+      tool: 'run_query',
+      status: 'inProgress',
+      arguments: { query: 'SELECT 1', api_key: 'observer-secret' },
+    } },
+  });
+  await store.applyEvent({
+    type: 'item_completed',
+    sessionId: second.session.id,
+    runtimeTurnId: 'observer-turn',
+    createdAt: '2026-09-03T01:02:05.500Z',
+    payload: { item: {
+      id: 'observer-tool',
+      type: 'mcpToolCall',
+      server: 'bigquery',
+      tool: 'run_query',
+      status: 'completed',
+      arguments: { query: 'SELECT 1', api_key: 'observer-secret' },
+      result: { content: [{ type: 'text', text: `path=${root}/runtime` }] },
+      durationMs: 2_500,
+    } },
+  });
+  const observedDetail = await fetch(`${listening.url}/api/observer/sessions/${second.session.id}`, {
+    headers: observerHeaders,
+  }).then((response) => response.json());
+  assert.equal(observedDetail.session.ownerId, 'user-b');
+  const observedTool = observedDetail.session.technicalItems[0];
+  assert.equal(observedTool.id, 'observer-tool');
+  assert.equal(observedTool.turnId, 'observer-turn');
+  assert.equal(observedTool.kind, 'mcpToolCall');
+  assert.equal(observedTool.title, 'Tool call · bigquery.run_query');
+  assert.equal(observedTool.status, 'completed');
+  assert.equal(observedTool.durationMs, 2_500);
+  assert.equal(observedTool.startedAt, '2026-09-03T01:02:03.000Z');
+  assert.equal(observedTool.completedAt, '2026-09-03T01:02:05.500Z');
+  assert.match(observedTool.detail, /Input\n/);
+  assert.match(observedTool.detail, /"query": "SELECT 1"/);
+  assert.match(observedTool.detail, /"api_key": "\[REDACTED\]"/);
+  assert.match(observedTool.detail, /Output\n/);
+  assert.match(observedTool.detail, /path=\[RUN_ROOT\]\/runtime/);
+  assert.equal(observedTool.detail.includes('observer-secret'), false);
+
+  const observerStreamController = new AbortController();
+  const observerStream = await fetch(
+    `${listening.url}/api/observer/sessions/${second.session.id}/events`,
+    { headers: observerHeaders, signal: observerStreamController.signal },
+  );
+  assert.equal(observerStream.status, 200);
+  provider.createdSessions[1].emit('event', {
+    type: 'item_started',
+    runtimeSessionId: provider.createdSessions[1].runtimeSessionId,
+    runtimeTurnId: 'observer-live-turn',
+    createdAt: Date.parse('2026-09-03T01:02:06.000Z'),
+    payload: { item: {
+      id: 'observer-live-tool',
+      type: 'mcpToolCall',
+      status: 'inProgress',
+      text: 'Authorization: Bearer stream-secret',
+    } },
+  });
+  const observerEventText = await readStreamUntil(observerStream.body.getReader(), 'session_changed');
+  observerStreamController.abort();
+  assert.match(observerEventText, /"type":"session_changed"/);
+  assert.equal(observerEventText.includes('stream-secret'), false);
+  assert.equal(observerEventText.includes('mcpToolCall'), false);
+
+  await mkdir(join(root, 'runtime'), { recursive: true });
+  await writeFile(
+    join(root, 'runtime', 'app-server.stderr.log'),
+    `Authorization: Bearer private-token\npath=${root}/runtime\napi_key=private-key\n`,
+  );
+  const diagnostics = await fetch(`${listening.url}/api/observer/logs?lines=999`, {
+    headers: observerHeaders,
+  }).then((response) => response.json());
+  assert.equal(diagnostics.lineLimit, 500);
+  const runtimeErrorLog = diagnostics.logs.find((log) => log.source === 'runtime-stderr');
+  assert.equal(runtimeErrorLog.available, true);
+  assert.match(runtimeErrorLog.content, /Bearer \[REDACTED\]/);
+  assert.match(runtimeErrorLog.content, /api_key=\[REDACTED\]/);
+  assert.match(runtimeErrorLog.content, /\[RUN_ROOT\]\/runtime/);
+  assert.equal(runtimeErrorLog.content.includes('private-token'), false);
+  assert.equal(runtimeErrorLog.content.includes('private-key'), false);
 });
 
 test('Minimal Host projects scoped shared Sessions and continues them into a fresh owner Runtime', async (t) => {
@@ -776,4 +884,36 @@ async function eventually(predicate, { attempts = 50 } = {}) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.fail('Condition was not met in time');
+}
+
+async function readStreamUntil(reader, needle) {
+  const decoder = new TextDecoder();
+  let content = '';
+  try {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const { done, value } = await readWithTimeout(reader, 1_000);
+      if (done) break;
+      content += decoder.decode(value, { stream: true });
+      if (content.includes(needle)) return content;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  assert.fail(`Stream did not include ${needle}`);
+}
+
+function readWithTimeout(reader, milliseconds) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Stream read timed out')), milliseconds);
+    reader.read().then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }

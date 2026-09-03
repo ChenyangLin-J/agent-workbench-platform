@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { chmod, readFile, rm } from 'node:fs/promises';
+import { chmod, open as openFile, readFile, rm } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 
 import { MAX_SESSION_ATTACHMENT_BYTES } from '../attachments.js';
@@ -19,6 +19,9 @@ import {
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_ATTACHMENT_BODY_BYTES = Math.ceil(MAX_SESSION_ATTACHMENT_BYTES * 4 / 3) + 64 * 1024;
 const EVENT_STREAM_HEARTBEAT_MS = 15_000;
+const DIAGNOSTIC_LOG_MAX_BYTES = 64 * 1024;
+const DIAGNOSTIC_LOG_DEFAULT_LINES = 200;
+const DIAGNOSTIC_LOG_MAX_LINES = 500;
 
 export function createMinimalHost({
   manifest,
@@ -32,6 +35,7 @@ export function createMinimalHost({
   accessToken = null,
   sessionOwnerHeader = null,
   sessionAccessHeader = null,
+  sessionObserverHeader = null,
   resourceStore = null,
   onStopRequested = null,
 } = {}) {
@@ -40,11 +44,12 @@ export function createMinimalHost({
   if (!sessionStore?.list || !sessionStore?.create || !sessionStore?.get) throw new TypeError('Session store is required');
   const sessionRuntimeStore = runtimeStateStore || sessionStore;
   if (!sessionRuntimeStore?.load || !sessionRuntimeStore?.save) throw new TypeError('Session Runtime store is required');
-  const ownerHeader = normalizeSessionOwnerHeader(sessionOwnerHeader);
-  const accessHeader = normalizeSessionOwnerHeader(sessionAccessHeader);
+  const ownerHeader = normalizeTrustedHeader(sessionOwnerHeader, 'Session owner');
+  const accessHeader = normalizeTrustedHeader(sessionAccessHeader, 'Session access');
   if (accessHeader && (!sessionStore.getShared || !sessionStore.createSharedContinuation)) {
     throw new TypeError('Shared Session access requires getShared and createSharedContinuation Session store methods');
   }
+  const observerHeader = normalizeTrustedHeader(sessionObserverHeader, 'Session observer');
   const attachmentsEnabled = manifest.features?.attachments === true;
   const steerEnabled = featureEnabled(manifest, 'steer');
   const messageEditEnabled = featureEnabled(manifest, 'messageEdit');
@@ -165,6 +170,7 @@ export function createMinimalHost({
     if (accessToken && request.headers['x-agent-workbench-token'] !== accessToken && url.pathname.startsWith('/api/')) {
       throw hostError('HOST_UNAUTHORIZED', 'Missing or invalid Host access token.', 401);
     }
+    if (url.pathname.startsWith('/api/observer')) requireSessionObserver(request, observerHeader);
     const ownerId = url.pathname.startsWith('/api/sessions')
       ? requestSessionOwner(request, ownerHeader)
       : null;
@@ -186,6 +192,30 @@ export function createMinimalHost({
       sendJson(response, 202, { stopping: true });
       queueMicrotask(() => void onStopRequested());
       return;
+    }
+    if (request.method === 'GET' && url.pathname === '/api/observer/sessions') {
+      return sendJson(response, 200, {
+        sessions: await sessionStore.list({ includeOwnerId: true }),
+        observedAt: new Date().toISOString(),
+      });
+    }
+    if (request.method === 'GET' && url.pathname === '/api/observer/logs') {
+      return sendJson(response, 200, await observerDiagnosticLogs(manifest, {
+        lineLimit: url.searchParams.get('lines'),
+      }));
+    }
+    const observerSessionRoute = url.pathname.match(/^\/api\/observer\/sessions\/([^/]+)(?:\/(events))?$/);
+    if (observerSessionRoute && request.method === 'GET') {
+      const sessionId = decodeURIComponent(observerSessionRoute[1]);
+      const action = observerSessionRoute[2] || '';
+      const storedSession = await sessionStore.get(sessionId, { includeOwnerId: true });
+      if (action === 'events') {
+        return openEventStream(response, sessionId, Number(url.searchParams.get('after') || 0), { observer: true });
+      }
+      const session = observerSessionView(storedSession, manifest);
+      session.pendingRequests = kernel.getPendingRequests(sessionId).map(pendingRequestView);
+      session.queuedTurns = queuedTurnsEnabled ? (await turnQueueReady).list(sessionId) : [];
+      return sendJson(response, 200, { session, observedAt: new Date().toISOString() });
     }
     if (request.method === 'GET' && url.pathname === '/api/sessions') {
       return sendJson(response, 200, {
@@ -457,14 +487,17 @@ export function createMinimalHost({
     throw hostError('HOST_ROUTE_NOT_FOUND', 'Route not found.', 404);
   }
 
-  function openEventStream(response, sessionId, afterEventId) {
+  function openEventStream(response, sessionId, afterEventId, { observer = false } = {}) {
     response.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive',
       'x-content-type-options': 'nosniff',
     });
-    const send = (event) => response.write(`id: ${event.eventId}\ndata: ${JSON.stringify(event)}\n\n`);
+    const send = (event) => {
+      const payload = observer ? observerEventNotification(event) : event;
+      response.write(`id: ${event.eventId}\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
     const unsubscribe = kernel.subscribe(sessionId, send, { afterEventId });
     const heartbeat = setInterval(() => response.write(': heartbeat\n\n'), EVENT_STREAM_HEARTBEAT_MS);
     heartbeat.unref?.();
@@ -520,11 +553,11 @@ export function createMinimalHost({
   };
 }
 
-function normalizeSessionOwnerHeader(value) {
+function normalizeTrustedHeader(value, label) {
   if (value == null || value === '') return null;
   const header = String(value).trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]{0,126}$/.test(header)) {
-    throw new TypeError('Session owner header must be a valid HTTP header name');
+    throw new TypeError(`${label} header must be a valid HTTP header name`);
   }
   return header;
 }
@@ -666,6 +699,22 @@ function runtimeTurnInputWithContinuation(input, continuationContext) {
   return Array.isArray(input) ? [contextPart, ...input] : [contextPart, { type: 'text', text: String(input) }];
 }
 
+function requireSessionObserver(request, observerHeader) {
+  if (!observerHeader) throw hostError('HOST_OBSERVER_DISABLED', 'Session observation is not configured.', 403);
+  const value = request.headers[observerHeader];
+  const normalized = String(Array.isArray(value) ? value[0] : value || '').trim().toLowerCase();
+  if (!['1', 'true'].includes(normalized)) {
+    throw hostError('HOST_OBSERVER_FORBIDDEN', 'Session observer access is required.', 403);
+  }
+}
+
+function observerEventNotification(event) {
+  return {
+    eventId: event.eventId,
+    type: 'session_changed',
+    createdAt: event.createdAt || null,
+  };
+}
 async function chmodSocketPrivate(socketPath) {
   try {
     await chmod(socketPath, 0o600);
@@ -851,6 +900,82 @@ function hostEnvironmentView(manifest) {
     isolation: manifest.isolation,
     lifecycle: manifest.lifecycle,
   };
+}
+
+async function observerDiagnosticLogs(manifest, { lineLimit } = {}) {
+  const requestedLines = Number(lineLimit);
+  const lines = Number.isSafeInteger(requestedLines) && requestedLines > 0
+    ? Math.min(requestedLines, DIAGNOSTIC_LOG_MAX_LINES)
+    : DIAGNOSTIC_LOG_DEFAULT_LINES;
+  const sources = [
+    ['runtime-stdout', join(manifest.paths.runtime, 'app-server.stdout.log')],
+    ['runtime-stderr', join(manifest.paths.runtime, 'app-server.stderr.log')],
+    ['host-stdout', join(manifest.paths.state, 'host.stdout.log')],
+    ['host-stderr', join(manifest.paths.state, 'host.stderr.log')],
+  ];
+  return {
+    observedAt: new Date().toISOString(),
+    lineLimit: lines,
+    logs: await Promise.all(sources.map(async ([source, path]) => ({
+      source,
+      ...await readDiagnosticLog(path, { lines, runRoot: manifest.paths.root }),
+    }))),
+  };
+}
+
+function observerSessionView(session, manifest) {
+  const binding = session.runtimeBinding;
+  return {
+    ...session,
+    technicalItems: (session.technicalItems || []).map((item) => ({
+      ...item,
+      detail: redactDiagnosticLog(item.detail, manifest.paths.root),
+    })),
+    runtimeBinding: binding ? {
+      runtimeProvider: binding.runtimeProvider || null,
+      runtimeSessionId: binding.runtimeSessionId || null,
+      activeTurnId: binding.activeTurnId || null,
+      lastTurnId: binding.lastTurnId || null,
+      status: binding.status || null,
+      lastError: redactDiagnosticLog(binding.lastError, manifest.paths.root) || null,
+      updatedAt: binding.updatedAt || null,
+    } : null,
+  };
+}
+
+async function readDiagnosticLog(path, { lines, runRoot }) {
+  let handle;
+  try {
+    handle = await openFile(path, 'r');
+    const stat = await handle.stat();
+    const length = Math.min(stat.size, DIAGNOSTIC_LOG_MAX_BYTES);
+    const buffer = Buffer.alloc(length);
+    if (length) await handle.read(buffer, 0, length, stat.size - length);
+    const content = redactDiagnosticLog(buffer.toString('utf8'), runRoot)
+      .split(/\r?\n/)
+      .slice(-lines)
+      .join('\n');
+    return {
+      available: true,
+      truncated: stat.size > length,
+      updatedAt: stat.mtime.toISOString(),
+      content,
+    };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { available: false, truncated: false, updatedAt: null, content: '' };
+    throw error;
+  } finally {
+    if (handle) await handle.close().catch(() => {});
+  }
+}
+
+function redactDiagnosticLog(value, runRoot) {
+  const root = String(runRoot || '');
+  const normalized = root ? String(value || '').replaceAll(root, '[RUN_ROOT]') : String(value || '');
+  return normalized
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"']+/gi, '$1[REDACTED]')
+    .replace(/((?:access[_-]?token|api[_-]?key|password|secret)\s*["']?\s*[:=]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]')
+    .replace(/([?&](?:token|key|signature|x-goog-signature)=)[^&\s]+/gi, '$1[REDACTED]');
 }
 
 async function readJsonBody(request, { maxBytes = MAX_BODY_BYTES } = {}) {

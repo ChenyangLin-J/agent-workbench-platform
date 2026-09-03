@@ -10,6 +10,7 @@ const MAX_MESSAGES_PER_SESSION = 2_000;
 const MAX_TECHNICAL_ITEMS_PER_SESSION = 2_000;
 const MUTATION_LOCK_STALE_MS = 30_000;
 const MUTATION_LOCK_RETRIES = 250;
+const MAX_TECHNICAL_DETAIL_CHARS = 16_000;
 
 export class EnvironmentSessionStore {
   constructor({ stateRoot, runId = null, crossProcess = false, now = () => new Date(), uuid = randomUUID } = {}) {
@@ -25,11 +26,11 @@ export class EnvironmentSessionStore {
     this.ready = this.#initialize();
   }
 
-  async list({ ownerId = null } = {}) {
+  async list({ ownerId = null, includeOwnerId = false } = {}) {
     const document = await this.#readQueued();
     return Object.values(document.sessions)
       .filter((session) => ownerId == null || session.ownerId === ownerId)
-      .map(publicSession)
+      .map((session) => publicSession(session, { includeOwnerId }))
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   }
 
@@ -158,11 +159,11 @@ export class EnvironmentSessionStore {
     return removed;
   }
 
-  async get(sessionId, { ownerId = null } = {}) {
+  async get(sessionId, { ownerId = null, includeOwnerId = false } = {}) {
     const document = await this.#readQueued();
     const session = document.sessions[sessionId];
     requireOwnedSession(session, sessionId, ownerId);
-    return sessionView(session, document.bindings[sessionId]);
+    return sessionView(session, document.bindings[sessionId], { includeOwnerId });
   }
 
   async getShared(sessionId) {
@@ -361,9 +362,10 @@ function emptyStore() {
   return { version: STORE_VERSION, sessions: {}, bindings: {}, queuedTurns: {} };
 }
 
-function publicSession(session) {
+function publicSession(session, { includeOwnerId = false } = {}) {
   return {
     id: session.id,
+    ...(includeOwnerId ? { ownerId: session.ownerId } : {}),
     ...(session.createdRunId ? { createdRunId: session.createdRunId } : {}),
     title: session.title,
     contextId: 'environment',
@@ -498,9 +500,9 @@ async function waitForInitializedDocument(path, validate) {
   throw storeError('SESSION_STORE_INVALID', `Session store did not finish initializing: ${path}`, 500);
 }
 
-function sessionView(session, binding = null) {
+function sessionView(session, binding = null, { includeOwnerId = false } = {}) {
   return {
-    ...publicSession(session),
+    ...publicSession(session, { includeOwnerId }),
     sessionId: session.id,
     messages: structuredClone(session.messages),
     technicalItems: structuredClone(session.technicalItems),
@@ -556,6 +558,7 @@ function applyAgentDelta(session, event) {
 function applyRuntimeItem(session, event) {
   const item = event.payload?.item;
   if (!item || typeof item !== 'object') return;
+  const timestamp = new Date(event.createdAt || Date.now()).toISOString();
   if (['userMessage', 'agentMessage'].includes(item.type)) {
     const role = item.type === 'userMessage' ? 'user' : 'assistant';
     const content = runtimeItemText(item);
@@ -568,7 +571,7 @@ function applyRuntimeItem(session, event) {
       content,
       turnId: event.runtimeTurnId,
       turnStatus: item.status || 'inProgress',
-      createdAt: new Date(event.createdAt || Date.now()).toISOString(),
+      createdAt: timestamp,
     };
     if (existing) Object.assign(existing, message);
     else if (!session.messages.some((candidate) => candidate.role === role && candidate.turnId === message.turnId && candidate.content === content)) {
@@ -578,12 +581,18 @@ function applyRuntimeItem(session, event) {
   }
   const id = String(item.id || `technical-${event.runtimeTurnId || 'unknown'}-${session.technicalItems.length}`);
   const existing = session.technicalItems.find((candidate) => candidate.id === id);
+  const status = String(item.status || (event.type === 'item_completed' ? 'completed' : 'running'));
   const technical = {
     id,
     turnId: event.runtimeTurnId,
+    kind: String(item.type || 'runtimeItem'),
     title: runtimeItemTitle(item),
-    status: String(item.status || (event.type === 'item_completed' ? 'completed' : 'running')),
-    detail: runtimeItemText(item),
+    status,
+    detail: runtimeItemDetail(item),
+    durationMs: runtimeDuration(item, existing),
+    startedAt: existing?.startedAt || timestamp,
+    updatedAt: timestamp,
+    completedAt: ['completed', 'failed', 'cancelled', 'canceled'].includes(status) ? timestamp : null,
   };
   if (existing) Object.assign(existing, technical);
   else session.technicalItems.push(technical);
@@ -619,13 +628,66 @@ function runtimeItemText(item) {
 }
 
 function runtimeItemTitle(item) {
-  return ({
+  const title = ({
     commandExecution: 'Command',
     fileChange: 'File change',
     mcpToolCall: 'Tool call',
     webSearch: 'Web search',
     reasoning: 'Reasoning',
   })[item.type] || String(item.type || 'Runtime item');
+  let subject = '';
+  if (item.type === 'mcpToolCall') {
+    subject = [item.server, item.tool || item.name || item.toolName].filter(Boolean).join('.');
+  } else if (item.type === 'commandExecution') {
+    subject = String(item.command || '').split(/\r?\n/, 1)[0];
+  } else if (item.type === 'webSearch') {
+    subject = item.query;
+  }
+  subject = String(subject || '').replace(/\s+/g, ' ').trim();
+  return subject ? `${title} · ${subject.slice(0, 160)}` : title;
+}
+
+function runtimeItemDetail(item) {
+  const sections = [];
+  if (item.type === 'reasoning') {
+    addRuntimeSection(sections, 'Summary', Array.isArray(item.summary) ? item.summary.join('\n') : item.summary);
+  } else if (item.type === 'mcpToolCall') {
+    addRuntimeSection(sections, 'Input', runtimeValueText(item.arguments));
+    addRuntimeSection(sections, 'Output', runtimeValueText(item.result));
+    addRuntimeSection(sections, 'Error', runtimeValueText(item.error));
+  } else if (item.type === 'commandExecution') {
+    addRuntimeSection(sections, 'Command', item.command);
+    addRuntimeSection(sections, 'Working directory', item.cwd);
+    addRuntimeSection(sections, 'Output', item.aggregatedOutput);
+    if (Number.isInteger(item.exitCode)) addRuntimeSection(sections, 'Exit code', String(item.exitCode));
+  } else if (item.type === 'fileChange') {
+    addRuntimeSection(sections, 'Changes', runtimeValueText(item.changes));
+  } else if (item.type === 'webSearch') {
+    addRuntimeSection(sections, 'Query', item.query);
+    addRuntimeSection(sections, 'Results', runtimeValueText(item.results));
+  }
+  if (!sections.length) addRuntimeSection(sections, 'Detail', runtimeItemText(item));
+  return sections.join('\n\n').slice(0, MAX_TECHNICAL_DETAIL_CHARS);
+}
+
+function addRuntimeSection(sections, label, value) {
+  const text = String(value ?? '').trim();
+  if (text) sections.push(`${label}\n${text}`);
+}
+
+function runtimeValueText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function runtimeDuration(item, existing) {
+  const value = Number(item.durationMs);
+  return Number.isFinite(value) && value >= 0 ? value : existing?.durationMs ?? null;
 }
 
 function inputText(input) {
