@@ -293,10 +293,16 @@ export class EnvironmentSessionStore {
         turnStatus: null,
         createdAt: this.#time(),
       };
+      const existingUserIndex = message.turnId == null
+        ? -1
+        : session.messages.findIndex((candidate) => (
+            candidate.role === 'user' && candidate.turnId === message.turnId
+          ));
       const existingTurnIndex = message.turnId == null
         ? -1
         : session.messages.findIndex((candidate) => candidate.turnId === message.turnId);
-      if (existingTurnIndex === -1) session.messages.push(message);
+      if (existingUserIndex !== -1) session.messages.splice(existingUserIndex, 1, message);
+      else if (existingTurnIndex === -1) session.messages.push(message);
       else session.messages.splice(existingTurnIndex, 0, message);
       session.messages = session.messages.slice(-MAX_MESSAGES_PER_SESSION);
       session.updatedAt = this.#time();
@@ -692,6 +698,11 @@ function applyRuntimeItem(session, event) {
     const content = runtimeItemText(item);
     const id = String(item.id || `${role}-${event.runtimeTurnId || 'unknown'}`);
     const existing = session.messages.find((candidate) => candidate.id === id);
+    const existingUserTurn = role === 'user'
+      ? session.messages.find((candidate) => (
+          candidate.role === 'user' && candidate.turnId === event.runtimeTurnId
+        ))
+      : null;
     const message = {
       id,
       role,
@@ -702,6 +713,7 @@ function applyRuntimeItem(session, event) {
       createdAt: timestamp,
     };
     if (existing) Object.assign(existing, message);
+    else if (existingUserTurn) return;
     else if (!session.messages.some((candidate) => candidate.role === role && candidate.turnId === message.turnId && candidate.content === content)) {
       session.messages.push(message);
     }

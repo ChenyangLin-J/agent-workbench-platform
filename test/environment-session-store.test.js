@@ -51,6 +51,77 @@ test('project-free Session store persists bindings and Runtime events', async (t
   assert.equal((await store.load(session.sessionId)).runtimeSessionId, 'runtime-1');
 });
 
+test('Session store keeps one product-visible user message when Runtime echoes augmented input', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-user-echo-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot });
+
+  const runtimeFirst = await store.create({ title: 'Runtime first' });
+  await store.applyEvent({
+    eventId: 1,
+    type: 'item_started',
+    sessionId: runtimeFirst.sessionId,
+    runtimeTurnId: 'turn-runtime-first',
+    createdAt: 1_700_000_000_000,
+    payload: {
+      item: {
+        id: 'runtime-user-first',
+        type: 'userMessage',
+        content: '用户问题\n<attachment>private runtime path</attachment>',
+      },
+    },
+  });
+  await store.recordUserInput(runtimeFirst.sessionId, '用户问题', {
+    turnId: 'turn-runtime-first',
+  });
+  await store.applyEvent({
+    eventId: 2,
+    type: 'item_completed',
+    sessionId: runtimeFirst.sessionId,
+    runtimeTurnId: 'turn-runtime-first',
+    createdAt: 1_700_000_001_000,
+    payload: {
+      item: {
+        id: 'runtime-user-first',
+        type: 'userMessage',
+        content: '用户问题\n<attachment>private runtime path</attachment>',
+        status: 'completed',
+      },
+    },
+  });
+  assert.deepEqual(
+    (await store.get(runtimeFirst.sessionId)).messages
+      .filter((message) => message.role === 'user')
+      .map(({ content, turnId }) => ({ content, turnId })),
+    [{ content: '用户问题', turnId: 'turn-runtime-first' }],
+  );
+
+  const productFirst = await store.create({ title: 'Product first' });
+  await store.recordUserInput(productFirst.sessionId, '另一个问题', {
+    turnId: 'turn-product-first',
+  });
+  await store.applyEvent({
+    eventId: 3,
+    type: 'item_started',
+    sessionId: productFirst.sessionId,
+    runtimeTurnId: 'turn-product-first',
+    createdAt: 1_700_000_002_000,
+    payload: {
+      item: {
+        id: 'runtime-user-second',
+        type: 'userMessage',
+        content: '另一个问题\n<attachment>private runtime path</attachment>',
+      },
+    },
+  });
+  assert.deepEqual(
+    (await store.get(productFirst.sessionId)).messages
+      .filter((message) => message.role === 'user')
+      .map(({ content, turnId }) => ({ content, turnId })),
+    [{ content: '另一个问题', turnId: 'turn-product-first' }],
+  );
+});
+
 test('Session store serializes concurrent binding updates without losing fields', async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-'));
   t.after(() => rm(stateRoot, { recursive: true, force: true }));
