@@ -289,7 +289,13 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /richHtml\.trim\(\) \? 'md' : 'txt'/);
   assert.match(source, /onOpenAttachment=\{actions\.onOpenAttachment\}/);
   assert.match(source, /className="cwu-message-attachment"/);
+  assert.match(source, /className=\{`cwu-document-backdrop\$\{file\.format === 'image' \? ' is-image' : ''\}`\}/);
   assert.match(source, /className="cwu-document-image"/);
+  assert.match(styles, /\.cwu-document-backdrop\.is-image \{[^}]*position: fixed/);
+  assert.match(styles, /\.cwu-document-backdrop\.is-image \{[^}]*backdrop-filter: blur\(8px\)/);
+  assert.match(styles, /\.cwu-document-backdrop\.is-image \.cwu-document-preview \{[^}]*width: 100%/);
+  assert.match(styles, /\.cwu-document-backdrop\.is-image \.cwu-document-image \{[^}]*place-items: center/);
+  assert.match(styles, /\.cwu-document-backdrop\.is-image \.cwu-document-image img \{[^}]*max-height: calc\(100dvh - 128px\)/);
   assert.match(source, /className="cwu-document-pdf"/);
   assert.match(source, /className=\{`cwu-scroll-latest/);
   assert.match(source, /target\.scrollTo\(\{ top: target\.scrollHeight, behavior: 'smooth' \}\)/);

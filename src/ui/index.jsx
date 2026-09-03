@@ -2032,7 +2032,7 @@ function DocumentPreview({
     <div
       aria-label={`文件预览：${file.name}`}
       aria-modal="true"
-      className="cwu-document-backdrop"
+      className={`cwu-document-backdrop${file.format === 'image' ? ' is-image' : ''}`}
       onMouseDown={(event) => { if (event.target === event.currentTarget) closePreview(); }}
       role="dialog"
     >

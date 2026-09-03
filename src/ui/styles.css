@@ -256,6 +256,12 @@
 .cwu-document-body { grid-row: 3; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .cwu-document-image { width: 100%; min-height: 100%; display: grid; place-items: center; padding: 24px; }
 .cwu-document-image img { display: block; max-width: 100%; max-height: calc(82vh - 120px); object-fit: contain; }
+.cwu-document-backdrop.is-image { position: fixed; z-index: 4000; display: grid; place-items: stretch; justify-content: stretch; background: rgba(20, 18, 16, .58); backdrop-filter: blur(8px) saturate(.72); -webkit-backdrop-filter: blur(8px) saturate(.72); }
+.cwu-document-backdrop.is-image .cwu-document-preview { position: relative; width: 100%; max-width: none; height: 100dvh; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; border: 0; background: transparent; box-shadow: none; pointer-events: none; }
+.cwu-document-backdrop.is-image .cwu-document-preview > header { position: absolute; z-index: 2; top: max(16px, env(safe-area-inset-top)); left: 50%; width: min(920px, calc(100vw - 32px)); min-height: 58px; transform: translateX(-50%); border: 1px solid color-mix(in srgb, var(--cwu-border) 88%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--cwu-surface) 94%, transparent); padding: 9px 12px 9px 16px; box-shadow: 0 16px 46px rgba(20, 18, 16, .24); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); pointer-events: auto; }
+.cwu-document-backdrop.is-image .cwu-document-body { grid-row: 1; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.cwu-document-backdrop.is-image .cwu-document-image { width: 100%; height: 100%; min-height: 0; display: grid; place-items: center; padding: 88px clamp(18px, 4vw, 72px) 24px; pointer-events: none; }
+.cwu-document-backdrop.is-image .cwu-document-image img { width: auto; height: auto; max-width: 100%; max-height: calc(100dvh - 128px); border-radius: 10px; background: var(--cwu-surface); box-shadow: 0 22px 70px rgba(20, 18, 16, .34); object-fit: contain; pointer-events: auto; }
 .cwu-document-pdf { width: 100%; height: 100%; border: 0; background: var(--cwu-surface); }
 .cwu-document-html { width: 100%; height: 100%; border: 0; background: white; }
 .cwu-document-audio { min-height: 100%; display: grid; place-items: center; padding: 32px; }
