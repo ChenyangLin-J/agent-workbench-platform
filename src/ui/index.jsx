@@ -696,6 +696,12 @@ export function SessionBrowser({
               </div>
               {visibleSessions.map((session) => {
                 const unread = session.status === 'unread';
+                const shared = session.accessKind === 'shared';
+                const secondaryLabel = shared
+                  ? formatTime(session.updatedAt)
+                  : session.secondaryLabel || (view.groupMode === 'context'
+                    ? formatTime(session.updatedAt)
+                    : [session.contextLabel, formatTime(session.updatedAt)].filter(Boolean).join(' · '));
                 return (
                 <div
                   className={`cwu-browser-row ${session.id === view.selectedSessionId ? 'is-active' : ''} ${unread ? 'is-unread' : ''}`}
@@ -709,9 +715,21 @@ export function SessionBrowser({
                     />
                     <span className="cwu-browser-row-copy">
                       <strong>{session.title}</strong>
-                      <small>{unread ? '新结果 · ' : ''}{session.secondaryLabel || (view.groupMode === 'context'
-                        ? formatTime(session.updatedAt)
-                        : [session.contextLabel, formatTime(session.updatedAt)].filter(Boolean).join(' · '))}</small>
+                      <small>
+                        {shared ? <svg
+                          aria-label="与我共享，只读"
+                          className="cwu-browser-row-shared"
+                          fill="none"
+                          role="img"
+                          viewBox="0 0 24 24"
+                        >
+                          <circle cx="6" cy="12" r="2" />
+                          <circle cx="17" cy="6" r="2" />
+                          <circle cx="17" cy="18" r="2" />
+                          <path d="m8 11 7-4M8 13l7 4" />
+                        </svg> : null}
+                        <span>{unread ? '新结果 · ' : ''}{secondaryLabel}</span>
+                      </small>
                     </span>
                   </button>
                   {actions.onFavorite && session.canFavorite ? (
@@ -1475,8 +1493,8 @@ export function SessionWorkspace({
               </div>
             </section>
           ) : null}
-          <agent-session-composer
-            className={`cwu-composer ${attachmentDragActive ? 'is-dragging' : ''} ${extensions.renderComposerReplacement ? 'is-replaced' : ''}`}
+          {extensions.renderComposerReplacement ? null : <agent-session-composer
+            className={`cwu-composer ${attachmentDragActive ? 'is-dragging' : ''}`}
             onDragEnter={handleAttachmentDrag}
             onDragLeave={handleAttachmentDragLeave}
             onDragOver={handleAttachmentDrag}
@@ -1655,7 +1673,7 @@ export function SessionWorkspace({
               </div>
             </div>
           </form>
-          </agent-session-composer>
+          </agent-session-composer>}
         </footer>
       </main>
       {subagentsOpen ? (

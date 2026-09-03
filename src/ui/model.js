@@ -398,6 +398,9 @@ export function normalizeSessionBrowserViewModel(value = {}) {
         contextId: stringOrNull(session?.contextId),
         contextLabel: session?.contextLabel == null ? '未分类' : String(session.contextLabel),
         secondaryLabel: String(session?.secondaryLabel || ''),
+        accessKind: session?.access?.kind === 'shared'
+          ? 'shared'
+          : session?.access?.kind === 'owned' ? 'owned' : null,
         searchableText: String(session?.searchableText || session?.searchText || ''),
         groupSortOrder: Number.isFinite(Number(session?.groupSortOrder)) ? Number(session.groupSortOrder) : null,
         sortOrder: Number.isFinite(Number(session?.sortOrder)) ? Number(session.sortOrder) : null,

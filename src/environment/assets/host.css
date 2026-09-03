@@ -6,7 +6,8 @@ button, input, textarea, select { font-family: inherit; }
 .awb-host-notice { position: fixed; z-index: 100; right: 18px; bottom: 18px; max-width: min(460px, calc(100vw - 36px)); border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; color: #1d4ed8; padding: 10px 12px; box-shadow: 0 12px 36px rgba(40, 34, 28, .14); font-size: 12px; }
 .awb-shared-badge { display: inline-flex; min-height: 28px; align-items: center; border: 1px solid #d8dee8; border-radius: 999px; background: #f8fafc; color: #64748b; padding: 0 10px; font-size: 11px; font-weight: 650; }
 .awb-continue-button { border-color: #2563eb !important; background: #2563eb !important; color: #fff !important; }
-.awb-readonly-composer { width: min(820px, 100%); margin: 0 auto; border: 1px solid #dbe3ef; border-radius: 14px; background: #f8fafc; color: #64748b; padding: 14px 18px; text-align: center; pointer-events: auto; font-size: 12px; }
+.awb-readonly-composer { width: min(820px, 100%); min-height: 46px; display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0 auto; border: 1px solid #dbe3ef; border-radius: 14px; background: #f8fafc; color: #64748b; padding: 11px 18px; text-align: center; pointer-events: auto; font-size: 12px; }
+.awb-readonly-composer svg { width: 14px; height: 14px; flex: 0 0 14px; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .awb-share-control { position: relative; }
 .awb-share-control > summary { display: inline-flex; list-style: none; cursor: pointer; }
 .awb-share-control > summary::-webkit-details-marker { display: none; }
@@ -21,7 +22,12 @@ button, input, textarea, select { font-family: inherit; }
 .awb-share-results > div, .awb-share-users > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; }
 .awb-share-results > div + div, .awb-share-users > div + div { border-top: 1px solid #edf0f4; }
 .awb-share-results span, .awb-share-users span, .awb-share-link button > span:last-child { display: grid; min-width: 0; gap: 2px; text-align: left; }
+.awb-share-results strong, .awb-share-users strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 1.35; font-weight: 650; }
 .awb-share-results button, .awb-share-users button { border: 0; background: transparent; color: #2563eb; cursor: pointer; font-size: 11px; }
+.awb-share-results .awb-share-person-button { width: 30px; height: 30px; flex: 0 0 30px; display: grid; place-items: center; border-radius: 8px; padding: 0; }
+.awb-share-results .awb-share-person-button:hover { background: #eff6ff; }
+.awb-share-results .awb-share-person-button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.awb-share-results .awb-share-person-button svg { width: 17px; height: 17px; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .awb-share-divider { display: flex; align-items: center; gap: 8px; margin: 12px 0; color: #a0a8b4; font-size: 9px; }
 .awb-share-divider::before, .awb-share-divider::after { height: 1px; flex: 1; background: #edf0f4; content: ""; }
 .awb-share-link { display: flex; align-items: center; gap: 4px; }

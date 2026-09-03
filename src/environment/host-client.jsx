@@ -355,7 +355,11 @@ function MinimalHostApp() {
       </> : sessionSharing ? <SessionShareControl request={productRequest} sessionId={session.sessionId} /> : null,
       renderComposerReplacement: sharedReadOnly ? () => (
         <div className="awb-readonly-composer" role="status">
-          共享对话为只读，如需继续请点击右上角“继续聊”
+          <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+            <rect height="10" rx="2" width="14" x="5" y="10" />
+            <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+          </svg>
+          <span>此对话只读 · 点击右上角“继续聊”后可输入</span>
         </div>
       ) : null,
     },
@@ -376,8 +380,8 @@ function MinimalHostApp() {
           sessions,
           selectedSessionId: selectedId,
           listCollapsed,
-          groupMode: sessionSharing ? 'context' : 'time',
-          groupOptions: [{ id: sessionSharing ? 'context' : 'time', label: sessionSharing ? '对话' : '最近' }],
+          groupMode: 'time',
+          groupOptions: [{ id: 'time', label: '最近' }],
           createTargets: [{ id: 'environment', label: '对话' }],
           showCreateTargetSelect: false,
         }}
@@ -548,16 +552,27 @@ function SessionShareControl({ request, sessionId }) {
           {searching ? <span>正在搜索…</span> : users.filter((user) => !directIds.has(user.id)).length
             ? users.filter((user) => !directIds.has(user.id)).map((user) => (
               <div key={user.id}>
-                <span><strong>{user.name}</strong><small>{user.email || ''}</small></span>
-                <button disabled={busyUserId === user.id} onClick={() => shareWithUser(user)} type="button">
-                  {busyUserId === user.id ? '共享中…' : '共享'}
+                <span><strong>{user.name}</strong></span>
+                <button
+                  aria-label={busyUserId === user.id ? `正在共享给 ${user.name}` : `共享给 ${user.name}`}
+                  className="awb-share-person-button"
+                  disabled={busyUserId === user.id}
+                  onClick={() => shareWithUser(user)}
+                  title={busyUserId === user.id ? '共享中…' : `共享给 ${user.name}`}
+                  type="button"
+                >
+                  {busyUserId === user.id ? <span aria-hidden="true">…</span> : <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+                    <circle cx="8.5" cy="7.5" r="3" />
+                    <path d="M3.5 19c.5-3.5 2.2-5 5-5s4.6 1.5 5 5" />
+                    <path d="M17.5 7v6M14.5 10h6" />
+                  </svg>}
                 </button>
               </div>
             )) : <span>没有匹配的用户</span>}
         </div> : null}
         {directUsers.length ? <div className="awb-share-users">
           {directUsers.map((user) => <div key={user.id}>
-            <span><strong>{user.name}</strong><small>可查看</small></span>
+            <span><strong>{user.name}</strong></span>
             <button aria-label={`移除 ${user.name}`} disabled={busyUserId === user.id} onClick={() => removeUser(user)} type="button">×</button>
           </div>)}
         </div> : null}
