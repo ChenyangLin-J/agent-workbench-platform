@@ -594,6 +594,134 @@ test('Minimal Host isolates Sessions by a verified owner header', async (t) => {
   })).status, 404);
 });
 
+test('Minimal Host projects scoped shared Sessions and continues them into a fresh owner Runtime', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-shared-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state'), runId: 'run-shared' });
+  const runtimeStore = new EnvironmentSessionRuntimeStore({ stateRoot: join(root, 'runtime-state') });
+  const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
+  const provider = new FakeRuntimeProvider();
+  const kernel = new AgentSessionKernel({ provider, bindingStore: runtimeStore, validateRequest: () => {} });
+  const host = createMinimalHost({
+    manifest: runManifest(root, 'run-shared'),
+    kernel,
+    sessionStore: store,
+    runtimeStateStore: runtimeStore,
+    resourceStore,
+    sessionOwnerHeader: 'x-session-owner',
+    sessionAccessHeader: 'x-session-access',
+  });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const accessEnvelope = (principalId, sharedSessions = []) => Buffer.from(JSON.stringify({
+    v: 1,
+    principalId,
+    sharedSessions,
+  })).toString('base64url');
+  const headersFor = (principalId, sharedSessions = []) => ({
+    'content-type': 'application/json',
+    'x-session-owner': principalId,
+    'x-session-access': accessEnvelope(principalId, sharedSessions),
+  });
+
+  assert.equal((await fetch(`${listening.url}/api/sessions`, {
+    headers: { 'x-session-owner': 'user-a' },
+  })).status, 401);
+  const source = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST',
+    headers: headersFor('user-a'),
+    body: JSON.stringify({ title: '共享源' }),
+  }).then((response) => response.json()).then((body) => body.session);
+  const attachmentContent = '可共享附件';
+  const sourceAttachment = await fetch(`${listening.url}/api/sessions/${source.sessionId}/attachments`, {
+    method: 'POST',
+    headers: headersFor('user-a'),
+    body: JSON.stringify({ attachment: {
+      name: 'shared.txt',
+      type: 'text/plain',
+      size: Buffer.byteLength(attachmentContent),
+      data: `data:text/plain;base64,${Buffer.from(attachmentContent).toString('base64')}`,
+    } }),
+  }).then((response) => response.json()).then((body) => body.attachment);
+  const sourceTurn = await fetch(`${listening.url}/api/sessions/${source.sessionId}/turns`, {
+    method: 'POST',
+    headers: headersFor('user-a'),
+    body: JSON.stringify({ prompt: '请记住 42', attachments: [sourceAttachment] }),
+  }).then((response) => response.json());
+  provider.createdSessions[0].complete(sourceTurn.result.runtimeTurnId);
+  await eventually(async () => !(await runtimeStore.load(source.sessionId)).activeTurnId);
+
+  const grant = {
+    sessionId: source.sessionId,
+    shareId: 'share-allowed',
+    permissions: ['session.read', 'resource.read', 'session.fork'],
+  };
+  const sharedHeaders = headersFor('user-b', [grant]);
+  const listed = await fetch(`${listening.url}/api/sessions`, { headers: sharedHeaders })
+    .then((response) => response.json());
+  assert.equal(listed.sessions.length, 1);
+  assert.equal(listed.sessions[0].access.kind, 'shared');
+  assert.equal(listed.sessions[0].contextLabel, '与我共享');
+  assert.equal(listed.sessions[0].composerDisabled, true);
+  assert.equal('createdRunId' in listed.sessions[0], false);
+  assert.equal('messages' in listed.sessions[0], false);
+
+  const detail = await fetch(`${listening.url}/api/sessions/${source.sessionId}`, { headers: sharedHeaders })
+    .then((response) => response.json()).then((body) => body.session);
+  assert.deepEqual(detail.messages.map((message) => message.content), ['请记住 42']);
+  assert.equal('turnId' in detail.messages[0], false);
+  assert.equal(detail.messages[0].attachments[0].name, 'shared.txt');
+  assert.equal(detail.runtimeBinding, null);
+  assert.deepEqual(detail.technicalItems, []);
+  assert.equal(provider.createdSessions.length, 1);
+  assert.equal(await fetch(
+    `${listening.url}/api/sessions/${source.sessionId}/attachments/${sourceAttachment.id}/content`,
+    { headers: sharedHeaders },
+  ).then((response) => response.text()), attachmentContent);
+
+  const rejected = await fetch(`${listening.url}/api/sessions/${source.sessionId}/turns`, {
+    method: 'POST',
+    headers: sharedHeaders,
+    body: JSON.stringify({ prompt: '不应发送' }),
+  });
+  assert.equal(rejected.status, 403);
+  assert.equal((await rejected.json()).error.code, 'SESSION_ACCESS_READ_ONLY');
+  assert.equal((await fetch(`${listening.url}/api/sessions/${source.sessionId}`, {
+    headers: headersFor('user-c'),
+  })).status, 404);
+
+  const continueHeaders = { ...sharedHeaders, 'idempotency-key': 'continue-request-1' };
+  const continuedResponse = await fetch(`${listening.url}/api/sessions/${source.sessionId}/continue`, {
+    method: 'POST', headers: continueHeaders, body: '{}',
+  });
+  assert.equal(continuedResponse.status, 201);
+  const continued = (await continuedResponse.json()).session;
+  assert.notEqual(continued.sessionId, source.sessionId);
+  assert.equal(continued.title, '共享源（副本）');
+  assert.notEqual(continued.messages[0].attachments[0].id, sourceAttachment.id);
+  assert.equal(continued.messages[0].attachments[0].resource.owner.sessionId, continued.sessionId);
+  assert.equal(provider.createdSessions.length, 2);
+  assert.notEqual(provider.createdSessions[0].runtimeSessionId, provider.createdSessions[1].runtimeSessionId);
+
+  const retried = await fetch(`${listening.url}/api/sessions/${source.sessionId}/continue`, {
+    method: 'POST', headers: continueHeaders, body: '{}',
+  });
+  assert.equal(retried.status, 200);
+  assert.equal((await retried.json()).session.sessionId, continued.sessionId);
+  assert.equal(provider.createdSessions.length, 2);
+
+  const nextTurn = await fetch(`${listening.url}/api/sessions/${continued.sessionId}/turns`, {
+    method: 'POST', headers: headersFor('user-b'), body: JSON.stringify({ prompt: '42 是什么？' }),
+  });
+  assert.equal(nextTurn.status, 202);
+  const runtimeInput = provider.createdSessions[1].startedTurns[0].input;
+  assert.match(runtimeInput[0].text, /请记住 42/);
+  assert.equal(runtimeInput[1].text, '42 是什么？');
+  const copiedDetail = await store.get(continued.sessionId, { ownerId: 'user-b' });
+  assert.deepEqual(copiedDetail.messages.map((message) => message.content), ['请记住 42', '42 是什么？']);
+  assert.equal((await runtimeStore.load(continued.sessionId)).continuationContext, null);
+});
+
 test('Codex Runtime constructs an allowlisted environment without inherited secrets', () => {
   const manifest = runManifest('/tmp/runtime-environment-test');
   manifest.isolation.environmentKeys = ['ALLOWED_VALUE'];

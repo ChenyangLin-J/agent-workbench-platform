@@ -8,7 +8,9 @@ export function minimalHostSessionPresentation(session = {}) {
   return {
     ...session,
     title: session.title === 'New Session' ? '新对话' : session.title,
-    contextLabel: '',
+    contextLabel: session.contextId && session.contextId !== 'environment'
+      ? session.contextLabel
+      : '',
   };
 }
 

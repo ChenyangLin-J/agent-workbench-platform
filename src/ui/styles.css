@@ -343,6 +343,7 @@
 .cwu-queued-turns article button { flex: 0 0 auto; border: 0; background: transparent; color: var(--cwu-error); padding: 5px 6px; font: inherit; font-size: 10px; cursor: pointer; }
 .cwu-queued-turns article button:disabled { cursor: default; opacity: .45; }
 .cwu-composer { position: relative; width: min(820px, 100%); margin: 0 auto; border: 1px solid var(--cwu-border); border-radius: 16px; background: var(--cwu-surface); box-shadow: 0 12px 36px rgba(40, 34, 28, .12); padding: 10px; pointer-events: auto; }
+.cwu-composer.is-replaced { display: none; }
 .cwu-composer.is-dragging { border-color: var(--cwu-accent); box-shadow: 0 12px 36px rgba(40, 34, 28, .12), 0 0 0 3px color-mix(in srgb, var(--cwu-accent) 14%, transparent); }
 .cwu-attachment-dropzone { position: absolute; z-index: 4; inset: 5px; display: grid; place-items: center; border: 1px dashed var(--cwu-accent); border-radius: 12px; background: color-mix(in srgb, var(--cwu-surface) 92%, var(--cwu-accent)); color: var(--cwu-accent); font-size: 12px; font-weight: 650; pointer-events: none; }
 .cwu-composer-form { display: contents; }

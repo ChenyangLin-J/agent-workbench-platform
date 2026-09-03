@@ -166,6 +166,50 @@ export async function readEnvironmentSessionAttachment({ id = '', name = '', ses
   };
 }
 
+export async function cloneEnvironmentSessionMessageAttachments({
+  messages,
+  sourceSessionId,
+  targetSessionId,
+  root,
+  store = null,
+} = {}) {
+  const normalizedSourceSessionId = normalizeSessionId(sourceSessionId);
+  const normalizedTargetSessionId = normalizeSessionId(targetSessionId);
+  const resourceStore = attachmentStore({ root, store });
+  const cloned = new Map();
+  const sourceMessages = Array.isArray(messages) ? messages : [];
+  return Promise.all(sourceMessages.map(async (message) => ({
+    ...message,
+    attachments: (await Promise.all((message?.attachments || []).map(async (attachment) => {
+      const resource = attachment?.resource;
+      const resourceId = String(attachment?.id || resource?.id || '').trim();
+      if (!resourceId || resource?.mode === 'external') return null;
+      if (!cloned.has(resourceId)) {
+        cloned.set(resourceId, (async () => {
+          const opened = await resourceStore.read(resourceId, { sessionId: normalizedSourceSessionId });
+          if (opened.descriptor.mode !== 'managed') return null;
+          const staged = await resourceStore.stage({
+            kind: opened.descriptor.kind,
+            owner: { sessionId: normalizedTargetSessionId },
+            display: opened.descriptor.display,
+            bytes: opened.bytes,
+            originType: 'migration',
+            capabilities: {
+              preview: opened.descriptor.capabilities.preview === true,
+              download: opened.descriptor.capabilities.download === true,
+              openInWorkspace: false,
+            },
+          });
+          return browserAttachment(await resourceStore.commit(staged.id, {
+            sessionId: normalizedTargetSessionId,
+          }));
+        })());
+      }
+      return cloned.get(resourceId);
+    }))).filter(Boolean),
+  })));
+}
+
 async function openRequestedAttachment(store, attachment, sessionId) {
   const resource = await requestedResource(store, attachment, sessionId);
   return store.open(resource.id, { sessionId });

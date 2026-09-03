@@ -1438,6 +1438,7 @@ export function SessionWorkspace({
         </agent-session-stream>
 
         <footer className="cwu-composer-wrap">
+          {extensions.renderComposerReplacement?.({ session: view }) || null}
           {awayFromLatest ? (
             <button
               aria-label={hasNewMessagesBelow
@@ -1475,7 +1476,7 @@ export function SessionWorkspace({
             </section>
           ) : null}
           <agent-session-composer
-            className={`cwu-composer ${attachmentDragActive ? 'is-dragging' : ''}`}
+            className={`cwu-composer ${attachmentDragActive ? 'is-dragging' : ''} ${extensions.renderComposerReplacement ? 'is-replaced' : ''}`}
             onDragEnter={handleAttachmentDrag}
             onDragLeave={handleAttachmentDragLeave}
             onDragOver={handleAttachmentDrag}

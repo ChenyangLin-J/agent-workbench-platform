@@ -24,6 +24,7 @@ export { isPathContained, resolveContainedPath } from './paths.js';
 export { EnvironmentSessionRuntimeStore, EnvironmentSessionStore } from './session-store.js';
 export { migrateRunSessionPersistence } from './session-persistence.js';
 export {
+  cloneEnvironmentSessionMessageAttachments,
   commitEnvironmentSessionAttachments,
   createEnvironmentSessionResourceStore,
   readEnvironmentSessionAttachment,

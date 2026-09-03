@@ -83,6 +83,65 @@ export class EnvironmentSessionStore {
     return this.get(sessionId, { ownerId });
   }
 
+  async createSharedContinuation(sourceSessionId, {
+    ownerId,
+    shareId,
+    idempotencyKey,
+    title = null,
+    projectMessages = null,
+  } = {}) {
+    const normalizedOwnerId = nonEmptyString(ownerId, 'Session owner');
+    const normalizedShareId = nonEmptyString(shareId, 'Share id');
+    const normalizedIdempotencyKey = nonEmptyString(idempotencyKey, 'Idempotency key');
+    let result;
+    await this.#mutate(async (document) => {
+      const existing = Object.values(document.sessions).find((session) => (
+        session.ownerId === normalizedOwnerId
+        && session.sharedContinuation?.shareId === normalizedShareId
+        && session.sharedContinuation?.idempotencyKey === normalizedIdempotencyKey
+      ));
+      if (existing) {
+        result = { created: false, sessionId: existing.id };
+        return;
+      }
+      const source = requireSession(document, sourceSessionId);
+      if (source.ownerId === normalizedOwnerId) {
+        throw storeError('SESSION_CONTINUATION_OWNER_INVALID', 'A shared continuation requires a different owner.', 409);
+      }
+      const sessionId = `session-${this.uuid()}`;
+      const timestamp = this.#time();
+      const projected = typeof projectMessages === 'function'
+        ? await projectMessages(structuredClone(source.messages), { sourceSessionId, sessionId })
+        : structuredClone(source.messages);
+      const messages = sharedContinuationMessages(projected, this.uuid, this.#time.bind(this));
+      document.sessions[sessionId] = {
+        id: sessionId,
+        ownerId: normalizedOwnerId,
+        ...(this.runId == null ? {} : { createdRunId: this.runId }),
+        title: title == null ? `${source.title}（副本）` : nonEmptyString(title, 'Session title'),
+        status: 'idle',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        completedAt: null,
+        messages,
+        technicalItems: [],
+        plan: [],
+        sharedContinuation: {
+          sourceSessionId,
+          shareId: normalizedShareId,
+          idempotencyKey: normalizedIdempotencyKey,
+          watermark: source.messages.at(-1)?.id || source.updatedAt,
+          createdAt: timestamp,
+        },
+      };
+      result = { created: true, sessionId };
+    });
+    return {
+      ...result,
+      session: await this.get(result.sessionId, { ownerId: normalizedOwnerId }),
+    };
+  }
+
   async remove(sessionId, { ownerId = null, requireUnbound = false } = {}) {
     let removed = null;
     await this.#mutate((document) => {
@@ -104,6 +163,11 @@ export class EnvironmentSessionStore {
     const session = document.sessions[sessionId];
     requireOwnedSession(session, sessionId, ownerId);
     return sessionView(session, document.bindings[sessionId]);
+  }
+
+  async getShared(sessionId) {
+    const document = await this.#readQueued();
+    return sessionView(requireSession(document, sessionId), null);
   }
 
   async load(sessionId) {
@@ -344,6 +408,16 @@ export class EnvironmentSessionRuntimeStore {
     return structuredClone(binding);
   }
 
+  async remove(sessionId) {
+    let removed = null;
+    await this.#mutate((document) => {
+      removed = document.bindings[sessionId] ? structuredClone(document.bindings[sessionId]) : null;
+      delete document.bindings[sessionId];
+      delete document.queuedTurns[sessionId];
+    });
+    return removed;
+  }
+
   async loadQueuedTurns() {
     const document = await this.#readQueued();
     return structuredClone(document.queuedTurns || {});
@@ -441,6 +515,26 @@ function sessionView(session, binding = null) {
   };
 }
 
+function sharedContinuationMessages(messages, uuid, now) {
+  if (!Array.isArray(messages)) throw new TypeError('Projected Session messages must be an array');
+  return messages.slice(-MAX_MESSAGES_PER_SESSION).map((message) => ({
+    id: `message-${uuid()}`,
+    role: message?.role === 'user' ? 'user' : 'assistant',
+    phase: message?.phase === 'commentary' ? 'commentary' : 'answer',
+    content: String(message?.content || '').slice(0, 200_000),
+    attachments: Array.isArray(message?.attachments) ? structuredClone(message.attachments) : [],
+    turnId: null,
+    turnStatus: 'completed',
+    copiedFromShared: true,
+    createdAt: validTimestamp(message?.createdAt) || now(),
+  })).filter((message) => message.content || message.attachments.length);
+}
+
+function validTimestamp(value) {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
 function applyAgentDelta(session, event) {
   const itemId = String(event.payload?.itemId || `agent-${event.runtimeTurnId || 'unknown'}`);
   let message = session.messages.find((candidate) => candidate.id === itemId);
@@ -496,7 +590,9 @@ function applyRuntimeItem(session, event) {
 }
 
 function bindLatestUserMessage(session, turnId) {
-  const message = [...session.messages].reverse().find((candidate) => candidate.role === 'user' && !candidate.turnId);
+  const message = [...session.messages].reverse().find((candidate) => (
+    candidate.role === 'user' && !candidate.turnId && candidate.copiedFromShared !== true
+  ));
   if (message) {
     message.turnId = turnId;
     message.turnStatus = 'inProgress';

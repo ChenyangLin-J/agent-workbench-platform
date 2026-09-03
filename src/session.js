@@ -156,6 +156,9 @@ export function groupSessionSummaries(sessions = [], mode = 'context', now = Dat
     groups.set(descriptor.id, group);
   }
   return [...groups.values()].sort((left, right) => {
+    const groupOrderDelta = Math.min(...left.sessions.map((session) => session.groupSortOrder ?? Number.MAX_SAFE_INTEGER))
+      - Math.min(...right.sessions.map((session) => session.groupSortOrder ?? Number.MAX_SAFE_INTEGER));
+    if (groupOrderDelta) return groupOrderDelta;
     const timeDelta = (right.sessions[0]?.updatedAt || 0) - (left.sessions[0]?.updatedAt || 0);
     return timeDelta || left.label.localeCompare(right.label);
   });

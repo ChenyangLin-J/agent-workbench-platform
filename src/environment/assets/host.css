@@ -3,8 +3,39 @@ body { overflow: hidden; background: var(--cwu-bg); font-family: Inter, ui-sans-
 button, input, textarea, select { font-family: inherit; }
 .awb-minimal-host { height: 100%; padding: 12px; box-sizing: border-box; }
 .awb-host-error { position: fixed; z-index: 100; right: 18px; bottom: 18px; max-width: min(460px, calc(100vw - 36px)); border: 1px solid color-mix(in srgb, var(--cwu-error) 60%, var(--cwu-border)); border-radius: 10px; background: var(--cwu-surface); color: var(--cwu-error); padding: 10px 12px; box-shadow: 0 12px 36px rgba(40, 34, 28, .18); font-size: 12px; }
+.awb-host-notice { position: fixed; z-index: 100; right: 18px; bottom: 18px; max-width: min(460px, calc(100vw - 36px)); border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; color: #1d4ed8; padding: 10px 12px; box-shadow: 0 12px 36px rgba(40, 34, 28, .14); font-size: 12px; }
+.awb-shared-badge { display: inline-flex; min-height: 28px; align-items: center; border: 1px solid #d8dee8; border-radius: 999px; background: #f8fafc; color: #64748b; padding: 0 10px; font-size: 11px; font-weight: 650; }
+.awb-continue-button { border-color: #2563eb !important; background: #2563eb !important; color: #fff !important; }
+.awb-readonly-composer { width: min(820px, 100%); margin: 0 auto; border: 1px solid #dbe3ef; border-radius: 14px; background: #f8fafc; color: #64748b; padding: 14px 18px; text-align: center; pointer-events: auto; font-size: 12px; }
+.awb-share-control { position: relative; }
+.awb-share-control > summary { display: inline-flex; list-style: none; cursor: pointer; }
+.awb-share-control > summary::-webkit-details-marker { display: none; }
+.awb-share-popover { position: absolute; z-index: 40; top: calc(100% + 9px); right: 0; width: 340px; border: 1px solid #dfe3ea; border-radius: 14px; background: #fff; padding: 14px; box-shadow: 0 18px 50px rgba(30, 41, 59, .18); color: #20242a; }
+.awb-share-popover > header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.awb-share-popover > header strong { font-size: 14px; }
+.awb-share-popover > header small, .awb-share-popover small { color: #7a8494; font-size: 10px; }
+.awb-share-search { display: flex; align-items: center; gap: 7px; min-height: 38px; border: 1px solid #dfe3ea; border-radius: 9px; padding: 0 10px; }
+.awb-share-search input { min-width: 0; flex: 1; border: 0; outline: 0; font-size: 12px; }
+.awb-share-results, .awb-share-users { margin-top: 8px; border: 1px solid #edf0f4; border-radius: 9px; overflow: hidden; }
+.awb-share-results > span, .awb-share-state { display: block; margin: 0; color: #7a8494; padding: 10px; font-size: 11px; }
+.awb-share-results > div, .awb-share-users > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; }
+.awb-share-results > div + div, .awb-share-users > div + div { border-top: 1px solid #edf0f4; }
+.awb-share-results span, .awb-share-users span, .awb-share-link button > span:last-child { display: grid; min-width: 0; gap: 2px; text-align: left; }
+.awb-share-results button, .awb-share-users button { border: 0; background: transparent; color: #2563eb; cursor: pointer; font-size: 11px; }
+.awb-share-divider { display: flex; align-items: center; gap: 8px; margin: 12px 0; color: #a0a8b4; font-size: 9px; }
+.awb-share-divider::before, .awb-share-divider::after { height: 1px; flex: 1; background: #edf0f4; content: ""; }
+.awb-share-link { display: flex; align-items: center; gap: 4px; }
+.awb-share-link > button { display: flex; min-width: 0; flex: 1; align-items: center; gap: 9px; border: 0; border-radius: 9px; background: #f5f8ff; color: #1d4ed8; padding: 10px; cursor: pointer; }
+.awb-share-link-menu { position: relative; }
+.awb-share-link-menu > summary { display: grid; width: 32px; height: 36px; place-items: center; list-style: none; border-radius: 8px; cursor: pointer; }
+.awb-share-link-menu > div { position: absolute; z-index: 2; top: 100%; right: 0; display: grid; width: 110px; border: 1px solid #dfe3ea; border-radius: 8px; background: #fff; padding: 4px; box-shadow: 0 10px 24px rgba(30, 41, 59, .14); }
+.awb-share-link-menu button { border: 0; background: transparent; padding: 7px 8px; text-align: left; cursor: pointer; font-size: 11px; }
+.awb-share-error { margin: 8px 0 0; color: #b42318; font-size: 11px; }
 .awb-minimal-host > .cwu-browser { height: 100%; }
 @media (max-width: 640px) {
   .awb-minimal-host { padding: 0; }
   .awb-minimal-host > .cwu-browser { border: 0; border-radius: 0; }
+  .awb-share-control { position: static; }
+  .awb-share-popover { position: fixed; top: auto; right: 0; bottom: 0; left: 0; width: auto; max-height: min(74vh, 620px); overflow-y: auto; border-radius: 18px 18px 0 0; padding: 18px 16px max(18px, env(safe-area-inset-bottom)); }
+  .awb-share-popover::before { display: block; width: 38px; height: 4px; margin: -8px auto 14px; border-radius: 99px; background: #d4dae3; content: ""; }
 }

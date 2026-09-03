@@ -110,6 +110,7 @@ export async function runInternalMinimalHost(runTarget, {
     socketPath,
     accessToken: await hostAccessToken(),
     sessionOwnerHeader: manifest.extensions?.['ai.ddit.agent-workbench.minimal-host']?.sessionOwnerHeader || null,
+    sessionAccessHeader: manifest.extensions?.['ai.ddit.agent-workbench.minimal-host']?.sessionAccessHeader || null,
     resourceStore,
     onStopRequested: async () => {
       await shutdown();

@@ -62,6 +62,14 @@ test('Personal sessions keep project grouping while using the same presentation 
   assert.equal(sessionStatusTone(sessions[2]), 'idle');
 });
 
+test('consumer group order keeps owned Sessions before newer shared Sessions', () => {
+  const groups = groupSessionSummaries([
+    { id: 'shared', contextId: 'shared', contextLabel: '与我共享', groupSortOrder: 1, updatedAt: 20 },
+    { id: 'owned', contextId: 'owned', contextLabel: '我的对话', groupSortOrder: 0, updatedAt: 10 },
+  ], 'context');
+  assert.deepEqual(groups.map((group) => group.id), ['owned', 'shared']);
+});
+
 test('current task is shared without leaking a project concept into Agent Web', () => {
   assert.equal(sessionCurrentTask({
     turnState: {
