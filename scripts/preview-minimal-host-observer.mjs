@@ -27,7 +27,11 @@ const host = createMinimalHost({
     features: { sessionWorkspace: true },
   },
   kernel: readOnlyKernel(),
-  sessionStore: new EnvironmentSessionStore({ stateRoot: manifest.paths.state }),
+  sessionStore: new EnvironmentSessionStore({
+    stateRoot: manifest.paths.sessionState || manifest.paths.state,
+    runId: manifest.id,
+    crossProcess: Boolean(manifest.paths.sessionState),
+  }),
   assetsRoot,
   accessToken,
   sessionObserverHeader: observerHeader,

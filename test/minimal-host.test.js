@@ -702,6 +702,38 @@ test('Minimal Host isolates Sessions by a verified owner header', async (t) => {
   assert.equal(runtimeErrorLog.content.includes('private-key'), false);
 });
 
+test('Minimal Host Observer joins portable Sessions with current Run state', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-observer-portable-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'portable-state'), runId: 'run-portable' });
+  const runtimeStore = new EnvironmentSessionRuntimeStore({ stateRoot: join(root, 'runtime-state') });
+  const provider = new FakeRuntimeProvider();
+  const kernel = new AgentSessionKernel({ provider, bindingStore: runtimeStore, validateRequest: () => {} });
+  const created = await store.create({ ownerId: 'user-a', runId: 'run-portable' });
+  await runtimeStore.save(created.sessionId, {
+    runtimeProvider: 'fake',
+    runtimeSessionId: 'runtime-portable',
+    activeTurnId: 'turn-active',
+    status: 'running',
+  });
+  const host = createMinimalHost({
+    manifest: runManifest(root, 'run-portable'),
+    kernel,
+    sessionStore: store,
+    runtimeStateStore: runtimeStore,
+    sessionObserverHeader: 'x-observer',
+  });
+  const listening = await host.start();
+  t.after(() => host.stop());
+
+  const detail = await fetch(`${listening.url}/api/observer/sessions/${created.sessionId}`, {
+    headers: { 'x-observer': 'true' },
+  }).then((response) => response.json());
+  assert.equal(detail.session.ownerId, 'user-a');
+  assert.equal(detail.session.runtimeBinding.runtimeSessionId, 'runtime-portable');
+  assert.equal(detail.session.runtimeBinding.activeTurnId, 'turn-active');
+});
+
 test('Minimal Host projects scoped shared Sessions and continues them into a fresh owner Runtime', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-shared-'));
   t.after(() => rm(root, { recursive: true, force: true }));

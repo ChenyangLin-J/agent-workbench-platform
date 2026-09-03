@@ -212,7 +212,10 @@ export function createMinimalHost({
       if (action === 'events') {
         return openEventStream(response, sessionId, Number(url.searchParams.get('after') || 0), { observer: true });
       }
-      const session = observerSessionView(storedSession, manifest);
+      const runtimeBinding = sessionRuntimeStore === sessionStore
+        ? storedSession.runtimeBinding
+        : await sessionRuntimeStore.load(sessionId);
+      const session = observerSessionView({ ...storedSession, runtimeBinding }, manifest);
       session.pendingRequests = kernel.getPendingRequests(sessionId).map(pendingRequestView);
       session.queuedTurns = queuedTurnsEnabled ? (await turnQueueReady).list(sessionId) : [];
       return sendJson(response, 200, { session, observedAt: new Date().toISOString() });
