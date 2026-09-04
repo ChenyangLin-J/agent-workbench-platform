@@ -219,10 +219,23 @@ test('Minimal Host reads portable Sessions across Runs without reusing stale Run
   const firstTurn = (await turnResponse.json()).result;
   providerA.createdSessions[0].complete(firstTurn.runtimeTurnId);
   await eventually(async () => !(await runtimeStoreA.load(created.sessionId)).activeTurnId);
+  const chartEvidenceContent = '{"chart":"portable-dashboard-evidence"}';
+  const chartAttachmentResponse = await fetch(`${listeningA.url}/api/sessions/${created.sessionId}/attachments`, {
+    method: 'POST',
+    headers: ownerHeaders,
+    body: JSON.stringify({ attachment: {
+      name: 'dashboard-2-chart-11--portable--ctx_dashboard_context_000011.dashboard-chart.json',
+      type: 'application/json',
+      size: Buffer.byteLength(chartEvidenceContent),
+      data: `data:application/json;base64,${Buffer.from(chartEvidenceContent).toString('base64')}`,
+    } }),
+  });
+  assert.equal(chartAttachmentResponse.status, 201);
+  const chartAttachment = (await chartAttachmentResponse.json()).attachment;
   const secondTurnResponse = await fetch(`${listeningA.url}/api/sessions/${created.sessionId}/turns`, {
     method: 'POST',
     headers: ownerHeaders,
-    body: JSON.stringify({ prompt: '准备跨 Run 编辑' }),
+    body: JSON.stringify({ prompt: '准备跨 Run 编辑', attachments: [chartAttachment] }),
   });
   assert.equal(secondTurnResponse.status, 202);
   const secondTurn = (await secondTurnResponse.json()).result;
@@ -276,12 +289,37 @@ test('Minimal Host reads portable Sessions across Runs without reusing stale Run
   const forked = await forkedResponse.json();
   assert.equal(forked.sourceArchived, false);
   assert.notEqual(forked.session.sessionId, created.sessionId);
-  assert.deepEqual(forked.session.messages.map((message) => message.content), ['保留这条消息', '跨 Run 分叉成功']);
+  assert.equal(forked.turn, null);
+  assert.deepEqual(forked.session.messages.map((message) => message.content), ['保留这条消息', '准备跨 Run 编辑']);
+  const forkedChartAttachment = forked.session.messages[1].attachments[0];
+  assert.notEqual(forkedChartAttachment.id, chartAttachment.id);
+  assert.equal(forkedChartAttachment.resource.owner.sessionId, forked.session.sessionId);
+  assert.equal(
+    (await sharedResources.read(forkedChartAttachment.id, { sessionId: forked.session.sessionId })).bytes.toString('utf8'),
+    chartEvidenceContent,
+  );
   assert.equal((await sessionStoreB.get(created.sessionId, { ownerId: 'user-a' })).archived, false);
   assert.equal(providerB.createdSessions.length, 1);
-  assert.match(providerB.createdSessions[0].startedTurns[0].input[0].text, /保留这条消息/);
-  assert.equal(providerB.createdSessions[0].startedTurns[0].input[1].text, '跨 Run 分叉成功');
-  assert.equal((await runtimeStoreB.load(forked.session.sessionId)).portableHistory, true);
+  assert.equal(providerB.createdSessions[0].startedTurns.length, 0);
+  const forkRuntimeState = await runtimeStoreB.load(forked.session.sessionId);
+  assert.equal(forkRuntimeState.portableHistory, true);
+  assert.match(forkRuntimeState.continuationContext, /准备跨 Run 编辑/);
+  assert.deepEqual(forkRuntimeState.continuationAttachments, [forkedChartAttachment]);
+
+  const continuedForkResponse = await fetch(`${listeningB.url}/api/sessions/${forked.session.sessionId}/turns`, {
+    method: 'POST',
+    headers: ownerHeaders,
+    body: JSON.stringify({ prompt: '在副本继续提问' }),
+  });
+  assert.equal(continuedForkResponse.status, 202);
+  const continuedFork = (await continuedForkResponse.json()).result;
+  assert.match(providerB.createdSessions[0].startedTurns[0].input[0].text, /准备跨 Run 编辑/);
+  assert.equal(providerB.createdSessions[0].startedTurns[0].input[1].text, '在副本继续提问');
+  assert.match(JSON.stringify(providerB.createdSessions[0].startedTurns[0].input), /dashboard-2-chart-11--portable/);
+  providerB.createdSessions[0].complete(continuedFork.runtimeTurnId);
+  await eventually(async () => !(await runtimeStoreB.load(forked.session.sessionId)).activeTurnId);
+  assert.equal((await runtimeStoreB.load(forked.session.sessionId)).continuationContext, null);
+  assert.equal((await runtimeStoreB.load(forked.session.sessionId)).continuationAttachments, null);
 
   const editedResponse = await fetch(`${listeningB.url}/api/sessions/${created.sessionId}/branches`, {
     method: 'POST',
@@ -743,12 +781,122 @@ test('Minimal Host Fork keeps the source and branch in the active Session list',
   assert.equal(branchResponse.status, 201);
   const branchBody = await branchResponse.json();
   assert.equal(branchBody.sourceArchived, false);
+  assert.equal(branchBody.turn, null);
+  assert.deepEqual(branchBody.session.messages.map((message) => message.content), ['original']);
+  assert.equal(provider.createdSessions.at(-1).startedTurns.length, 0);
   assert.equal((await store.get(sourceSessionId)).archived, false);
   const activeList = await fetch(`${listening.url}/api/sessions`, { headers }).then((response) => response.json());
   assert.deepEqual(
     new Set(activeList.sessions.map((session) => session.id)),
     new Set([sourceSessionId, branchBody.session.sessionId]),
   );
+});
+
+test('Minimal Host Edit and Fork clone Dashboard attachments into each replacement Session', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-dashboard-branch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
+  const provider = new FakeRuntimeProvider({ capabilities: { fork: true } });
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store, resourceStore });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = { 'content-type': 'application/json' };
+  const created = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST', headers, body: '{}',
+  }).then((response) => response.json());
+  const sourceSessionId = created.session.sessionId;
+
+  async function upload(name, content) {
+    const response = await fetch(`${listening.url}/api/sessions/${sourceSessionId}/attachments`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ attachment: {
+        name,
+        type: 'application/json',
+        size: Buffer.byteLength(content),
+        data: `data:application/json;base64,${Buffer.from(content).toString('base64')}`,
+      } }),
+    });
+    assert.equal(response.status, 201);
+    return response.json().then((body) => body.attachment);
+  }
+
+  const retainedAttachment = await upload(
+    'dashboard-2-chart-11--first--ctx_dashboard_context_000011.dashboard-chart.json',
+    '{"chart":"retained"}',
+  );
+  const first = await fetch(`${listening.url}/api/sessions/${sourceSessionId}/turns`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ prompt: 'first dashboard question', attachments: [retainedAttachment] }),
+  }).then((response) => response.json());
+  provider.createdSessions[0].complete(first.result.runtimeTurnId);
+  await eventually(async () => !(await store.get(sourceSessionId)).runtimeBinding.activeTurnId);
+
+  const replacementAttachment = await upload(
+    'dashboard-2-chart-27--current--ctx_dashboard_context_000027.dashboard-chart.json',
+    '{"chart":"replacement"}',
+  );
+  const second = await fetch(`${listening.url}/api/sessions/${sourceSessionId}/turns`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ prompt: 'second dashboard question', attachments: [replacementAttachment] }),
+  }).then((response) => response.json());
+  provider.createdSessions[0].complete(second.result.runtimeTurnId);
+  await eventually(async () => !(await store.get(sourceSessionId)).runtimeBinding.activeTurnId);
+  const source = await store.get(sourceSessionId);
+  const sourceAttachmentIds = source.messages.flatMap((message) => (
+    (message.attachments || []).map((attachment) => attachment.id)
+  ));
+
+  for (const intent of ['fork', 'edit']) {
+    const response = await fetch(`${listening.url}/api/sessions/${sourceSessionId}/branches`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        replaceTurnId: second.result.runtimeTurnId,
+        prompt: `${intent} dashboard question`,
+        intent,
+      }),
+    });
+    assert.equal(response.status, 201);
+    const branch = (await response.json()).session;
+    assert.deepEqual(
+      branch.messages.filter((message) => message.role === 'user').map((message) => message.content),
+      intent === 'fork'
+        ? ['first dashboard question', 'second dashboard question']
+        : ['first dashboard question', 'edit dashboard question'],
+    );
+    const branchAttachments = branch.messages.flatMap((message) => message.attachments || []);
+    assert.equal(branchAttachments.length, 2);
+    assert.equal(branchAttachments.some((attachment) => sourceAttachmentIds.includes(attachment.id)), false);
+    assert.ok(branchAttachments.every((attachment) => attachment.resource.owner.sessionId === branch.sessionId));
+    assert.deepEqual(
+      await Promise.all(branchAttachments.map(async (attachment) => (
+        (await resourceStore.read(attachment.id, { sessionId: branch.sessionId })).bytes.toString('utf8')
+      ))),
+      ['{"chart":"retained"}', '{"chart":"replacement"}'],
+    );
+    const replacement = branchAttachments[1];
+    const targetRuntime = provider.createdSessions.at(-1);
+    if (intent === 'fork') {
+      assert.equal(targetRuntime.startedTurns.length, 0);
+    } else {
+      assert.equal(replacement.resource.owner.turnId, branch.messages[1].turnId);
+      assert.match(JSON.stringify(targetRuntime.startedTurns[0].input), /dashboard-2-chart-27/);
+    }
+    await assert.rejects(
+      resourceStore.read(replacement.id, { sessionId: sourceSessionId }),
+      (error) => error.code === 'RESOURCE_SESSION_MISMATCH',
+    );
+  }
+
+  assert.equal((await store.get(sourceSessionId)).archived, true);
+  assert.equal(source.messages.every((message) => (
+    (message.attachments || []).every((attachment) => sourceAttachmentIds.includes(attachment.id))
+  )), true);
 });
 
 test('Minimal Host client resolves APIs inside its mounted product namespace', () => {

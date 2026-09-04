@@ -95,8 +95,10 @@ export function createMinimalHost({
     },
   }));
   const branchController = createMinimalHostBranchController({
+    attachmentsEnabled,
     manifest,
     kernel,
+    sessionResourceStore,
     sessionStore,
     sessionRuntimeStore,
   });
@@ -334,11 +336,19 @@ export function createMinimalHost({
       const sourceRuntimeState = await sessionRuntimeStore.load(sourceSessionId);
       const portableHistory = source.runtimeContinuationRequired
         || sourceRuntimeState?.portableHistory === true;
+      const sourceMessage = (source.messages || []).find((message) => (
+        message.role === 'user' && message.turnId === body.replaceTurnId
+      ));
       const result = await branchController.branch({
         sourceSessionId,
         replaceTurnId: body.replaceTurnId,
         prompt: body.prompt,
-        context: { ownerId, portableHistory },
+        intent,
+        context: {
+          ownerId,
+          portableHistory,
+          sourceAttachments: Array.isArray(sourceMessage?.attachments) ? sourceMessage.attachments : [],
+        },
       });
       if (intent === 'edit') await sessionStore.archive(sourceSessionId, { ownerId });
       return sendJson(response, 201, {
@@ -477,9 +487,21 @@ export function createMinimalHost({
               })
             : [];
           const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest));
-          const continuationContext = (await sessionRuntimeStore.load(sessionId))?.continuationContext;
+          const runtimeState = await sessionRuntimeStore.load(sessionId);
+          const continuationContext = runtimeState?.continuationContext;
+          const continuationAttachments = Array.isArray(runtimeState?.continuationAttachments)
+            ? runtimeState.continuationAttachments
+            : [];
+          const continuationAttachmentInputs = attachmentsEnabled && continuationAttachments.length
+            ? await resolveEnvironmentSessionAttachmentInputs({
+                attachments: continuationAttachments,
+                sessionId,
+                authorizedRoots: authorizedResourceRoots(manifest),
+                store: sessionResourceStore,
+              })
+            : [];
           const input = runtimeTurnInputWithContinuation(
-            runtimeTurnInput(turn, attachmentInputs),
+            runtimeTurnInput(turn, [...continuationAttachmentInputs, ...attachmentInputs]),
             continuationContext,
           );
           const queue = await turnQueueReady;
@@ -526,8 +548,11 @@ export function createMinimalHost({
             });
             payload = { result };
           }
-          if (continuationContext) {
-            await sessionRuntimeStore.save(sessionId, { continuationContext: null });
+          if (continuationContext || continuationAttachments.length) {
+            await sessionRuntimeStore.save(sessionId, {
+              continuationAttachments: null,
+              continuationContext: null,
+            });
           }
           if (idempotencyKey) {
             await sessionStore.completeTurnSubmission(sessionId, {
@@ -764,6 +789,7 @@ function sharedAttachmentProjection(attachment) {
 function publicRuntimeBinding(binding) {
   if (!binding) return null;
   const {
+    continuationAttachments: _continuationAttachments,
     continuationContext: _continuationContext,
     portableHistory: _portableHistory,
     ...projection
@@ -850,11 +876,25 @@ function initializeTurnQueue(sessionStore) {
   }));
 }
 
-function createMinimalHostBranchController({ manifest, kernel, sessionStore, sessionRuntimeStore }) {
-  async function attachBranchRuntime(sessionId, portableHistory) {
+function createMinimalHostBranchController({
+  attachmentsEnabled,
+  manifest,
+  kernel,
+  sessionResourceStore,
+  sessionStore,
+  sessionRuntimeStore,
+}) {
+  async function attachBranchRuntime(sessionId, portableHistory, {
+    continuationAttachments = null,
+    continuationContext = null,
+  } = {}) {
     const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest));
     if (!portableHistory) return binding;
-    await sessionRuntimeStore.save(sessionId, { portableHistory: true });
+    await sessionRuntimeStore.save(sessionId, {
+      ...(continuationAttachments?.length ? { continuationAttachments } : {}),
+      ...(continuationContext ? { continuationContext } : {}),
+      portableHistory: true,
+    });
     return { ...binding, portableHistory: true };
   }
 
@@ -869,36 +909,99 @@ function createMinimalHostBranchController({ manifest, kernel, sessionStore, ses
         reservation.sessionId,
         context?.portableHistory === true,
       ),
-      fork: async ({ sourceSessionId, lastTurnId, reservation, context }) => (
+      fork: async ({ sourceSessionId, lastTurnId, reservation, intent, context }) => (
         context?.portableHistory
-          ? attachBranchRuntime(reservation.sessionId, true)
+          ? attachBranchRuntime(reservation.sessionId, true, intent === 'fork' ? {
+              continuationAttachments: reservation.branchInputAttachments || [],
+              continuationContext: portableBranchContext(reservation),
+            } : {})
           : kernel.fork(
               sourceSessionId,
               reservation.sessionId,
               { lastTurnId, ...runtimeAttachOptions(manifest) },
             )
       ),
-      submit: async ({ session, input, context }) => kernel.submit(
-        session.sessionId,
-        runtimeTurnInputWithContinuation(
-          input,
-          context?.portableHistory ? portableBranchContext(session) : null,
-        ),
-        {
-          mode: 'queue',
-          ...runtimeAttachOptions(manifest),
-        },
-      ),
+      submit: async ({ session, input, reservation, context }) => {
+        const attachments = reservation?.branchInputAttachments || [];
+        const attachmentInputs = attachments.length
+          ? await resolveEnvironmentSessionAttachmentInputs({
+              attachments,
+              sessionId: session.sessionId,
+              authorizedRoots: authorizedResourceRoots(manifest),
+              store: sessionResourceStore,
+            })
+          : [];
+        const turn = await kernel.submit(
+          session.sessionId,
+          runtimeTurnInputWithContinuation(
+            runtimeTurnInput({ directInput: null, prompt: input }, attachmentInputs),
+            context?.portableHistory ? portableBranchContext(session) : null,
+          ),
+          {
+            mode: 'queue',
+            ...runtimeAttachOptions(manifest),
+          },
+        );
+        reservation.branchInputAttachments = attachments.length
+          ? await commitEnvironmentSessionAttachments({
+              attachments,
+              sessionId: session.sessionId,
+              turnId: turn.runtimeTurnId,
+              store: sessionResourceStore,
+            })
+          : [];
+        return turn;
+      },
     },
     sessions: {
-      reserve: ({ sourceSessionId, plan, context }) => sessionStore.createBranch(sourceSessionId, {
-        beforeTurnId: plan.replaceTurnId,
-        ownerId: context?.ownerId ?? null,
-      }),
+      reserve: async ({ sourceSessionId, plan, intent, context }) => {
+        let reservation = null;
+        try {
+          reservation = await sessionStore.createBranch(sourceSessionId, {
+            beforeTurnId: plan.replaceTurnId,
+            includeTargetTurn: intent === 'fork',
+            ownerId: context?.ownerId ?? null,
+            projectMessages: (messages, { sessionId }) => attachmentsEnabled
+              ? cloneEnvironmentSessionMessageAttachments({
+                  messages,
+                  sourceSessionId,
+                  targetSessionId: sessionId,
+                  store: sessionResourceStore,
+                })
+              : messages.map((message) => ({ ...message, attachments: [] })),
+          });
+          let projectedInput;
+          if (intent === 'fork') {
+            projectedInput = [...(reservation.messages || [])].reverse().find((message) => (
+              message.role === 'user' && message.turnId === plan.replaceTurnId
+            )) || { attachments: [] };
+          } else {
+            [projectedInput] = attachmentsEnabled
+              ? await cloneEnvironmentSessionMessageAttachments({
+                  messages: [{ attachments: context?.sourceAttachments || [] }],
+                  sourceSessionId,
+                  targetSessionId: reservation.sessionId,
+                  store: sessionResourceStore,
+                })
+              : [{ attachments: [] }];
+          }
+          reservation.branchInputAttachments = projectedInput.attachments || [];
+          return reservation;
+        } catch (error) {
+          if (reservation?.sessionId) {
+            await sessionStore.remove(reservation.sessionId, {
+              ownerId: context?.ownerId ?? null,
+              requireUnbound: true,
+            }).catch(() => {});
+          }
+          throw error;
+        }
+      },
       register: ({ reservation, context }) => sessionStore.get(reservation.sessionId, {
         ownerId: context?.ownerId ?? null,
       }),
-      recordInput: ({ session, turn, input, context }) => sessionStore.recordUserInput(session.sessionId, input, {
+      recordInput: ({ session, turn, input, reservation, context }) => sessionStore.recordUserInput(session.sessionId, input, {
+        attachments: reservation?.branchInputAttachments || [],
         ownerId: context?.ownerId ?? null,
         turnId: turn.runtimeTurnId,
       }),

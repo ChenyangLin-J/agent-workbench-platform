@@ -15,7 +15,7 @@ import {
 import { FakeRuntimeProvider } from '../test/core-testkit.js';
 
 const root = await mkdtemp(join(tmpdir(), 'awb-browser-smoke-'));
-const provider = new FakeRuntimeProvider({ capabilities: { steer: true } });
+const provider = new FakeRuntimeProvider({ capabilities: { fork: true, steer: true } });
 const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
 const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
 const assetsRoot = join(root, 'assets');
@@ -49,6 +49,8 @@ const initialSessionResponse = await fetch(
 if (initialSessionResponse.status !== 201) {
   throw new Error(`Initial draft Session create failed: ${initialSessionResponse.status}`);
 }
+const initialSession = (await initialSessionResponse.json()).session;
+const sourceSessionId = initialSession.sessionId;
 const browser = await chromium.launch({
   headless: true,
   executablePath: browserExecutable(),
@@ -154,10 +156,60 @@ try {
   await technicalDetails.click();
   await page.getByText('Tool call · browser.browser_query', { exact: true }).waitFor();
 
+  const replaySessionResponse = await fetch(
+    `http://127.0.0.1:${proxyAddress.port}/agent/runtime/api/sessions`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-agent-workbench-token': 'browser-smoke-token',
+      },
+      body: JSON.stringify({ title: 'observer replay session' }),
+    },
+  );
+  if (replaySessionResponse.status !== 201) {
+    throw new Error(`Observer replay Session create failed: ${replaySessionResponse.status}`);
+  }
+  const replaySession = (await replaySessionResponse.json()).session;
+  const replayTurnResponse = await fetch(
+    `http://127.0.0.1:${proxyAddress.port}/agent/runtime/api/sessions/${encodeURIComponent(replaySession.sessionId)}/turns`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-agent-workbench-token': 'browser-smoke-token',
+      },
+      body: JSON.stringify({ prompt: 'observer replay prompt' }),
+    },
+  );
+  if (replayTurnResponse.status !== 202) {
+    throw new Error(`Observer replay Turn create failed: ${replayTurnResponse.status}`);
+  }
+  const replayRuntime = provider.createdSessions[1];
+  for (let index = 0; index < 30; index += 1) {
+    replayRuntime.emit('event', {
+      type: 'item_started',
+      runtimeSessionId: replayRuntime.runtimeSessionId,
+      runtimeTurnId: replayRuntime.activeTurnId,
+      providerEvent: 'item/started',
+      payload: { item: {
+        id: `observer-replay-${index}`,
+        type: 'commandExecution',
+        command: `observer replay ${index}`,
+        status: 'inProgress',
+      } },
+    });
+  }
+  replayRuntime.complete();
+  await waitForAsync(async () => !(await store.get(replaySession.sessionId)).runtimeBinding?.activeTurnId);
+  await store.archive(replaySession.sessionId);
+
   const observerPage = await browser.newPage({
     extraHTTPHeaders: { 'x-browser-observer': 'true' },
   });
-  await observerPage.goto(`http://127.0.0.1:${proxyAddress.port}/agent/runtime/?view=observer`);
+  await observerPage.goto(
+    `http://127.0.0.1:${proxyAddress.port}/agent/runtime/?view=observer&session=${encodeURIComponent(sourceSessionId)}`,
+  );
   await observerPage.getByRole('heading', { name: 'Session 过程' }).waitFor();
   await observerPage.getByText('browser smoke', { exact: true }).first().waitFor();
   await observerPage.getByText('Browser smoke OK', { exact: true }).waitFor();
@@ -167,12 +219,34 @@ try {
   await observerToolStep.click();
   await observerPage.waitForFunction(() => document.querySelector('.awb-observer-steps pre')
     ?.textContent.includes('browser result'));
+  proxyState.observerDetailRequests.set(replaySession.sessionId, 0);
+  await observerPage.locator('.awb-observer-session-list button')
+    .filter({ hasText: 'observer replay session' })
+    .click();
+  await observerPage.getByRole('heading', { name: 'observer replay session' }).waitFor();
+  await observerPage.waitForTimeout(500);
+  const replayDetailRequests = proxyState.observerDetailRequests.get(replaySession.sessionId) || 0;
+  if (replayDetailRequests > 3) {
+    throw new Error(`Observer replay caused ${replayDetailRequests} detail requests after one selection.`);
+  }
   if (process.env.OBSERVER_SCREENSHOT_PATH) {
     await observerPage.screenshot({ path: process.env.OBSERVER_SCREENSHOT_PATH, fullPage: true });
   }
   await observerPage.close();
 
-  const sourceSessionId = (await store.list())[0].id;
+  await page.locator('.cwu-message.is-user').hover();
+  await page.getByRole('button', { name: 'Fork', exact: true }).click();
+  await page.getByText('2 个对话', { exact: true }).waitFor();
+  await page.getByText('Browser smoke OK', { exact: true }).waitFor();
+  const forkedRuntime = provider.createdSessions.at(-1);
+  if (forkedRuntime.startedTurns.length !== 0) {
+    throw new Error('Fork unexpectedly reran the selected user message.');
+  }
+
+  await page.goto(
+    `http://127.0.0.1:${proxyAddress.port}/agent/runtime/?session=${encodeURIComponent(sourceSessionId)}`,
+  );
+  await page.getByText('Browser smoke OK', { exact: true }).waitFor();
   await page.locator('.cwu-message.is-user').hover();
   await page.getByRole('button', { name: '编辑', exact: true }).click();
   const editBox = page.getByRole('textbox', { name: '编辑消息' });
@@ -180,7 +254,7 @@ try {
   await page.locator('.cwu-message-editor').getByRole('button', { name: '发送', exact: true }).click();
   await editBox.waitFor({ state: 'detached' });
   await page.getByText('browser smoke edited', { exact: true }).waitFor();
-  await page.getByText('1 个对话', { exact: true }).waitFor();
+  await page.getByText('2 个对话', { exact: true }).waitFor();
   await page.waitForTimeout(400);
   if (await page.locator('.cwu-transcript').getByText('Browser smoke OK', { exact: true }).count()) {
     throw new Error('Edit kept the replaced answer visible in the replacement Session.');
@@ -188,10 +262,10 @@ try {
   const activeSessions = await store.list();
   const allSessions = await store.list({ includeArchived: true });
   const archivedSource = await store.get(sourceSessionId);
-  if (activeSessions.length !== 1 || allSessions.length !== 2 || archivedSource.archived !== true) {
-    throw new Error('Edit did not archive the source while keeping one replacement Session active.');
+  if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
+    throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, Edit archival, and read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);
@@ -203,6 +277,7 @@ function createMountProxy(upstreamPort) {
   const activeEventStreams = new Set();
   const state = {
     eventConnections: 0,
+    observerDetailRequests: new Map(),
     failNextEventStream: true,
     rejectEventStreams: false,
     dropEventStreams() {
@@ -221,6 +296,14 @@ function createMountProxy(upstreamPort) {
       return;
     }
     const path = mountedPath.slice('/agent/runtime'.length) || '/';
+    const observerDetail = path.match(/^\/api\/observer\/sessions\/([^/?]+)(?:\?|$)/);
+    if (observerDetail) {
+      const sessionId = decodeURIComponent(observerDetail[1]);
+      state.observerDetailRequests.set(
+        sessionId,
+        (state.observerDetailRequests.get(sessionId) || 0) + 1,
+      );
+    }
     const eventStream = /\/api\/sessions\/[^/]+\/events(?:\?|$)/.test(path);
     if (eventStream) {
       state.eventConnections += 1;
@@ -289,6 +372,14 @@ async function waitFor(predicate) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error('Browser smoke timed out waiting for Runtime input.');
+}
+
+async function waitForAsync(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('Browser smoke timed out waiting for persisted Session state.');
 }
 
 function runManifest(runRoot) {

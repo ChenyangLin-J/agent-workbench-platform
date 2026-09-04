@@ -13,11 +13,12 @@ export class SessionBranchController {
     this.maxPromptLength = positiveInteger(maxPromptLength, 'maxPromptLength');
   }
 
-  async branch({ sourceSessionId, replaceTurnId, prompt, context = null } = {}) {
+  async branch({ sourceSessionId, replaceTurnId, prompt, intent = 'edit', context = null } = {}) {
     const sourceId = requiredString(sourceSessionId, 'Source Session id');
     const targetTurnId = requiredString(replaceTurnId, 'Replace Turn id');
-    const input = requiredString(prompt, 'Branch prompt');
-    if (input.length > this.maxPromptLength) {
+    const normalizedIntent = intent === 'fork' ? 'fork' : 'edit';
+    const input = normalizedIntent === 'edit' ? requiredString(prompt, 'Branch prompt') : null;
+    if (input && input.length > this.maxPromptLength) {
       throw branchError('SESSION_BRANCH_PROMPT_TOO_LONG', `Branch prompt cannot exceed ${this.maxPromptLength} characters.`, 400);
     }
     const source = await this.history.read(sourceId, { context });
@@ -25,23 +26,69 @@ export class SessionBranchController {
     let reservation = null;
     let branch = null;
     try {
-      reservation = await this.sessions.reserve?.({ source, sourceSessionId: sourceId, plan, context }) ?? null;
-      branch = plan.lastTurnId
-        ? await this.runtime.fork({ source, sourceSessionId: sourceId, lastTurnId: plan.lastTurnId, reservation, context })
-        : await this.runtime.create({ source, sourceSessionId: sourceId, reservation, context });
-      const session = await this.sessions.register({ source, sourceSessionId: sourceId, branch, reservation, plan, context });
-      const turn = await this.runtime.submit({ branch, session, input, context });
-      await this.sessions.recordInput?.({ source, branch, session, turn, input, plan, context });
+      reservation = await this.sessions.reserve?.({
+        source, sourceSessionId: sourceId, plan, intent: normalizedIntent, context,
+      }) ?? null;
+      const runtimeForkTurnId = normalizedIntent === 'fork' ? targetTurnId : plan.lastTurnId;
+      branch = runtimeForkTurnId
+        ? await this.runtime.fork({
+            source,
+            sourceSessionId: sourceId,
+            lastTurnId: runtimeForkTurnId,
+            reservation,
+            intent: normalizedIntent,
+            context,
+          })
+        : await this.runtime.create({
+            source, sourceSessionId: sourceId, reservation, intent: normalizedIntent, context,
+          });
+      const session = await this.sessions.register({
+        source,
+        sourceSessionId: sourceId,
+        branch,
+        reservation,
+        plan,
+        intent: normalizedIntent,
+        context,
+      });
+      const turn = normalizedIntent === 'edit'
+        ? await this.runtime.submit({
+            branch, session, input, reservation, plan, source, intent: normalizedIntent, context,
+          })
+        : null;
+      if (turn) {
+        await this.sessions.recordInput?.({
+          source,
+          branch,
+          session,
+          turn,
+          input,
+          reservation,
+          plan,
+          intent: normalizedIntent,
+          context,
+        });
+      }
       return {
         sourceSessionId: sourceId,
         replacedTurnId: targetTurnId,
         lastTurnId: plan.lastTurnId,
+        intent: normalizedIntent,
         session,
         branch,
         turn,
       };
     } catch (error) {
-      await this.sessions.rollback?.({ source, sourceSessionId: sourceId, branch, reservation, plan, context, error });
+      await this.sessions.rollback?.({
+        source,
+        sourceSessionId: sourceId,
+        branch,
+        reservation,
+        plan,
+        intent: normalizedIntent,
+        context,
+        error,
+      });
       throw error;
     }
   }

@@ -531,9 +531,10 @@
   .cwu-side-chat-config > span { display: none; }
 }
 @media (max-width: 1200px) {
-  .cwu-browser-detail .cwu-session-header { grid-template-columns: auto minmax(0, 1fr); padding: 8px 10px; }
+  .cwu-browser-detail .cwu-session-header { grid-template-columns: minmax(0, 1fr) auto; padding: 8px 10px; }
+  .cwu-browser-detail .cwu-session-header.has-back { grid-template-columns: auto minmax(0, 1fr) auto; }
   .cwu-browser-detail .cwu-session-heading { text-align: left; }
-  .cwu-browser-detail .cwu-session-actions { grid-column: 1 / -1; justify-content: space-between; }
+  .cwu-browser-detail .cwu-session-actions { grid-column: auto; justify-content: flex-end; white-space: nowrap; }
 }
 @media (max-width: 960px) {
   .cwu-browser { grid-template-columns: minmax(220px, 34%) 1px minmax(0, 1fr); }

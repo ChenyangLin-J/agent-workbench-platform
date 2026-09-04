@@ -46,6 +46,14 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(styles, /@media \(hover: none\)/);
 });
 
+test('Session browser keeps header actions on one row at constrained widths', async () => {
+  const styles = await readFile(stylesUrl, 'utf8');
+  const responsive = styles.slice(styles.indexOf('@media (max-width: 1200px)'));
+  assert.match(responsive, /\.cwu-browser-detail \.cwu-session-header \{ grid-template-columns: minmax\(0, 1fr\) auto;/);
+  assert.match(responsive, /\.cwu-browser-detail \.cwu-session-header\.has-back \{ grid-template-columns: auto minmax\(0, 1fr\) auto;/);
+  assert.match(responsive, /\.cwu-browser-detail \.cwu-session-actions \{ grid-column: auto;[^}]*white-space: nowrap;/);
+});
+
 test('Markdown document resources and heading anchors stay host-resolved and stable', () => {
   assert.equal(isDocumentResourceHref('./images/chart.png'), true);
   assert.equal(isDocumentResourceHref('../notes.md'), true);
@@ -312,10 +320,15 @@ test('Session UI exposes product extension content without owning product naviga
 
 test('Minimal Host keeps owned portable Session Edit and Fork actions available', async () => {
   const source = await readFile(new URL('../src/environment/host-client.jsx', import.meta.url), 'utf8');
+  const ui = await readFile(new URL('../src/ui/index.jsx', import.meta.url), 'utf8');
   assert.match(source, /const sessionBranchable = !sharedReadOnly;/);
   assert.match(source, /onEditMessage: messageEditEnabled && sessionBranchable/);
   assert.match(source, /onForkMessage: messageForkEnabled && sessionBranchable/);
+  assert.match(source, /intent === 'edit' \? \{ prompt \} : \{\}/);
+  assert.match(ui, /onForkMessage\(\{ messageId: message\.id, turnId: message\.turnId, prompt: message\.content \}\)/);
   assert.match(source, /const branchable = session\.access\?\.kind !== 'shared';/);
+  assert.match(source, /模型服务暂时不可用，本轮已结束。你可以编辑这条消息后重试/);
+  assert.match(source, /all\\s\+\\d\+\\s\+channels/);
 });
 
 test('long pasted text becomes an attachment before the Composer hard limit', () => {

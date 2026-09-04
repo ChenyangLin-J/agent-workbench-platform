@@ -104,16 +104,31 @@ export class EnvironmentSessionStore {
     };
   }
 
-  async createBranch(sourceSessionId, { beforeTurnId, ownerId = null, title = null } = {}) {
+  async createBranch(sourceSessionId, {
+    beforeTurnId,
+    includeTargetTurn = false,
+    ownerId = null,
+    title = null,
+    projectMessages = null,
+  } = {}) {
     const targetTurnId = nonEmptyString(beforeTurnId, 'Branch Turn id');
     const sessionId = `session-${this.uuid()}`;
     const timestamp = this.#time();
-    await this.#mutate((document) => {
+    await this.#mutate(async (document) => {
       const source = requireSession(document, sourceSessionId);
       requireOwnedSession(source, sourceSessionId, ownerId);
       const messageIndex = source.messages.findIndex((message) => message.turnId === targetTurnId);
       if (messageIndex < 0) throw storeError('SESSION_BRANCH_TURN_NOT_FOUND', `Turn not found: ${targetTurnId}`, 404);
-      const messages = structuredClone(source.messages.slice(0, messageIndex));
+      let endIndex = messageIndex;
+      if (includeTargetTurn) {
+        endIndex += 1;
+        while (endIndex < source.messages.length && source.messages[endIndex].turnId === targetTurnId) endIndex += 1;
+      }
+      const sourceMessages = structuredClone(source.messages.slice(0, endIndex));
+      const messages = typeof projectMessages === 'function'
+        ? await projectMessages(sourceMessages, { sourceSessionId, sessionId })
+        : sourceMessages;
+      if (!Array.isArray(messages)) throw new TypeError('Projected branch messages must be an array');
       const retainedTurnIds = new Set(messages.map((message) => message.turnId).filter(Boolean));
       document.sessions[sessionId] = {
         id: sessionId,

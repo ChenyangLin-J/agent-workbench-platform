@@ -297,7 +297,11 @@ function MinimalHostApp() {
     try {
       const body = await request(`api/sessions/${encodeURIComponent(selectedId)}/branches`, {
         method: 'POST',
-        body: JSON.stringify({ replaceTurnId: turnId, prompt, intent }),
+        body: JSON.stringify({
+          replaceTurnId: turnId,
+          ...(intent === 'edit' ? { prompt } : {}),
+          intent,
+        }),
       });
       const nextSession = messageActionPresentation(minimalHostSessionPresentation(body.session));
       selectSessionId(nextSession.sessionId);
@@ -380,7 +384,9 @@ function MinimalHostApp() {
     },
   } : null, [session, selectedId, sessionMutable, sessionBranchable, sharedReadOnly, continuing, productRequest]);
 
-  const runtimeError = session?.status === 'error' ? session.runtimeBinding?.lastError : '';
+  const runtimeError = session?.status === 'error'
+    ? userFacingRuntimeError(session.runtimeBinding?.lastError)
+    : '';
   const visibleError = error || runtimeError;
 
   return (
@@ -418,6 +424,15 @@ function MinimalHostApp() {
       {visibleError ? <div className="awb-host-error" role="alert">{visibleError}</div> : null}
     </main>
   );
+}
+
+function userFacingRuntimeError(value) {
+  const message = String(value || '').trim();
+  if (!message) return '';
+  if (/\b529\b|all\s+\d+\s+channels?\s+failed|model-egress.*\b404\b|unexpected status/i.test(message)) {
+    return '模型服务暂时不可用，本轮已结束。你可以编辑这条消息后重试，或直接继续提问。';
+  }
+  return message;
 }
 
 function SessionShareControl({ request, sessionId }) {
@@ -611,7 +626,8 @@ function SessionShareControl({ request, sessionId }) {
 
 function MinimalHostObserverApp() {
   const [sessions, setSessions] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(initialSessionId);
+  const selectedIdRef = useRef(initialSessionId);
   const [session, setSession] = useState(null);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
@@ -628,20 +644,28 @@ function MinimalHostObserverApp() {
     return body;
   }, []);
 
+  const selectSessionId = useCallback((nextValue) => {
+    setSelectedId((current) => {
+      const next = typeof nextValue === 'function' ? nextValue(current) : nextValue;
+      selectedIdRef.current = next;
+      return next;
+    });
+  }, []);
+
   const refreshSessions = useCallback(async () => {
     const body = await request('api/observer/sessions');
     const next = body.sessions || [];
     setSessions(next);
-    setSelectedId((current) => selectMinimalHostSession(next, current));
+    selectSessionId((current) => selectMinimalHostSession(next, current));
     return next;
-  }, [request]);
+  }, [request, selectSessionId]);
 
-  const refreshSession = useCallback(async (sessionId = selectedId) => {
+  const refreshSession = useCallback(async (sessionId) => {
     if (!sessionId) return null;
     const body = await request(`api/observer/sessions/${encodeURIComponent(sessionId)}`);
-    setSession(body.session || null);
+    if (selectedIdRef.current === sessionId) setSession(body.session || null);
     return body.session || null;
-  }, [request, selectedId]);
+  }, [request]);
 
   useEffect(() => {
     void refreshSessions()
@@ -660,7 +684,29 @@ function MinimalHostObserverApp() {
       setSession(null);
       return undefined;
     }
-    refreshSession(selectedId).catch((nextError) => setError(nextError.message));
+    let stopped = false;
+    let refreshTimer = null;
+    let refreshRunning = false;
+    let refreshQueued = false;
+    const scheduleRefresh = () => {
+      refreshQueued = true;
+      if (stopped || refreshTimer || refreshRunning) return;
+      refreshTimer = setTimeout(async () => {
+        refreshTimer = null;
+        refreshQueued = false;
+        refreshRunning = true;
+        try {
+          await Promise.all([refreshSessions(), refreshSession(selectedId)]);
+          if (!stopped) setError('');
+        } catch (nextError) {
+          if (!stopped) setError(nextError.message);
+        } finally {
+          refreshRunning = false;
+          if (refreshQueued) scheduleRefresh();
+        }
+      }, 120);
+    };
+    scheduleRefresh();
     const controller = new AbortController();
     void maintainMinimalHostEventStream({
       open: ({ afterEventId, signal }) => fetch(hostUrl(
@@ -669,21 +715,17 @@ function MinimalHostObserverApp() {
         headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
         signal,
       }),
-      onEvent: () => {
-        void Promise.all([refreshSessions(), refreshSession(selectedId)])
-          .then(() => setError(''))
-          .catch((nextError) => setError(nextError.message));
-      },
+      onEvent: scheduleRefresh,
       signal: controller.signal,
     }).catch((nextError) => {
       if (nextError.name !== 'AbortError') setError(nextError.message);
     });
-    const timer = setInterval(() => {
-      void refreshSession(selectedId).catch((nextError) => setError(nextError.message));
-    }, 2_000);
+    const timer = setInterval(scheduleRefresh, 2_000);
     return () => {
+      stopped = true;
       controller.abort();
       clearInterval(timer);
+      clearTimeout(refreshTimer);
     };
   }, [refreshSession, refreshSessions, selectedId]);
 
@@ -722,7 +764,7 @@ function MinimalHostObserverApp() {
                 <button
                   className={item.id === selectedId ? 'is-selected' : ''}
                   key={item.id}
-                  onClick={() => setSelectedId(item.id)}
+                  onClick={() => selectSessionId(item.id)}
                   type="button"
                 >
                   <span><i data-status={stale ? 'stale' : item.status} />{item.ownerId || '无 owner'}</span>

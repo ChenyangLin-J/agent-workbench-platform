@@ -264,6 +264,7 @@ Consumers may provide an object store, database-backed store, encrypted store, o
 - If request construction or submission fails, staged chips remain recoverable and the error is visible.
 - Refresh may restore staged draft resources within their configured draft grace period.
 - Retry is idempotent: it must not create duplicate committed bytes or duplicate transcript references.
+- Edit and Fork never reuse a managed resource descriptor owned by the source Session. Edit clones retained-message attachments and the selected user message's attachments, then submits the edited replacement Turn with the cloned inputs. Fork clones the transcript and managed attachments through the selected Turn without submitting anything; the user can continue from that copied state later. The source transcript and resources remain unchanged.
 
 ### Generated outputs and promotion
 
