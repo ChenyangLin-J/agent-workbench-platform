@@ -68,6 +68,29 @@ try {
   await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '输入问题……');
   await waitFor(() => proxyState.eventConnections >= 2);
 
+  await composer.evaluate((element) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', '结论 重点 第一项');
+    clipboardData.setData('text/html', '<h2>结论</h2><p><strong>重点</strong></p><ul><li>第一项</li></ul>');
+    element.select();
+    element.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData,
+    }));
+  });
+  const formattedComposer = page.getByRole('button', { name: '格式化内容，点击编辑' });
+  await formattedComposer.waitFor();
+  if (await formattedComposer.getByText('**重点**', { exact: true }).count()) {
+    throw new Error('Composer exposed Markdown source instead of the formatted preview.');
+  }
+  await formattedComposer.getByText('重点', { exact: true }).waitFor();
+  await formattedComposer.click();
+  await composer.waitFor();
+  if (!await composer.inputValue().then((value) => value.includes('**重点**'))) {
+    throw new Error('Formatted Composer did not preserve Markdown as the submitted source.');
+  }
+
   await page.getByLabel('添加图片或附件').setInputFiles({
     name: 'browser-canary.txt',
     mimeType: 'text/plain',
@@ -265,7 +288,7 @@ try {
   if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, formatted Composer, attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

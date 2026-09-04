@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { appendComposerReferences, clipboardAttachmentFiles, composerDropPayload, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { appendComposerReferences, clipboardAttachmentFiles, composerDropPayload, composerHasMarkdownFormatting, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -347,6 +347,13 @@ test('rich clipboard HTML becomes safe Markdown while preserving structure', () 
   assert.match(markdown, /\*\*重点\*\*/);
   assert.match(markdown, /-\s+第一项/);
   assert.match(markdown, /\| 指标 \|/);
+});
+
+test('Composer detects formatting that should render as a preview', () => {
+  assert.equal(composerHasMarkdownFormatting('普通的一句话'), false);
+  assert.equal(composerHasMarkdownFormatting('## 结论\n\n- 第一项'), true);
+  assert.equal(composerHasMarkdownFormatting('这里有 **重点** 和 [链接](https://example.com)'), true);
+  assert.equal(composerHasMarkdownFormatting('金额是 2 * 3，不是列表'), false);
 });
 
 test('rich clipboard cleanup never keeps styled body-only table elements', () => {

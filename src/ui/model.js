@@ -620,6 +620,13 @@ export function clipboardAttachmentFiles(clipboardData) {
   });
 }
 
+export function composerHasMarkdownFormatting(value) {
+  const content = String(value || '');
+  if (!content.trim()) return false;
+  return /(^|\n)\s{0,3}(?:#{1,6}\s+|>\s+|[-+*]\s+|\d+[.)]\s+|```|~~~|\|.+\|\s*$)/m.test(content)
+    || /(?:\*\*[^\n*]+\*\*|__[^\n_]+__|~~[^\n~]+~~|`[^\n`]+`|\[[^\]\n]+\]\([^\s)]+(?:\s+"[^"]*")?\))/.test(content);
+}
+
 function transferItems(dataTransfer) {
   try {
     return [...(dataTransfer?.items || [])];
