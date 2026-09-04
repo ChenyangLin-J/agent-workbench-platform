@@ -60,7 +60,7 @@ Implemented in Platform:
 - optional consumer-owned Session transcript/Resource roots, separate Run-local Runtime bindings and queued Turns, and a source-retaining migration from one stopped Run;
 - `env create`, `run`, `inspect` and `stop` plus the built-in Session UI and Codex Runtime lifecycle;
 - effective isolation derived from nine enforcement facets rather than provider self-report;
-- a real Docker ephemeral provider for offline Profiles and immutable `skill-source` snapshots, including exact owned-resource cleanup and a repeatable Docker smoke test;
+- a real Docker ephemeral provider for offline Profiles and immutable `skill-source` snapshots, including exact owned-resource cleanup, a bounded startup/readiness window with actionable workload/ingress diagnostics, and a repeatable Docker smoke test;
 - a fixed model egress sidecar that stages either an unexpired ChatGPT access token or one consumer-bound OpenAI-compatible gateway key, never exposes the upstream credential to the workload, and permits only Responses routes;
 - an authenticated fixed-target host proxy relay for Docker hosts that require `HTTP(S)_PROXY`, without copying controller proxy credentials into the workload or manifest;
 - Environment-time Skill snapshot staging, frontmatter-name capture, per-Run hash verification, a read-only workload mount and a fail-closed Codex Runtime allowlist that exposes no host source path;

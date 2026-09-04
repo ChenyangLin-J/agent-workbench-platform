@@ -18,7 +18,69 @@ import {
   containerRunManifest,
   dockerRunArguments,
   httpsProxyTarget,
+  waitForContainerReady,
 } from '../src/environment/docker-supervisor.js';
+
+test('Docker supervisor retries ingress health until the bounded readiness window succeeds', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-docker-ready-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const readyPath = join(root, 'container-ready.json');
+  await writeFile(readyPath, '{"runId":"ready-run"}\n');
+  let clock = 0;
+  let healthAttempts = 0;
+
+  await waitForContainerReady({
+    readyPath,
+    manifest: { id: 'ready-run' },
+    hostPort: 4190,
+    accessToken: 'fixture-token',
+    containerId: 'fixture-workload',
+    ingressId: 'fixture-ingress',
+    readinessTimeoutMs: 1_000,
+    inspectRunning: async () => 'true',
+    fetchHealth: async () => {
+      healthAttempts += 1;
+      return { ok: healthAttempts === 3, status: healthAttempts === 3 ? 200 : 502 };
+    },
+    wait: async (milliseconds) => { clock += milliseconds; },
+    now: () => clock,
+  });
+
+  assert.equal(healthAttempts, 3);
+  assert.equal(clock, 100);
+});
+
+test('Docker supervisor timeout reports the last health result and both container logs', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-docker-timeout-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const readyPath = join(root, 'container-ready.json');
+  await writeFile(readyPath, '{"runId":"timeout-run"}\n');
+  let clock = 0;
+  const diagnostics = [];
+
+  await assert.rejects(() => waitForContainerReady({
+    readyPath,
+    manifest: { id: 'timeout-run' },
+    hostPort: 4190,
+    accessToken: 'fixture-token',
+    containerId: 'fixture-workload',
+    ingressId: 'fixture-ingress',
+    readinessTimeoutMs: 100,
+    inspectRunning: async () => 'true',
+    fetchHealth: async () => ({ ok: false, status: 401 }),
+    readLogs: async (id) => `${id}-log`,
+    wait: async (milliseconds) => { clock += milliseconds; },
+    now: () => clock,
+    writeDiagnostic: (message) => diagnostics.push(message),
+  }), (error) => {
+    assert.equal(error.code, 'ENVIRONMENT_CONTAINER_START_TIMEOUT');
+    assert.match(error.message, /within 100 ms/);
+    assert.match(error.message, /last health result: HTTP 401/);
+    return true;
+  });
+  assert.match(diagnostics.join(''), /fixture-workload-log/);
+  assert.match(diagnostics.join(''), /fixture-ingress-log/);
+});
 
 test('Docker supervisor clears generated launch evidence without deleting retained Run state', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-docker-resume-'));

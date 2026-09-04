@@ -190,7 +190,7 @@ async function runCli(args, environment = {}) {
   const { stdout } = await execFileAsync(process.execPath, [cli, ...args], {
     cwd: packageRoot,
     env: { ...process.env, ...environment },
-    timeout: 6 * 60_000,
+    timeout: 12 * 60_000,
     maxBuffer: 10 * 1024 * 1024,
   });
   return JSON.parse(stdout);

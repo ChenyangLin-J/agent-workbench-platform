@@ -757,33 +757,66 @@ async function waitForDataAdapterReady({ entry, manifest, dockerCommand }) {
   throw supervisorError('DATA_ADAPTER_START_TIMEOUT', `Data adapter did not become ready: ${entry.adapter.id}.`);
 }
 
-async function waitForContainerReady({ readyPath, manifest, hostPort, accessToken, dockerCommand, containerId, ingressId }) {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    const running = (await dockerExec(dockerCommand, ['inspect', '--format', '{{.State.Running}}', containerId])).trim();
+export async function waitForContainerReady({
+  readyPath,
+  manifest,
+  hostPort,
+  accessToken,
+  dockerCommand,
+  containerId,
+  ingressId,
+  readinessTimeoutMs = 60_000,
+  fetchHealth = fetch,
+  inspectRunning = async (id) => (await dockerExec(dockerCommand, ['inspect', '--format', '{{.State.Running}}', id])).trim(),
+  readLogs = async (id) => dockerLogs(dockerCommand, id),
+  wait = delay,
+  now = Date.now,
+  writeDiagnostic = (message) => process.stderr.write(message),
+} = {}) {
+  const startedAt = now();
+  let lastHealthResult = 'ready evidence is not available';
+  while (now() - startedAt < readinessTimeoutMs) {
+    const running = await inspectRunning(containerId);
     if (running !== 'true') {
-      const logs = await dockerLogs(dockerCommand, containerId).catch(() => '');
-      if (logs) process.stderr.write(`${logs.slice(-12_000)}\n`);
+      const logs = await readLogs(containerId).catch(() => '');
+      if (logs) writeDiagnostic(`${logs.slice(-12_000)}\n`);
       throw supervisorError('ENVIRONMENT_CONTAINER_EXITED', 'Minimal Host container exited during startup.');
     }
-    const ingressRunning = (await dockerExec(dockerCommand, ['inspect', '--format', '{{.State.Running}}', ingressId])).trim();
+    const ingressRunning = await inspectRunning(ingressId);
     if (ingressRunning !== 'true') {
-      const logs = await dockerLogs(dockerCommand, ingressId).catch(() => '');
-      if (logs) process.stderr.write(`${logs.slice(-12_000)}\n`);
+      const logs = await readLogs(ingressId).catch(() => '');
+      if (logs) writeDiagnostic(`${logs.slice(-12_000)}\n`);
       throw supervisorError('ENVIRONMENT_INGRESS_EXITED', 'Fixed ingress sidecar exited during startup.');
     }
     try {
       const ready = JSON.parse(await readFile(readyPath, 'utf8'));
       if (ready.runId !== manifest.id) throw supervisorError('ENVIRONMENT_CONTAINER_IDENTITY_MISMATCH', 'Container ready file belongs to another Run.');
-      const response = await fetch(`http://127.0.0.1:${hostPort}/api/health`, {
+      const remainingMs = Math.max(1, readinessTimeoutMs - (now() - startedAt));
+      const response = await fetchHealth(`http://127.0.0.1:${hostPort}/api/health`, {
         headers: { 'x-agent-workbench-token': accessToken },
+        signal: AbortSignal.timeout(Math.min(2_000, remainingMs)),
       });
+      lastHealthResult = `HTTP ${response.status}`;
       if (response.ok) return;
     } catch (error) {
       if (error?.code && error.code !== 'ENOENT') throw error;
+      lastHealthResult = error?.code === 'ENOENT'
+        ? 'ready evidence is not available'
+        : `request failed (${error?.cause?.code || error?.code || error?.name || 'unknown'})`;
     }
-    await delay(50);
+    const remainingMs = readinessTimeoutMs - (now() - startedAt);
+    if (remainingMs > 0) await wait(Math.min(50, remainingMs));
   }
-  throw supervisorError('ENVIRONMENT_CONTAINER_START_TIMEOUT', 'Minimal Host container did not become ready.');
+  const [workloadLogs, ingressLogs] = await Promise.all([
+    readLogs(containerId).catch(() => ''),
+    readLogs(ingressId).catch(() => ''),
+  ]);
+  if (workloadLogs) writeDiagnostic(`[minimal-host workload logs]\n${workloadLogs.slice(-12_000)}\n`);
+  if (ingressLogs) writeDiagnostic(`[minimal-host ingress logs]\n${ingressLogs.slice(-12_000)}\n`);
+  throw supervisorError(
+    'ENVIRONMENT_CONTAINER_START_TIMEOUT',
+    `Minimal Host container did not become ready within ${readinessTimeoutMs} ms (last health result: ${lastHealthResult}).`,
+  );
 }
 
 async function stopOwnedContainer(dockerCommand, containerId, runId) {
@@ -827,8 +860,21 @@ async function dockerLogs(command, containerId) {
 function dockerSpawn(command, args) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { stdio: 'inherit', shell: false });
-    child.once('error', reject);
-    child.once('exit', (code) => code === 0 ? resolvePromise() : reject(supervisorError('DOCKER_COMMAND_FAILED', `${command} ${args[0]} exited with ${code}.`)));
+    let settled = false;
+    const terminateChild = () => child.kill('SIGTERM');
+    const finish = (callback) => (value) => {
+      if (settled) return;
+      settled = true;
+      process.off('SIGTERM', terminateChild);
+      process.off('SIGINT', terminateChild);
+      callback(value);
+    };
+    process.once('SIGTERM', terminateChild);
+    process.once('SIGINT', terminateChild);
+    child.once('error', finish(reject));
+    child.once('exit', finish((code) => code === 0
+      ? resolvePromise()
+      : reject(supervisorError('DOCKER_COMMAND_FAILED', `${command} ${args[0]} exited with ${code}.`))));
   });
 }
 

@@ -168,7 +168,7 @@ async function cliJson(args) {
   const { stdout } = await execFileAsync(process.execPath, [cli, ...args], {
     cwd: packageRoot,
     env: { ...process.env, MODULE_SMOKE_TOKEN: 'module-smoke-secret' },
-    timeout: 6 * 60_000,
+    timeout: 12 * 60_000,
     maxBuffer: 10 * 1024 * 1024,
   });
   return JSON.parse(stdout);

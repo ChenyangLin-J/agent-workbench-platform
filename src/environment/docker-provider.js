@@ -174,7 +174,7 @@ export function createDockerIsolationProvider({
         pid: child.pid,
         processGroupId: child.pid,
         expectedArguments: args,
-        startupTimeoutMs: 5 * 60_000,
+        startupTimeoutMs: 10 * 60_000,
       };
     },
     async stop({ pid, processGroupId = pid, verifyOwnership, manifest } = {}) {
