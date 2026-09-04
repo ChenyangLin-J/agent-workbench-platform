@@ -12,14 +12,14 @@ import {
 
 test('Codex Provider resolves the consumer-provided compatible CLI', async () => {
   const launch = bundledCodexLaunch();
-  assert.equal(CODEX_PROVIDER_VERSION, '0.147.0');
+  assert.equal(CODEX_PROVIDER_VERSION, '0.153.2');
   assert.equal(launch.command, process.execPath);
   assert.match(launch.args[0], /node_modules\/@openai\/codex\/bin\/codex\.js$/);
   const packageJson = JSON.parse(await (await import('node:fs/promises')).readFile(
     new URL('../package.json', import.meta.url),
     'utf8',
   ));
-  assert.equal(packageJson.peerDependencies['@openai/codex'], '>=0.145.0 <0.148.0');
+  assert.equal(packageJson.peerDependencies['@openai/codex'], '>=0.145.0 <0.154.0');
   assert.equal(packageJson.dependencies?.['@openai/codex'], undefined);
 });
 

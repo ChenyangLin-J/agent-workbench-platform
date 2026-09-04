@@ -44,7 +44,7 @@ Data Skill Lab currently incubates inside the Personal repository, but all of it
 | Platform owns | Consumer owns |
 | --- | --- |
 | Session, Turn, request, queue, interrupt and replay semantics | Product navigation, objects, labels and status |
-| Provider-neutral Runtime and Feature contracts | App Server processes, connection ownership and service lifecycle |
+| Provider-neutral Runtime and Feature contracts, including reconnectable WebSocket transport and explicit compaction requests | App Server process ownership, idle policy and service lifecycle |
 | Side Chat and Subagent state/action semantics | Persistent stores and product-specific retention policy |
 | Attachment metadata, limits, input and transcript envelopes | Attachment bytes, URLs, path authorization and file actions |
 | Shared Session/Feature React UI and extension slots | Page shell, theme, placement and business extensions |

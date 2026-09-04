@@ -102,6 +102,7 @@ export class WebSocketAppServerConnection extends EventEmitter {
       this.pending.set(id, { method, resolve, reject, timer });
       try {
         this.socket.send(JSON.stringify({ id, method, params }));
+        this.emit('activity', { direction: 'outbound', method });
       } catch (error) {
         this.#takePending(id)?.reject(coreError('APP_SERVER_WRITE_FAILED', error.message, { id, method }));
       }
@@ -148,7 +149,24 @@ export class WebSocketAppServerConnection extends EventEmitter {
     this.emit('close');
   }
 
+  disconnect() {
+    if (['idle', 'stopped', 'closed'].includes(this.state)) return;
+    this.closing = true;
+    this.state = 'stopped';
+    this.initializeResult = null;
+    this.#rejectPending(coreError('APP_SERVER_DISCONNECTED', 'App Server connection disconnected.'));
+    const socket = this.socket;
+    this.socket = null;
+    try {
+      socket?.close?.();
+    } catch {
+      // A failed connection may still be in CONNECTING state and cannot be closed cleanly.
+    }
+    this.emit('disconnect');
+  }
+
   #handleMessage(data) {
+    this.emit('activity', { direction: 'inbound' });
     let message;
     try {
       message = JSON.parse(typeof data === 'string' ? data : Buffer.from(data).toString('utf8'));

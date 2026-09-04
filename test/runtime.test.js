@@ -101,10 +101,12 @@ test('one stateless API serves Agent and Personal transports without sharing acc
   assert.equal((await api.searchThreads('  needle  ', { archived: true })).data[0].thread.id, 'thread-search');
   assert.equal((await api.searchThreadOccurrences('thread-work', 'detail')).data[0].itemId, 'item-search');
   assert.equal((await api.readThread('thread-work')).id, 'thread-work');
+  await api.compactThread('thread-work');
   await api.startRealtime('thread-work', { voice: 'juniper' });
   await api.appendRealtimeAudio('thread-work', 'base64-audio');
   await api.stopRealtime('thread-work');
   assert.deepEqual(requests.slice(4), [
+    { method: 'thread/compact/start', params: { threadId: 'thread-work' } },
     { method: 'thread/realtime/start', params: { voice: 'juniper', threadId: 'thread-work' } },
     { method: 'thread/realtime/appendAudio', params: { threadId: 'thread-work', audio: 'base64-audio' } },
     { method: 'thread/realtime/stop', params: { threadId: 'thread-work' } },
@@ -119,4 +121,5 @@ test('thread search rejects empty terms before contacting App Server', async () 
   const api = new CodexAppServerApi(() => assert.fail('request should not run'));
   assert.throws(() => api.searchThreads('   '), /search term is required/i);
   assert.throws(() => api.searchThreadOccurrences('thread-work', ''), /search term is required/i);
+  assert.throws(() => api.compactThread(''), /thread id is required/i);
 });

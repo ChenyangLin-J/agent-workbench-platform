@@ -1,12 +1,17 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const CODEX_PROVIDER_VERSION = '0.147.0';
+const CODEX_BIN_PATH = fileURLToPath(import.meta.resolve('@openai/codex/bin/codex.js'));
+export const CODEX_PROVIDER_VERSION = JSON.parse(readFileSync(
+  join(dirname(dirname(CODEX_BIN_PATH)), 'package.json'),
+  'utf8',
+)).version;
 
 export function bundledCodexLaunch({ args = ['app-server'] } = {}) {
-  const codexBinUrl = import.meta.resolve('@openai/codex/bin/codex.js');
   return {
     command: process.execPath,
-    args: [fileURLToPath(codexBinUrl), ...args],
+    args: [CODEX_BIN_PATH, ...args],
     version: CODEX_PROVIDER_VERSION,
   };
 }

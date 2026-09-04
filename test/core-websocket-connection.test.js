@@ -74,6 +74,28 @@ test('WebSocket connection initializes once and keeps server requests typed', as
   connection.close();
 });
 
+test('WebSocket connection reports activity and reconnects after an idle disconnect', async () => {
+  let ensured = 0;
+  const activity = [];
+  const connection = new WebSocketAppServerConnection({
+    url: 'ws://127.0.0.1:9997',
+    WebSocketImpl: FakeWebSocket,
+    ensureServer: () => { ensured += 1; },
+  });
+  connection.on('activity', (event) => activity.push(event));
+  await connection.start();
+  const firstSocket = FakeWebSocket.instances.at(-1);
+  connection.disconnect();
+  assert.equal(connection.state, 'stopped');
+  assert.equal(firstSocket.readyState, 3);
+  await connection.start();
+  assert.equal(ensured, 2);
+  assert.notEqual(FakeWebSocket.instances.at(-1), firstSocket);
+  assert.equal(activity.some((event) => event.method === 'initialize'), true);
+  assert.equal(activity.some((event) => event.direction === 'inbound'), true);
+  connection.close();
+});
+
 test('closing a runtime Session only removes local subscriptions', async () => {
   const connection = new WebSocketAppServerConnection({
     url: 'ws://127.0.0.1:9998',

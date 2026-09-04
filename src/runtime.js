@@ -163,6 +163,11 @@ export class CodexAppServerApi {
     return result?.thread || null;
   }
 
+  compactThread(threadId) {
+    requiredId(threadId, 'Thread');
+    return this.request('thread/compact/start', { threadId });
+  }
+
   deleteThread(threadId) {
     requiredId(threadId, 'Thread');
     return this.request('thread/delete', { threadId });

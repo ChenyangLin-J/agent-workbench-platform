@@ -8,7 +8,7 @@ Start with the [`docs/README.md`](docs/README.md) documentation map. The stable 
 
 ## Included
 
-- Codex App Server connections for stdio and WebSocket transports, including cross-Session search and in-Session occurrence search
+- Codex App Server connections for stdio and restartable WebSocket transports, including cross-Session search, in-Session occurrence search, and explicit thread compaction
 - Provider-neutral Session Kernel with queue, steer, interrupt, request, and replay contracts
 - Session presentation, searchable/archivable Session list, message history paging, queue, image/inline-visualization rendering, Composer, status, and responsive React UI
 - Codex-native Sub Agent discovery, metadata, active-Turn interruption, and thread-tree normalization
