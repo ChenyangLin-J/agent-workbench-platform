@@ -242,6 +242,11 @@ try {
   await observerToolStep.click();
   await observerPage.waitForFunction(() => document.querySelector('.awb-observer-steps pre')
     ?.textContent.includes('browser result'));
+  if (await observerPage.getByText('observer replay session', { exact: true }).count()) {
+    throw new Error('Observer showed an archived Session before archive history was enabled.');
+  }
+  await observerPage.getByRole('checkbox', { name: /显示已归档/ }).check();
+  await observerPage.getByText('observer replay session', { exact: true }).waitFor();
   proxyState.observerDetailRequests.set(replaySession.sessionId, 0);
   await observerPage.locator('.awb-observer-session-list button')
     .filter({ hasText: 'observer replay session' })
@@ -252,6 +257,9 @@ try {
   if (replayDetailRequests > 3) {
     throw new Error(`Observer replay caused ${replayDetailRequests} detail requests after one selection.`);
   }
+  await observerPage.getByRole('checkbox', { name: /显示已归档/ }).uncheck();
+  await observerPage.getByText('observer replay session', { exact: true }).waitFor({ state: 'detached' });
+  await observerPage.getByRole('heading', { name: 'browser smoke' }).waitFor();
   if (process.env.OBSERVER_SCREENSHOT_PATH) {
     await observerPage.screenshot({ path: process.env.OBSERVER_SCREENSHOT_PATH, fullPage: true });
   }
@@ -288,7 +296,7 @@ try {
   if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, formatted Composer, attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, formatted Composer, attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

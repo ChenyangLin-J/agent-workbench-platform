@@ -630,6 +630,7 @@ function MinimalHostObserverApp() {
   const selectedIdRef = useRef(initialSessionId);
   const [session, setSession] = useState(null);
   const [query, setQuery] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState('');
 
   const request = useCallback(async (path) => {
@@ -656,9 +657,12 @@ function MinimalHostObserverApp() {
     const body = await request('api/observer/sessions');
     const next = body.sessions || [];
     setSessions(next);
-    selectSessionId((current) => selectMinimalHostSession(next, current));
+    selectSessionId((current) => selectMinimalHostSession(
+      next.filter((item) => showArchived || !item.archived),
+      current,
+    ));
     return next;
-  }, [request, selectSessionId]);
+  }, [request, selectSessionId, showArchived]);
 
   const refreshSession = useCallback(async (sessionId) => {
     if (!sessionId) return null;
@@ -729,21 +733,29 @@ function MinimalHostObserverApp() {
     };
   }, [refreshSession, refreshSessions, selectedId]);
 
+  const archivedCount = useMemo(
+    () => sessions.filter((item) => item.archived).length,
+    [sessions],
+  );
+  const visibleSessions = useMemo(
+    () => sessions.filter((item) => showArchived || !item.archived),
+    [sessions, showArchived],
+  );
   const filteredSessions = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return sessions.filter((item) => {
+    return visibleSessions.filter((item) => {
       if (!needle) return true;
       return [item.id, item.ownerId, item.title]
         .some((value) => String(value || '').toLowerCase().includes(needle));
     });
-  }, [query, sessions]);
+  }, [query, visibleSessions]);
   const turns = useMemo(() => observerTurns(session), [session]);
 
   return (
     <main className="awb-observer">
       <header className="awb-observer-header">
         <div><span>只读观察</span><h1>Session 过程</h1></div>
-        <p>{sessions.length} 个 Session</p>
+        <p>{visibleSessions.length} 个 Session{archivedCount ? ` · ${archivedCount} 个已归档` : ''}</p>
       </header>
       <div className="awb-observer-body">
         <aside className="awb-observer-sidebar">
@@ -755,6 +767,15 @@ function MinimalHostObserverApp() {
               type="search"
               value={query}
             />
+            <label className="awb-observer-archive-toggle">
+              <input
+                checked={showArchived}
+                onChange={(event) => setShowArchived(event.target.checked)}
+                type="checkbox"
+              />
+              <span>显示已归档</span>
+              <small>{archivedCount}</small>
+            </label>
           </div>
           <div className="awb-observer-session-list">
             {filteredSessions.map((item) => {
