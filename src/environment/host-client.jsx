@@ -753,10 +753,6 @@ function MinimalHostObserverApp() {
 
   return (
     <main className="awb-observer">
-      <header className="awb-observer-header">
-        <div><span>只读观察</span><h1>Session 过程</h1></div>
-        <p>{visibleSessions.length} 个 Session{archivedCount ? ` · ${archivedCount} 个已归档` : ''}</p>
-      </header>
       <div className="awb-observer-body">
         <aside className="awb-observer-sidebar">
           <div className="awb-observer-filters">
@@ -774,7 +770,7 @@ function MinimalHostObserverApp() {
                 type="checkbox"
               />
               <span>显示已归档</span>
-              <small>{archivedCount}</small>
+              <small>{visibleSessions.length} 个{archivedCount ? ` · ${archivedCount} 已归档` : ''}</small>
             </label>
           </div>
           <div className="awb-observer-session-list">
@@ -802,10 +798,12 @@ function MinimalHostObserverApp() {
             <>
               <header>
                 <div>
-                  <span>Owner {session.ownerId || '—'} · {session.id}</span>
                   <h2>{session.title}</h2>
+                  <span>Owner {session.ownerId || '—'} · {session.id}</span>
                 </div>
-                <em data-status={session.status}>{observerStatusLabel(session.status)}</em>
+                {session.status !== 'idle'
+                  ? <em data-status={session.status}>{observerStatusLabel(session.status)}</em>
+                  : null}
               </header>
               <div className="awb-observer-process">
                 {turns.map((turn, turnIndex) => {

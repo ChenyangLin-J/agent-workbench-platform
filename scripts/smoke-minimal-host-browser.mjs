@@ -233,7 +233,10 @@ try {
   await observerPage.goto(
     `http://127.0.0.1:${proxyAddress.port}/agent/runtime/?view=observer&session=${encodeURIComponent(sourceSessionId)}`,
   );
-  await observerPage.getByRole('heading', { name: 'Session 过程' }).waitFor();
+  await observerPage.getByRole('searchbox', { name: '搜索全部 Session' }).waitFor();
+  if (await observerPage.getByRole('heading', { name: 'Session 过程' }).count()) {
+    throw new Error('Observer kept the redundant in-page title banner.');
+  }
   await observerPage.getByText('browser smoke', { exact: true }).first().waitFor();
   await observerPage.getByText('Browser smoke OK', { exact: true }).waitFor();
   const observerToolStep = observerPage.locator('.awb-observer-steps summary')
