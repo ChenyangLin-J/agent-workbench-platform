@@ -48,4 +48,7 @@ test('Session client operations are available through the public package entry',
   const entry = await import('@agent-workbench/platform/session-client');
   assert.equal(entry.SessionClientOperationController, SessionClientOperationController);
   assert.equal(entry.sessionOperationFingerprint, sessionOperationFingerprint);
+  assert.equal(typeof entry.createSessionEventController, 'function');
+  assert.equal(typeof entry.reconcileSessionSnapshot, 'function');
+  assert.equal(typeof entry.mergeSessionTurns, 'function');
 });

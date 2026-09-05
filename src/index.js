@@ -43,8 +43,21 @@ export {
 export { FilesystemResourceStore } from './filesystem-resource-store.js';
 
 export {
+  TERMINAL_SESSION_TURN_STATUSES,
   SessionClientOperationController,
+  applyAgentMessageDelta,
+  classifySessionEvent,
+  createSessionEventController,
+  isTerminalSessionTurnStatus,
+  mergeSessionItems,
+  mergeSessionTurns,
+  normalizeSessionSnapshot,
+  reconcileSessionSnapshot,
+  sessionEventThreadId,
+  sessionItemAttachmentMarkers,
+  sessionItemText,
   sessionOperationFingerprint,
+  upsertSessionItem,
 } from './session-client.js';
 
 export {
