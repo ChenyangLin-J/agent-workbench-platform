@@ -10,11 +10,42 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    outputs:
+      candidate-sha: ${{ steps.consumer-impact.outputs.candidate_sha }}
+      consumers: ${{ steps.consumer-impact.outputs.consumers }}
+      surfaces: ${{ steps.consumer-impact.outputs.surfaces }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Classify consumer impact
+        id: consumer-impact
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
+        run: |
+          base="${EVENT_BASE}"
+          if [[ -z "${base}" || "${base}" =~ ^0+$ ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          node .github/scripts/consumer-impact.mjs \
+            --base "${base}" \
+            --head HEAD \
+            --github-output "${GITHUB_OUTPUT}" \
+            --github-summary "${GITHUB_STEP_SUMMARY}"
+      - name: Dispatch GitLab consumer candidate gates
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CONSUMER_DISPATCH_CANDIDATE: ${{ steps.consumer-impact.outputs.candidate_sha }}
+          CONSUMER_DISPATCH_CONSUMERS: ${{ steps.consumer-impact.outputs.consumers }}
+          PERSONAL_GITLAB_TRIGGER_URL: ${{ secrets.PERSONAL_GITLAB_TRIGGER_URL }}
+          PERSONAL_GITLAB_TRIGGER_TOKEN: ${{ secrets.PERSONAL_GITLAB_TRIGGER_TOKEN }}
+          DATAMAMA_GITLAB_TRIGGER_URL: ${{ secrets.DATAMAMA_GITLAB_TRIGGER_URL }}
+          DATAMAMA_GITLAB_TRIGGER_TOKEN: ${{ secrets.DATAMAMA_GITLAB_TRIGGER_TOKEN }}
+        run: node .github/scripts/dispatch-consumer-preflights.mjs

@@ -24,9 +24,9 @@
 ## Verification and release
 
 - Runtime, Feature, UI, Browser, Capability, schema, or public export changes require `npm test` and the relevant project-free/project-scoped regression fixtures.
-- A package-bearing change under `src/`, `scripts/`, `package.json`, or `package-lock.json` must use a new package version before merge. Do not reuse or move an existing tag.
-- Automated Platform tests and consumer acceptance are separate. Shared interaction changes require Personal canary acceptance; minimal/project-free or constrained-capability changes require Data Skill Lab validation; Agent Terminal-specific migrations require that host's regression before its duplicate implementation is removed.
-- Read `docs/operations/RELEASING.md` before changing a release version or asking a consumer to adopt a new tag.
+- A package-bearing change under `src/`, `scripts/`, `package.json`, or `package-lock.json` must use a new package version before merge. The merged commit is an immutable consumer candidate but is not automatically a stable release. Promote an accepted candidate explicitly; do not reuse or move an existing tag.
+- Automated Platform tests and consumer acceptance are separate. Shared interaction changes require the mounted consumers selected by the impact gate; Personal owns its Host-adapter acceptance, DataMama owns constrained Minimal Host acceptance, Data Skill Lab owns project-free isolation/Profile validation, and Agent Terminal owns its migration regression before duplicate implementation is removed.
+- Read `docs/operations/RELEASING.md` before changing a release version, asking a consumer to test a candidate ref, or promoting a stable tag.
 
 ## Documentation
 
