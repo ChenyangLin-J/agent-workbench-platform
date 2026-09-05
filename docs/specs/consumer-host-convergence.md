@@ -36,6 +36,8 @@ Minimal Host Session creation and Turn submission use this controller with the e
 
 The next additive Host Kit slice exports authoritative-snapshot/optimistic-item reconciliation plus a transport-injected Session event controller from the same entry. The controller owns active-Turn, request, queue, live Agent delta, reconnect recovery and polling transitions. Consumers inject EventSource construction, snapshot/list refresh, extension recovery, product-event routing and error presentation. Both project-free and project-scoped fixtures exercise the same state transitions; unknown product context remains untouched.
 
+Personal now pins the released `v0.20.0` slice. Its Session state module only re-exports the public Host Kit plus local-path helpers, and its event controller only injects product events, extension recovery and error policy. Personal removed the duplicate event classifier and state-machine tests. Compatible Platform upgrades use Personal's narrow `core:accept` package/adapter/browser gate; changes to persistence, authorization, Runtime, Resource or existing adapter contracts still require targeted migration tests and the full Personal gate.
+
 ## UI behavior
 
 Reviewable interface reference: [Consumer Host Convergence UI](../mockups/consumer-host-convergence.html).
@@ -44,11 +46,10 @@ The Composer has one editing state: the textarea remains visible and no formatte
 
 ## Remaining migration
 
-1. Adopt the released reconciliation and event slice in Personal, delete its corresponding implementation, and reduce consumer tests to adapter/boot coverage.
-2. Move Minimal Host's remaining React-owned refresh scheduling behind the exported application controller so both built-in and full consumers compose the same complete path.
-3. Expose resource lifecycle coordination independently from filesystem storage and product authorization.
-4. Make Minimal Host extensions injectable without consumer DOM or `fetch` patches.
-5. Adopt each released slice in Personal and another independent consumer before deleting its previous implementation.
+1. Move Minimal Host's remaining React-owned refresh scheduling behind the exported application controller so both built-in and full consumers compose the same complete path.
+2. Expose resource lifecycle coordination independently from filesystem storage and product authorization.
+3. Make Minimal Host extensions injectable without consumer DOM or `fetch` patches.
+4. Adopt each released slice in another independent consumer before deleting its previous implementation there.
 
 DataMama migration is intentionally separate from Platform implementation: its production branch and release lifecycle remain consumer-owned. Replace consumer patches only in an isolated worktree and only after the corresponding Platform contract has browser acceptance.
 
@@ -62,6 +63,7 @@ DataMama migration is intentionally separate from Platform implementation: its p
 - Request, queue, delta, active-Turn and reconnect transitions behave identically with no context and with injected product context.
 - Product events, extension recovery, transport and queue-failure presentation stay consumer callbacks.
 - Minimal Host uses the export for Session creation and Turn submission.
+- Personal consumes the released state/event slice through the public package and tests only package mounting, Host adapters and product-owned effects for compatible upgrades.
 - Plain rich-text paste preserves literal punctuation and remains in the editable Composer; structurally complex paste becomes an attachment and no Composer preview is rendered.
 - Existing project-free Platform tests and Minimal Host browser smoke remain green.
 - A Platform canary and a consumer's formal pin are recorded as separate states; no shared migration is called adopted from canary evidence alone.
