@@ -11,8 +11,10 @@ import '../browser/subagent-elements.js';
 
 import {
   appendComposerReferences,
+  attachmentDragLeavesTarget,
   clipboardAttachmentFiles,
   composerDropPayload,
+  dataTransferHasFiles,
   documentPreviewPresentation,
   groupSessionMessages,
   groupSessionSummaries,
@@ -888,10 +890,16 @@ export function SessionWorkspace({
   const [submitting, setSubmitting] = useState(false);
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [deletingQueuedIds, setDeletingQueuedIds] = useState(() => new Set());
+  const attachmentInteractionRef = useRef({ composerDisabled: false, uploading: false, attachmentCount: 0 });
   const running = view.status === 'running';
   const uploading = attachments.some((attachment) => attachment.status === 'uploading');
   const readyAttachments = attachments.filter((attachment) => attachment.status !== 'error' && attachment.status !== 'uploading');
   const composerDisabled = view.composerDisabled || submitting;
+  attachmentInteractionRef.current = {
+    composerDisabled,
+    uploading,
+    attachmentCount: attachments.length,
+  };
   const executionControlsDisabled = composerDisabled || running || !actions.onExecutionProfileChange;
   const selectedExecutionModel = view.models.find((model) => model.id === view.executionProfile.model) || null;
   const executionEfforts = selectedExecutionModel?.reasoningEfforts?.length
@@ -1176,33 +1184,35 @@ export function SessionWorkspace({
   }
 
   function handleAttachmentDrag(event) {
-    if (!event.dataTransfer?.types?.includes('Files')
+    if (!dataTransferHasFiles(event.dataTransfer)
       || (!actions.onUploadAttachments && !actions.onResolveDroppedDirectories)) return;
     event.preventDefault();
-    if (composerDisabled || uploading) return;
+    const interaction = attachmentInteractionRef.current;
+    if (interaction.composerDisabled || interaction.uploading) return;
     const payload = composerDropPayload(event.dataTransfer);
     const hasDirectories = payload.directories.length > 0;
     const hasFiles = payload.files.length > 0;
     const opaqueFilePreview = !hasDirectories && !hasFiles;
-    if (!hasDirectories && ((!hasFiles && !opaqueFilePreview) || attachments.length >= uploadPolicy.maxCount)) return;
+    if (!hasDirectories && ((!hasFiles && !opaqueFilePreview) || interaction.attachmentCount >= uploadPolicy.maxCount)) return;
     event.dataTransfer.dropEffect = hasDirectories ? 'link' : 'copy';
     setAttachmentDragKind(hasDirectories ? hasFiles ? 'mixed' : 'directories' : 'files');
     setAttachmentDragActive(true);
   }
 
   function handleAttachmentDragLeave(event) {
-    if (event.currentTarget.contains(event.relatedTarget)) return;
+    if (!attachmentDragLeavesTarget(event)) return;
     setAttachmentDragActive(false);
     setAttachmentDragKind('files');
   }
 
   async function handleAttachmentDrop(event) {
-    if (!event.dataTransfer?.types?.includes('Files')
+    if (!dataTransferHasFiles(event.dataTransfer)
       || (!actions.onUploadAttachments && !actions.onResolveDroppedDirectories)) return;
     event.preventDefault();
     setAttachmentDragActive(false);
     setAttachmentDragKind('files');
-    if (composerDisabled || uploading) return;
+    const interaction = attachmentInteractionRef.current;
+    if (interaction.composerDisabled || interaction.uploading) return;
     const { directories, files } = composerDropPayload(event.dataTransfer);
     const errors = files.length ? await uploadFiles(files) : [];
     if (directories.length) {
@@ -1213,7 +1223,7 @@ export function SessionWorkspace({
           const result = await actions.onResolveDroppedDirectories({ directories });
           const references = Array.isArray(result) ? result : result?.references;
           const resources = Array.isArray(result?.resources) ? result.resources : [];
-          const availableResourceSlots = Math.max(0, uploadPolicy.maxCount - attachments.length);
+          const availableResourceSlots = Math.max(0, uploadPolicy.maxCount - attachmentInteractionRef.current.attachmentCount);
           const acceptedResources = resources.slice(0, availableResourceSlots).map((resource, index) => ({
             ...normalizeSessionAttachment(resource, `directory-${index}`),
             status: 'ready',
@@ -1263,7 +1273,8 @@ export function SessionWorkspace({
   }
 
   async function handleComposerPaste(event) {
-    if (!actions.onUploadAttachments || composerDisabled || uploading) return;
+    const interaction = attachmentInteractionRef.current;
+    if (!actions.onUploadAttachments || interaction.composerDisabled || interaction.uploading) return;
     const files = clipboardAttachmentFiles(event.clipboardData);
     if (files.length) {
       event.preventDefault();

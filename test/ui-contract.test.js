@@ -2,12 +2,31 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { appendComposerReferences, clipboardAttachmentFiles, composerDropPayload, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardHasComplexStructure, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { appendComposerReferences, attachmentDragLeavesTarget, clipboardAttachmentFiles, composerDropPayload, dataTransferHasFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardHasComplexStructure, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
 const hooksUrl = new URL('../src/ui-hooks.js', import.meta.url);
 const katexStylesUrl = new URL('../node_modules/katex/dist/katex.css', import.meta.url);
+
+test('attachment drag feedback survives child transitions but clears outside the Session', () => {
+  const bounds = { left: 10, right: 210, top: 20, bottom: 220 };
+  const child = {};
+  const currentTarget = {
+    contains: (candidate) => candidate === child,
+    getBoundingClientRect: () => bounds,
+  };
+  assert.equal(attachmentDragLeavesTarget({ currentTarget, relatedTarget: child }), false);
+  assert.equal(attachmentDragLeavesTarget({ currentTarget, clientX: 100, clientY: 120 }), false);
+  assert.equal(attachmentDragLeavesTarget({ currentTarget, clientX: 250, clientY: 120 }), true);
+  assert.equal(attachmentDragLeavesTarget({ currentTarget, clientX: 0, clientY: 0 }), true);
+});
+
+test('attachment drag accepts browser array-like DataTransfer types', () => {
+  assert.equal(dataTransferHasFiles({ types: ['Files'] }), true);
+  assert.equal(dataTransferHasFiles({ types: { 0: 'Files', length: 1 } }), true);
+  assert.equal(dataTransferHasFiles({ types: { 0: 'text/plain', length: 1 } }), false);
+});
 
 test('Session UI delegates message links and read-only document previews to its host', async () => {
   const [source, styles] = await Promise.all([
@@ -610,6 +629,15 @@ test('Composer drop payload separates directories from files and preserves host 
   });
   assert.equal(appendComposerReferences('请检查', ['/Users/mac/My Project/资料']), '请检查\n/Users/mac/My Project/资料');
   assert.equal(appendComposerReferences('1234', [{ text: '/long' }], { textLimit: 7 }), '1234\n/l');
+});
+
+test('Composer drop payload falls back to direct files when browser items are opaque', () => {
+  const file = { name: 'browser-canary.txt', type: 'text/plain', size: 7, lastModified: 1 };
+  assert.deepEqual(composerDropPayload({
+    items: [{ kind: 'file', getAsFile: () => null }],
+    files: [file],
+    getData: () => '',
+  }), { directories: [], files: [file] });
 });
 
 test('completed consecutive commentary keeps the latest process visible without forcing older groups open', async () => {

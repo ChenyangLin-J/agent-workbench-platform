@@ -102,18 +102,47 @@ try {
   if (!await page.locator('.cwu-attachment strong').filter({ hasText: '.md' }).count()) {
     throw new Error('Structured rich clipboard content did not become a Markdown attachment.');
   }
+  await page.locator('agent-session-composer .cwu-attachment.is-uploading').waitFor({ state: 'detached' });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   if (await page.getByRole('button', { name: '格式化内容，点击编辑' }).count()) {
     throw new Error('Composer still exposed the removed formatted preview.');
   }
 
-  await page.locator('.cwu-session-header').evaluate((element) => {
-    const dataTransfer = new DataTransfer();
-    dataTransfer.items.add(new File(['BROWSER_ATTACHMENT_CANARY'], 'browser-canary.txt', { type: 'text/plain' }));
+  const dropEvidence = await page.locator('.cwu-session-header').evaluate((element) => {
+    const file = new File(['BROWSER_ATTACHMENT_CANARY'], 'browser-canary.txt', { type: 'text/plain' });
+    const dataTransfer = {
+      types: ['Files'],
+      items: [{ kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => null }],
+      files: [file],
+      dropEffect: 'none',
+      getData: () => '',
+    };
+    const events = [];
     for (const type of ['dragenter', 'dragover', 'drop']) {
-      element.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }));
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+      element.dispatchEvent(event);
+      events.push({ type, defaultPrevented: event.defaultPrevented });
     }
+    return {
+      types: Array.from(dataTransfer.types || []),
+      items: dataTransfer.items.length,
+      files: dataTransfer.files.length,
+      events,
+    };
   });
-  await page.getByText('已就绪', { exact: false }).waitFor();
+  const browserAttachment = page.locator('.cwu-attachment', { hasText: 'browser-canary.txt' });
+  try {
+    await browserAttachment.getByText('已就绪', { exact: false }).waitFor({ timeout: 5_000 });
+  } catch (error) {
+    throw new Error(`Whole-detail file drop failed: ${JSON.stringify({
+      dropEvidence,
+      attachmentCards: await page.locator('.cwu-attachment').allTextContents(),
+      attachmentClasses: await page.locator('.cwu-attachment').evaluateAll((cards) => cards.map((card) => card.className)),
+      composerDisabled: await composer.isDisabled(),
+      uploadError: await page.locator('.cwu-attachment-error').allTextContents(),
+    })}`, { cause: error });
+  }
   await composer.fill('browser smoke');
   const submittedTurnRequest = page.waitForRequest((request) => (
     request.method() === 'POST' && /\/api\/sessions\/[^/]+\/turns$/.test(new URL(request.url()).pathname)

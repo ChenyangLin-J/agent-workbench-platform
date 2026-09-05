@@ -53,6 +53,31 @@ export function localFileBrowserHref(value) {
   return `file://${href}`;
 }
 
+export function attachmentDragLeavesTarget({
+  currentTarget,
+  relatedTarget,
+  clientX,
+  clientY,
+} = {}) {
+  if (!currentTarget) return true;
+  if (relatedTarget && currentTarget.contains?.(relatedTarget)) return false;
+  const bounds = currentTarget.getBoundingClientRect?.();
+  const hasPointerPosition = Number.isFinite(clientX)
+    && Number.isFinite(clientY)
+    && (clientX !== 0 || clientY !== 0);
+  const remainsInside = bounds
+    && hasPointerPosition
+    && clientX >= bounds.left
+    && clientX <= bounds.right
+    && clientY >= bounds.top
+    && clientY <= bounds.bottom;
+  return !remainsInside;
+}
+
+export function dataTransferHasFiles(dataTransfer) {
+  return Array.from(dataTransfer?.types || []).includes('Files');
+}
+
 export function isDocumentResourceHref(value) {
   const href = String(value ?? '').trim();
   if (!href || href.startsWith('#') || href.startsWith('//')) return false;
@@ -698,8 +723,9 @@ function pathHintBasename(value) {
 
 export function composerDropPayload(dataTransfer) {
   const items = transferItems(dataTransfer).filter((item) => !item?.kind || item.kind === 'file');
+  const directFiles = [...(dataTransfer?.files || [])];
   if (!items.length) {
-    return { directories: [], files: [...(dataTransfer?.files || [])] };
+    return { directories: [], files: directFiles };
   }
   const pathHints = transferPathHints(dataTransfer);
   const directoryCandidates = [];
@@ -715,6 +741,14 @@ export function composerDropPayload(dataTransfer) {
     } else if (file) {
       files.push(file);
     }
+  }
+  const directoryNames = new Set(directoryCandidates.map((directory) => directory.name));
+  const fileSignatures = new Set(files.map((file) => [file.name, file.type, file.size, file.lastModified].join(':')));
+  for (const file of directFiles) {
+    const signature = [file.name, file.type, file.size, file.lastModified].join(':');
+    if (directoryNames.has(file.name) || fileSignatures.has(signature)) continue;
+    fileSignatures.add(signature);
+    files.push(file);
   }
   const directories = directoryCandidates.map((directory, index) => {
     const directHint = String(directory.file?.path || '').trim();
