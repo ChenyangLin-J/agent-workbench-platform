@@ -51,4 +51,6 @@ test('Session client operations are available through the public package entry',
   assert.equal(typeof entry.createSessionEventController, 'function');
   assert.equal(typeof entry.reconcileSessionSnapshot, 'function');
   assert.equal(typeof entry.mergeSessionTurns, 'function');
+  assert.equal(typeof entry.sessionEventTurnId, 'function');
+  assert.equal(typeof entry.sessionEventActivityKind, 'function');
 });

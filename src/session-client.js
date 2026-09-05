@@ -241,6 +241,18 @@ export function sessionEventThreadId(event) {
     ?? null;
 }
 
+export function sessionEventTurnId(event) {
+  return event?.turnId
+    ?? event?.params?.turnId
+    ?? event?.params?.turn?.id
+    ?? null;
+}
+
+export function sessionEventActivityKind(event) {
+  return event?.activityKind
+    ?? (event?.params?.item?.type === 'contextCompaction' ? 'contextCompaction' : null);
+}
+
 export function classifySessionEvent(event, { sessionThreadId = null, sideChatIds = [] } = {}) {
   const threadId = sessionEventThreadId(event);
   if (!threadId) return { kind: 'ignore', threadId: null };
@@ -280,16 +292,56 @@ export function createSessionEventController({
     return state.session || null;
   }
 
+  function sessionSummary(threadId) {
+    return (state.sessionList || []).find((session) => session.id === threadId) || null;
+  }
+
+  function sessionHasRunningEvidence(session = selectedSession()) {
+    if (!session?.threadId) return false;
+    const summary = sessionSummary(session.threadId);
+    return Boolean(session.activeTurnId
+      || state.sessionRuntimeTurnIds?.[session.threadId]
+      || summary?.activityStatus === 'inProgress'
+      || summary?.lastTurnStatus === 'inProgress');
+  }
+
+  function setSessionActivity(threadId, { turnId = null, status, kind = null } = {}) {
+    if (!threadId) return;
+    state.sessionRuntimeStatuses ||= {};
+    state.sessionRuntimeTurnIds ||= {};
+    state.sessionRuntimeActivityKinds ||= {};
+    if (status) state.sessionRuntimeStatuses[threadId] = status;
+    if (turnId) state.sessionRuntimeTurnIds[threadId] = turnId;
+    else if (status === 'idle') delete state.sessionRuntimeTurnIds[threadId];
+    if (kind) state.sessionRuntimeActivityKinds[threadId] = kind;
+    else if (status === 'idle' || status === 'running') delete state.sessionRuntimeActivityKinds[threadId];
+    const summary = sessionSummary(threadId);
+    if (!summary) return;
+    summary.activityTurnId = turnId;
+    summary.activityStatus = status === 'running' ? 'inProgress' : status === 'idle' ? 'completed' : status;
+    summary.activityKind = kind;
+  }
+
   function syncSelectedSessionRuntimeStatus(session = selectedSession()) {
     if (!session?.threadId || selectedSession() !== session) return;
     state.sessionRuntimeStatuses ||= {};
-    state.sessionRuntimeStatuses[session.threadId] = session.connectionError
+    state.sessionRuntimeTurnIds ||= {};
+    state.sessionRuntimeActivityKinds ||= {};
+    const status = session.connectionError
       ? 'connecting'
       : session.pendingRequests?.length
         ? 'waiting'
-        : session.activeTurnId
+        : sessionHasRunningEvidence(session)
           ? 'running'
           : 'idle';
+    state.sessionRuntimeStatuses[session.threadId] = status;
+    if (session.activeTurnId) state.sessionRuntimeTurnIds[session.threadId] = session.activeTurnId;
+    else if (status === 'idle') delete state.sessionRuntimeTurnIds[session.threadId];
+    if (session.activeActivityKind) {
+      state.sessionRuntimeActivityKinds[session.threadId] = session.activeActivityKind;
+    } else if (status === 'idle') {
+      delete state.sessionRuntimeActivityKinds[session.threadId];
+    }
   }
 
   function touchSessionSummary(threadId, updatedAt = Date.now()) {
@@ -305,22 +357,55 @@ export function createSessionEventController({
     session.snapshotReconcileTimer = null;
   }
 
+  function scheduleContextActivitySettlement(session, turnId) {
+    if (!session || selectedSession() !== session || !turnId) return;
+    if (session.contextActivitySettleTimer) cancelTask(session.contextActivitySettleTimer);
+    session.contextActivitySettleTimer = scheduleTask(async () => {
+      session.contextActivitySettleTimer = null;
+      if (selectedSession() !== session) return;
+      await Promise.all([
+        session.snapshotController ? Promise.resolve() : refreshSessionSnapshot(session),
+        refreshSessions({ force: true }),
+      ].map((operation) => Promise.resolve(operation).catch(() => {})));
+      if (selectedSession() !== session || session.activeTurnId !== turnId) return;
+      const summary = sessionSummary(session.threadId);
+      const threadStillRunning = session.thread?.turns?.some((turn) => turn.status === 'inProgress');
+      const summaryStillRunning = summary?.activityStatus === 'inProgress'
+        || summary?.lastTurnStatus === 'inProgress';
+      if (!threadStillRunning && !summaryStillRunning) {
+        stopActiveSessionSnapshotReconciliation(session);
+        session.activeTurnId = null;
+        session.activeActivityKind = null;
+        setSessionActivity(session.threadId, { status: 'idle' });
+        renderSessionWorkspace();
+        renderSessionsPage();
+      } else {
+        scheduleActiveSessionSnapshotReconciliation(session);
+      }
+    }, completionRefreshDelayMs);
+    session.contextActivitySettleTimer?.unref?.();
+  }
+
   function scheduleActiveSessionSnapshotReconciliation(session = selectedSession()) {
     stopActiveSessionSnapshotReconciliation(session);
     if (!session
       || selectedSession() !== session
       || session.isDraft
       || session.isArchived
-      || !session.activeTurnId) return;
+      || !sessionHasRunningEvidence(session)) return;
     session.snapshotReconcileTimer = scheduleTask(async () => {
       session.snapshotReconcileTimer = null;
       if (selectedSession() !== session
         || session.isDraft
         || session.isArchived
-        || !session.activeTurnId) return;
-      if (!session.snapshotController) await refreshSessionSnapshot(session).catch(() => {});
+        || !sessionHasRunningEvidence(session)) return;
+      await Promise.all([
+        session.snapshotController ? Promise.resolve() : refreshSessionSnapshot(session),
+        refreshSessions({ force: true }),
+      ].map((operation) => Promise.resolve(operation).catch(() => {})));
       scheduleActiveSessionSnapshotReconciliation(session);
     }, reconcileMs);
+    session.snapshotReconcileTimer?.unref?.();
   }
 
   function handleSessionEvent(session, event) {
@@ -352,30 +437,72 @@ export function createSessionEventController({
         .filter((item) => item.id !== event.queuedTurnId);
     } else if (event.type === 'notification') {
       const { method, params = {} } = event;
-      if (['turn/started', 'turn/completed'].includes(method)) touchSessionSummary(session.threadId);
+      const turnId = sessionEventTurnId(event);
+      const activityKind = sessionEventActivityKind(event);
+      const resultBearing = event.resultBearing !== false;
+      if (['turn/started', 'turn/completed'].includes(method) && resultBearing) {
+        touchSessionSummary(session.threadId);
+      }
       if (method === 'turn/started') {
-        markSessionResultRead(session.threadId);
-        session.activeTurnId = params.turn?.id || params.turnId || session.activeTurnId;
-        state.sessionRuntimeStatuses[session.threadId] = 'running';
+        if (resultBearing) markSessionResultRead(session.threadId);
+        session.activeTurnId = turnId || session.activeTurnId;
+        session.activeActivityKind = activityKind;
+        setSessionActivity(session.threadId, { turnId: session.activeTurnId, status: 'running', kind: activityKind });
         scheduleActiveSessionSnapshotReconciliation(session);
       }
       if (method === 'turn/completed') {
-        stopActiveSessionSnapshotReconciliation(session);
-        session.activeTurnId = null;
-        state.sessionRuntimeStatuses[session.threadId] = 'idle';
-        state.sessionCompletedAt[session.threadId] = Date.now();
-        markSessionResultUnread(session.threadId);
+        const knownTurnId = session.activeTurnId || state.sessionRuntimeTurnIds?.[session.threadId] || null;
+        const matchesActiveTurn = !knownTurnId || (turnId && turnId === knownTurnId);
+        if (matchesActiveTurn) {
+          stopActiveSessionSnapshotReconciliation(session);
+          session.activeTurnId = null;
+          session.activeActivityKind = null;
+          setSessionActivity(session.threadId, { status: 'idle' });
+          if (resultBearing) {
+            state.sessionCompletedAt[session.threadId] = Date.now();
+            markSessionResultUnread(session.threadId);
+          }
+        }
         scheduleTask(async () => {
           await refreshSessionSnapshot(session).catch(() => {});
           await refreshSessions({ force: true }).catch(() => {});
+          if (selectedSession() === session && sessionHasRunningEvidence(session)) {
+            scheduleActiveSessionSnapshotReconciliation(session);
+          }
         }, completionRefreshDelayMs);
       }
       if (method === 'turn/plan/updated') session.plan = params;
       if (['item/started', 'item/completed'].includes(method)) {
-        upsertSessionItem(session, params.item, params.turnId);
-        handleSessionItem({ event, item: params.item, session });
+        const item = params.item && params.item.status == null
+          ? { ...params.item, status: method === 'item/started' ? 'inProgress' : 'completed' }
+          : params.item;
+        upsertSessionItem(session, item, turnId);
+        handleSessionItem({ event, item, session });
+        if (method === 'item/started' && turnId) {
+          session.activeTurnId = turnId;
+          session.activeActivityKind = activityKind;
+          setSessionActivity(session.threadId, { turnId, status: 'running', kind: activityKind });
+          scheduleActiveSessionSnapshotReconciliation(session);
+        } else if (method === 'item/completed' && activityKind === 'contextCompaction') {
+          if (resultBearing) {
+            session.activeActivityKind = null;
+            setSessionActivity(session.threadId, { turnId: session.activeTurnId, status: 'running' });
+          }
+          scheduleContextActivitySettlement(session, turnId);
+        } else if (method === 'item/completed' && session.activeActivityKind) {
+          session.activeActivityKind = null;
+          setSessionActivity(session.threadId, { turnId: session.activeTurnId, status: 'running' });
+        }
       }
-      if (method === 'item/agentMessage/delta') applyAgentMessageDelta(session, params);
+      if (method === 'item/agentMessage/delta') {
+        applyAgentMessageDelta(session, params);
+        if (turnId) {
+          session.activeTurnId = turnId;
+          session.activeActivityKind = null;
+          setSessionActivity(session.threadId, { turnId, status: 'running' });
+          scheduleActiveSessionSnapshotReconciliation(session);
+        }
+      }
     }
     renderSessionWorkspace();
   }
@@ -386,12 +513,25 @@ export function createSessionEventController({
     if (!threadId) return;
     state.sessionRuntimeStatuses ||= {};
     state.sessionCompletedAt ||= {};
-    if (['turn/started', 'turn/completed'].includes(event.method)) touchSessionSummary(threadId);
-    if (event.method === 'turn/started') state.sessionRuntimeStatuses[threadId] = 'running';
+    const turnId = sessionEventTurnId(event);
+    const activityKind = sessionEventActivityKind(event);
+    const resultBearing = event.resultBearing !== false;
+    if (['turn/started', 'turn/completed'].includes(event.method) && resultBearing) touchSessionSummary(threadId);
+    if (event.method === 'turn/started' || (event.method === 'item/started' && turnId)) {
+      setSessionActivity(threadId, { turnId, status: 'running', kind: activityKind });
+    }
     if (event.method === 'turn/completed') {
-      state.sessionRuntimeStatuses[threadId] = 'idle';
-      state.sessionCompletedAt[threadId] = Date.now();
-      markSessionResultUnread(threadId);
+      const knownTurnId = state.sessionRuntimeTurnIds?.[threadId] || null;
+      const matchesActiveTurn = !knownTurnId || (turnId && turnId === knownTurnId);
+      if (matchesActiveTurn) {
+        setSessionActivity(threadId, { status: 'idle' });
+        if (resultBearing) {
+          state.sessionCompletedAt[threadId] = Date.now();
+          markSessionResultUnread(threadId);
+        }
+      }
+      scheduleTask(() => refreshSessions({ force: true }).catch(() => {}), completionRefreshDelayMs);
+    } else if (event.method === 'item/completed' && activityKind === 'contextCompaction') {
       scheduleTask(() => refreshSessions({ force: true }).catch(() => {}), completionRefreshDelayMs);
     }
     renderSessionsPage();
@@ -475,6 +615,10 @@ export function createSessionEventController({
     state.sessionActivityEventSource?.close();
     state.sessionActivityEventSource = null;
     state.sessionActivityConnected = false;
+    if (selectedSession()?.contextActivitySettleTimer) {
+      cancelTask(selectedSession().contextActivitySettleTimer);
+      selectedSession().contextActivitySettleTimer = null;
+    }
     stopActiveSessionSnapshotReconciliation();
   }
 

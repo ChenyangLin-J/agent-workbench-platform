@@ -8,7 +8,9 @@ import {
   mergeSessionItems,
   mergeSessionTurns,
   reconcileSessionSnapshot,
+  sessionEventActivityKind,
   sessionEventThreadId,
+  sessionEventTurnId,
   upsertSessionItem,
 } from '../src/session-client.js';
 
@@ -137,6 +139,8 @@ test('Session item merging keeps an authoritative id for a semantic live duplica
 
 test('Session event classification is product-neutral', () => {
   assert.equal(sessionEventThreadId({ params: { turn: { threadId: 'session-1' } } }), 'session-1');
+  assert.equal(sessionEventTurnId({ params: { turn: { id: 'turn-1' } } }), 'turn-1');
+  assert.equal(sessionEventActivityKind({ params: { item: { type: 'contextCompaction' } } }), 'contextCompaction');
   assert.deepEqual(classifySessionEvent({ threadId: 'session-1' }, {
     sessionThreadId: 'session-1',
     sideChatIds: ['side-1'],
@@ -149,6 +153,87 @@ test('Session event classification is product-neutral', () => {
     sessionThreadId: 'session-1',
     sideChatIds: ['side-1'],
   }), { kind: 'activity', threadId: 'session-2' });
+});
+
+test('Context compaction is running activity but does not create a user result', () => {
+  const context = eventHarness();
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'turn/started', resultBearing: false,
+    activityKind: 'contextCompaction', params: { threadId: 'session-1', turn: { id: 'turn-context' } },
+  });
+  assert.equal(context.session.activeTurnId, 'turn-context');
+  assert.equal(context.session.activeActivityKind, 'contextCompaction');
+  assert.equal(context.state.sessionRuntimeStatuses['session-1'], 'running');
+  assert.equal(context.calls.some(([name]) => name === 'read'), false);
+
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'item/started', resultBearing: false,
+    activityKind: 'contextCompaction',
+    params: { threadId: 'session-1', turnId: 'turn-context', item: { id: 'compact-1', type: 'contextCompaction' } },
+  });
+  assert.equal(context.session.items[0].status, 'inProgress');
+
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'item/completed', resultBearing: false,
+    activityKind: 'contextCompaction',
+    params: { threadId: 'session-1', turnId: 'turn-context', item: { id: 'compact-1', type: 'contextCompaction' } },
+  });
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'turn/completed', resultBearing: false,
+    activityKind: 'contextCompaction', params: { threadId: 'session-1', turn: { id: 'turn-context' } },
+  });
+  assert.equal(context.session.activeTurnId, null);
+  assert.equal(context.session.items[0].status, 'completed');
+  assert.equal(context.state.sessionRuntimeStatuses['session-1'], 'idle');
+  assert.equal(context.calls.some(([name]) => name === 'unread'), false);
+  assert.equal(context.state.sessionList[0].updatedAt, 1);
+});
+
+test('A late completion cannot clear a newer active Turn', () => {
+  const context = eventHarness();
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'turn/started', params: { threadId: 'session-1', turn: { id: 'turn-new' } },
+  });
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'turn/completed', params: { threadId: 'session-1', turn: { id: 'turn-old' } },
+  });
+  assert.equal(context.session.activeTurnId, 'turn-new');
+  assert.equal(context.state.sessionRuntimeStatuses['session-1'], 'running');
+  assert.equal(context.calls.some(([name]) => name === 'unread'), false);
+  context.controller.stopActiveSessionSnapshotReconciliation(context.session);
+});
+
+test('Inline context compaction returns to ordinary running without completing the Turn', () => {
+  const context = eventHarness();
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'turn/started', params: { threadId: 'session-1', turn: { id: 'turn-user' } },
+  });
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'item/started', activityKind: 'contextCompaction',
+    params: { threadId: 'session-1', turnId: 'turn-user', item: { id: 'compact-inline', type: 'contextCompaction' } },
+  });
+  assert.equal(context.session.activeActivityKind, 'contextCompaction');
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'item/completed', activityKind: 'contextCompaction',
+    params: { threadId: 'session-1', turnId: 'turn-user', item: { id: 'compact-inline', type: 'contextCompaction' } },
+  });
+  assert.equal(context.session.activeTurnId, 'turn-user');
+  assert.equal(context.session.activeActivityKind, null);
+  assert.equal(context.state.sessionRuntimeStatuses['session-1'], 'running');
+  context.controller.stopActiveSessionSnapshotReconciliation(context.session);
+});
+
+test('Item activity restores a missed Turn start and keeps reconciliation alive', () => {
+  const context = eventHarness();
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'item/started',
+    params: { threadId: 'session-1', turnId: 'turn-live', item: { id: 'tool-1', type: 'commandExecution' } },
+  });
+  assert.equal(context.session.activeTurnId, 'turn-live');
+  assert.equal(context.state.sessionRuntimeTurnIds['session-1'], 'turn-live');
+  assert.equal(context.state.sessionRuntimeStatuses['session-1'], 'running');
+  assert.ok(context.session.snapshotReconcileTimer);
+  context.controller.stopActiveSessionSnapshotReconciliation(context.session);
 });
 
 for (const fixture of [
