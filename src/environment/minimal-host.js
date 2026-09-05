@@ -265,9 +265,6 @@ export function createMinimalHost({
               draft,
             }),
           };
-      if (creation.created) {
-        await kernel.attach(creation.session.sessionId, runtimeAttachOptions(manifest));
-      }
       return sendJson(response, 201, {
         session: await readSession(creation.session.sessionId, { ownerId }),
       });
@@ -429,8 +426,11 @@ export function createMinimalHost({
       let session = accessed.session;
       if (request.method === 'GET' && !action) {
         if (accessed.kind === 'owned' && !session.runtimeContinuationRequired) {
-          await kernel.attach(sessionId, runtimeAttachOptions(manifest));
-          session = await readSession(sessionId, { ownerId });
+          const runtimeBinding = await sessionRuntimeStore.load(sessionId);
+          if (runtimeBinding?.runtimeSessionId) {
+            await kernel.attach(sessionId, runtimeAttachOptions(manifest));
+            session = await readSession(sessionId, { ownerId });
+          }
         }
         session.pendingRequests = accessed.kind === 'owned'
           ? kernel.getPendingRequests(sessionId).map(pendingRequestView)

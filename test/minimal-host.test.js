@@ -43,15 +43,16 @@ test('Minimal Host creates and runs project-free Sessions through the Core Kerne
   assert.equal(createdResponse.status, 201);
   const created = (await createdResponse.json()).session;
   assert.equal(created.contextId, 'environment');
-  assert.equal(provider.createdSessions[0].cwd, join(root, 'workspace'));
-  assert.equal(provider.createdSessions[0].settings.approvalPolicy, 'never');
-  assert.equal(provider.createdSessions[0].settings.sandbox, 'danger-full-access');
+  assert.equal(provider.createdSessions.length, 0);
   const turnResponse = await fetch(`${listening.url}/api/sessions/${created.sessionId}/turns`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ prompt: 'hello' }),
   });
   assert.equal(turnResponse.status, 202);
+  assert.equal(provider.createdSessions[0].cwd, join(root, 'workspace'));
+  assert.equal(provider.createdSessions[0].settings.approvalPolicy, 'never');
+  assert.equal(provider.createdSessions[0].settings.sandbox, 'danger-full-access');
   provider.createdSessions[0].emit('event', {
     type: 'item_delta',
     runtimeSessionId: provider.createdSessions[0].runtimeSessionId,
@@ -67,6 +68,52 @@ test('Minimal Host creates and runs project-free Sessions through the Core Kerne
   }
   assert.deepEqual(detail.session.messages.map((message) => message.content), ['hello', 'hi']);
   assert.equal('projectId' in detail.session, false);
+});
+
+test('Minimal Host defers an empty Runtime thread so the first Turn survives a Host restart', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-zero-turn-restart-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const manifest = runManifest(root);
+  const providerA = new FakeRuntimeProvider();
+  const hostA = createMinimalHost({
+    manifest,
+    kernel: new AgentSessionKernel({ provider: providerA, bindingStore: store, validateRequest: () => {} }),
+    sessionStore: store,
+  });
+  const listeningA = await hostA.start();
+  const headers = { 'content-type': 'application/json' };
+  const created = await fetch(`${listeningA.url}/api/sessions`, {
+    method: 'POST', headers, body: '{}',
+  }).then((response) => response.json()).then((body) => body.session);
+  assert.equal(providerA.createdSessions.length, 0);
+  assert.equal(await store.load(created.sessionId), null);
+  assert.equal((await fetch(`${listeningA.url}/api/sessions/${created.sessionId}`, { headers })).status, 200);
+  assert.equal(providerA.createdSessions.length, 0);
+  await hostA.stop();
+
+  const providerB = new FakeRuntimeProvider();
+  const originalCreateSession = providerB.createSession.bind(providerB);
+  providerB.createSession = (options) => {
+    const runtime = originalCreateSession(options);
+    runtime.resume = async () => {
+      throw Object.assign(new Error('missing source rollout'), { code: -32600 });
+    };
+    return runtime;
+  };
+  const hostB = createMinimalHost({
+    manifest,
+    kernel: new AgentSessionKernel({ provider: providerB, bindingStore: store, validateRequest: () => {} }),
+    sessionStore: store,
+  });
+  const listeningB = await hostB.start();
+  t.after(() => hostB.stop());
+  const turnResponse = await fetch(`${listeningB.url}/api/sessions/${created.sessionId}/turns`, {
+    method: 'POST', headers, body: JSON.stringify({ prompt: 'first after restart' }),
+  });
+  assert.equal(turnResponse.status, 202);
+  assert.equal(providerB.createdSessions.length, 1);
+  assert.equal(providerB.createdSessions[0].startedTurns.length, 1);
 });
 
 test('Minimal Host creates an idempotent Session with an unsent draft', async (t) => {
@@ -99,7 +146,7 @@ test('Minimal Host creates an idempotent Session with an unsent draft', async (t
   assert.equal(firstResponse.status, 201);
   assert.equal(first.sessionId, retry.sessionId);
   assert.equal(first.draft, draft);
-  assert.equal(provider.createdSessions.length, 1);
+  assert.equal(provider.createdSessions.length, 0);
 
   const conflict = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST',
@@ -114,7 +161,7 @@ test('Minimal Host creates an idempotent Session with an unsent draft', async (t
     body: JSON.stringify({ title: '新对话', draft }),
   }).then((response) => response.json()).then((body) => body.session);
   assert.notEqual(otherOwner.sessionId, first.sessionId);
-  assert.equal(provider.createdSessions.length, 2);
+  assert.equal(provider.createdSessions.length, 0);
 
   const observed = await fetch(`${listening.url}/api/observer/sessions/${first.sessionId}`, {
     headers: { 'x-session-observer': 'true' },
@@ -127,6 +174,7 @@ test('Minimal Host creates an idempotent Session with an unsent draft', async (t
     body: JSON.stringify({ prompt: `${draft}分析收入` }),
   });
   assert.equal(turnResponse.status, 202);
+  assert.equal(provider.createdSessions.length, 1);
   const detail = await fetch(`${listening.url}/api/sessions/${first.sessionId}`, {
     headers: { 'x-session-owner': 'user-a' },
   }).then((response) => response.json()).then((body) => body.session);
@@ -354,7 +402,7 @@ test('Minimal Host reads portable Sessions across Runs without reusing stale Run
   }).then((response) => response.json()).then((body) => body.session);
   assert.equal(createdInRunB.createdRunId, 'run-b');
   assert.equal((await sessionStoreA.list()).length, 3);
-  assert.equal((await runtimeStoreB.load(createdInRunB.sessionId)).runtimeSessionId != null, true);
+  assert.equal(await runtimeStoreB.load(createdInRunB.sessionId), null);
 });
 
 test('Minimal Host assets build without consumer source', async (t) => {
@@ -514,11 +562,16 @@ test('Minimal Host leaves failed Turn attachments staged and rejects cross-Sessi
   assert.equal(crossSession.status, 403);
   assert.equal((await store.get(second.session.sessionId)).messages.length, 0);
 
-  provider.createdSessions[0].startTurn = async () => {
-    throw Object.assign(new Error('Synthetic Runtime rejection'), {
-      code: 'SYNTHETIC_RUNTIME_REJECTION',
-      status: 409,
-    });
+  const originalCreateSession = provider.createSession.bind(provider);
+  provider.createSession = (options) => {
+    const runtime = originalCreateSession(options);
+    runtime.startTurn = async () => {
+      throw Object.assign(new Error('Synthetic Runtime rejection'), {
+        code: 'SYNTHETIC_RUNTIME_REJECTION',
+        status: 409,
+      });
+    };
+    return runtime;
   };
   const failedTurn = await fetch(`${listening.url}/api/sessions/${sessionId}/turns`, {
     method: 'POST',
@@ -612,6 +665,24 @@ test('Minimal Host inserts accepted user input before synchronously completed Ru
   t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider();
+  const originalCreateSession = provider.createSession.bind(provider);
+  provider.createSession = (options) => {
+    const runtime = originalCreateSession(options);
+    const originalStartTurn = runtime.startTurn.bind(runtime);
+    runtime.startTurn = async (input) => {
+      const result = await originalStartTurn(input);
+      runtime.emit('event', {
+        type: 'item_delta',
+        runtimeSessionId: runtime.runtimeSessionId,
+        runtimeTurnId: result.runtimeTurnId,
+        providerEvent: 'item/agentMessage/delta',
+        payload: { itemId: 'fast-answer', delta: '同步完成' },
+      });
+      runtime.complete(result.runtimeTurnId);
+      return result;
+    };
+    return runtime;
+  };
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
   const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store });
   const listening = await host.start();
@@ -620,20 +691,6 @@ test('Minimal Host inserts accepted user input before synchronously completed Ru
   const created = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST', headers, body: '{}',
   }).then((response) => response.json());
-  const runtime = provider.createdSessions[0];
-  const originalStartTurn = runtime.startTurn.bind(runtime);
-  runtime.startTurn = async (input) => {
-    const result = await originalStartTurn(input);
-    runtime.emit('event', {
-      type: 'item_delta',
-      runtimeSessionId: runtime.runtimeSessionId,
-      runtimeTurnId: result.runtimeTurnId,
-      providerEvent: 'item/agentMessage/delta',
-      payload: { itemId: 'fast-answer', delta: '同步完成' },
-    });
-    runtime.complete(result.runtimeTurnId);
-    return result;
-  };
 
   const response = await fetch(`${listening.url}/api/sessions/${created.session.sessionId}/turns`, {
     method: 'POST', headers, body: JSON.stringify({ prompt: '快速问题' }),
@@ -992,6 +1049,9 @@ test('Minimal Host isolates Sessions by a verified owner header', async (t) => {
     new Map(observed.sessions.map((session) => [session.id, session.ownerId])),
     new Map([[first.session.id, 'user-a'], [second.session.id, 'user-b']]),
   );
+  assert.equal(provider.createdSessions.length, 0);
+  await kernel.attach(first.session.id);
+  await kernel.attach(second.session.id);
   await store.applyEvent({
     type: 'item_started',
     sessionId: second.session.id,

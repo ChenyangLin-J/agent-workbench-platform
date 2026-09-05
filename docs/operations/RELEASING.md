@@ -32,6 +32,11 @@ During `0.x`, this repository still treats patch releases as compatible for auto
 5. Update the stable contract or active spec when ownership, behavior or migration scope changed.
 6. For changes under `src/`, `scripts/`, `package.json`, or `package-lock.json`, set a new compatible version in both package files. Never reuse an existing tag.
 
+When the bundled Codex/App Server version changes, the Runtime fixtures must
+also cover both a fresh Session's first Turn and a Host restart between Session
+creation and that first Turn. Existing-Session resume evidence does not replace
+either case.
+
 ## Publish
 
 On a push to `main`, GitHub Actions installs dependencies and runs `npm test` again. The release job then:

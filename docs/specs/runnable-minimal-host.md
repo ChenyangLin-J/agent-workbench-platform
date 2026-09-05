@@ -126,6 +126,11 @@ The first host includes only:
 - an optional read-only cross-owner Observer for operational diagnosis, disabled unless the Consumer Profile declares a trusted observer header;
 - optional host extensions declared by the Consumer Profile.
 
+Creating or reading an empty current-Run Session does not allocate a Runtime
+thread. The Host creates and binds that thread when the first Turn is accepted,
+so a Host restart between Session creation and the first message cannot attempt
+to resume a provider thread whose zero-Turn history was never persisted.
+
 Run identity, isolation evidence and lifecycle controls remain available through `env inspect` and `env stop`; they are operational concerns and are not shown in the default user-facing Session surface. The host automatically opens the newest available Session and renders only controls backed by an available action.
 
 Live synchronization is part of this minimum surface, not an optional product feature. The Host sends event-stream heartbeats; the client reconnects with replay from the last observed event id and polls the authoritative Session while it is running or waiting. The transcript exposes persisted commentary and a collapsed technical-progress summary so a transient stream failure cannot leave the page permanently showing stale work.
