@@ -54,12 +54,13 @@ Platform tests prove the shared contract; they do not prove a consumer product i
 
 | Affected surface | Required consumer evidence |
 | --- | --- |
-| Shared Session UI, transcript, Composer, attachments or full-product interaction | Personal automated regression plus real browser acceptance |
+| Additive shared Session UI or Host Kit behavior with unchanged persistence, authorization and adapter contracts | Personal `npm run core:accept`: pinned-package build, adapter/Host tests and minimal real-browser flow |
+| Persistence, Resource, Runtime, authentication, path authorization, breaking adapter contracts or Personal-owned product behavior | Targeted migration tests plus Personal `npm run check`; record any production canary separately |
 | Project-free Runtime, capability isolation, Profile/lock or minimal host composition | Data Skill Lab baseline/candidate run with isolated Runtime and capability evidence |
 | Session surface currently migrating into Agent Terminal | Agent Terminal App Server, PTY, multi-host, desktop and narrow-screen regression |
 | Pure internal implementation with unchanged public behavior | Platform tests; document why no consumer run is required |
 
-A consumer pins the published tag, updates its lockfile, runs its own automated suite, and records manual acceptance separately. A successful Platform workflow must not automatically rewrite a consumer's compatibility statement.
+A consumer pins the published tag, updates its lockfile, and runs the narrowest gate required by the affected boundary. Shared state-machine cases already covered by Platform fixtures must not be duplicated in a consumer; consumer tests cover package mounting, adapters and product-owned side effects. Manual or production acceptance is recorded separately. A successful Platform workflow must not automatically rewrite a consumer's compatibility statement.
 
 ## Rollback
 
