@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { appendComposerReferences, clipboardAttachmentFiles, composerDropPayload, composerHasMarkdownFormatting, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { appendComposerReferences, clipboardAttachmentFiles, composerDropPayload, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardHasComplexStructure, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -44,6 +44,16 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(styles, /\.cwu-local-file-link \{ position: relative; display: inline-block/);
   assert.match(styles, /\.cwu-local-file-reveal \{ position: absolute;/);
   assert.match(styles, /@media \(hover: none\)/);
+});
+
+test('Minimal Host browser mutations use reusable idempotency operations', async () => {
+  const source = await readFile(new URL('../src/environment/host-client.jsx', import.meta.url), 'utf8');
+  assert.match(source, /new SessionClientOperationController\(\)/);
+  assert.match(source, /scope: 'session-create'/);
+  assert.match(source, /scope: 'turn'/);
+  assert.match(source, /'idempotency-key': operation\.idempotencyKey/);
+  assert.match(source, /result\.idempotent && result\.pending/);
+  assert.match(source, /operationController\.current\.complete\(operation\)/);
 });
 
 test('Session browser keeps header actions on one row at constrained widths', async () => {
@@ -91,6 +101,9 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
     previewUrl: '',
   });
   assert.match(source, /onUploadAttachments\(\[placeholder\.file\], \{/);
+  assert.match(source, /onDragEnter=\{handleWorkspaceAttachmentDrag\}/);
+  assert.match(source, /onDrop=\{handleWorkspaceAttachmentDrop\}/);
+  assert.match(source, /opaqueFilePreview/);
   assert.match(source, /onProgress: \(progress\) =>/);
   assert.match(source, /retryAttachment\(attachment\)/);
   assert.match(source, /className="cwu-technical-artifacts"/);
@@ -293,8 +306,11 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /onPaste=\{handleComposerPaste\}/);
   assert.match(source, /clipboardAttachmentFiles\(event\.clipboardData\)/);
   assert.match(source, /richClipboardText\(richHtml, plainText\)/);
+  assert.match(source, /const structured = richClipboardHasComplexStructure\(markdown, richHtml\)/);
+  assert.match(source, /const attachPaste = structured \|\| shouldConvertPastedTextToAttachment/);
   assert.match(source, /shouldConvertPastedTextToAttachment\(draft, text/);
-  assert.match(source, /richHtml\.trim\(\) \? 'md' : 'txt'/);
+  assert.match(source, /structured \? 'md' : 'txt'/);
+  assert.doesNotMatch(source, /composerPreview|editFormattedComposer|格式化内容，点击编辑/);
   assert.match(source, /onOpenAttachment=\{actions\.onOpenAttachment\}/);
   assert.match(source, /className="cwu-message-attachment"/);
   assert.match(source, /className=\{`cwu-document-backdrop\$\{file\.format === 'image' \? ' is-image' : ''\}`\}/);
@@ -349,11 +365,22 @@ test('rich clipboard HTML becomes safe Markdown while preserving structure', () 
   assert.match(markdown, /\| 指标 \|/);
 });
 
-test('Composer detects formatting that should render as a preview', () => {
-  assert.equal(composerHasMarkdownFormatting('普通的一句话'), false);
-  assert.equal(composerHasMarkdownFormatting('## 结论\n\n- 第一项'), true);
-  assert.equal(composerHasMarkdownFormatting('这里有 **重点** 和 [链接](https://example.com)'), true);
-  assert.equal(composerHasMarkdownFormatting('金额是 2 * 3，不是列表'), false);
+test('rich clipboard plain formulas keep literal multiplication asterisks', () => {
+  const plain = '周包改成 *52，然后周转月根据用户是周就是 周费用*52，月就是月费用*12 对吧。';
+  const pasted = richClipboardText(`<p>${plain}</p>`, plain);
+  assert.equal(pasted, plain);
+  assert.equal(pasted.includes('\\*'), false);
+  assert.equal(richClipboardHasComplexStructure(pasted), false);
+});
+
+test('Composer routes only structurally complex clipboard text to an attachment', () => {
+  assert.equal(richClipboardHasComplexStructure('普通的一句话'), false);
+  assert.equal(richClipboardHasComplexStructure('这里有 **重点** 和 [链接](https://example.com)'), false);
+  assert.equal(richClipboardHasComplexStructure('金额是 2 * 3，不是列表'), false);
+  assert.equal(richClipboardHasComplexStructure('## 结论\n\n- 第一项'), true);
+  assert.equal(richClipboardHasComplexStructure('第一段\n\n第二段'), true);
+  assert.equal(richClipboardHasComplexStructure('| 指标 |\n| --- |\n| 42 |'), true);
+  assert.equal(richClipboardHasComplexStructure('Name | value', '<table><tr><td>Name</td><td>value</td></tr></table>'), true);
 });
 
 test('rich clipboard cleanup never keeps styled body-only table elements', () => {

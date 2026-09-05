@@ -11,6 +11,9 @@
 @agent-workbench/platform/features
   Side Chat, Subagent and other complete feature contracts
 
+@agent-workbench/platform/session-client
+  retry-safe client operations and reusable headless Session application state
+
 @agent-workbench/platform/ui
   SessionWorkspace, SessionBrowser and shared React feature panels
 
@@ -31,13 +34,13 @@ Runtime and Feature contracts do not depend on DOM. React is the current shared 
 | Consumer | Shape | Product-owned concerns | What it proves about Platform |
 | --- | --- | --- | --- |
 | Personal Workbench | Long-lived, project-oriented full product | Projects, matters, formal state, local files, Personal capabilities and services | Shared features compose inside a complex product |
-| Data Skill Lab | Independent minimal Workbench with one candidate Skill or a baseline | Run creation, Skill snapshot, constrained capability allowlist, evaluation evidence and isolated Runtime | A Session can run without a project model or Personal state |
+| Data Skill Lab | Independent evaluation Environment with one candidate Skill or a baseline | Profile inputs, cases, evidence and generated Run root | A Session can run without a project model or Personal state |
 | Agent Terminal Web | Terminal-oriented, mobile-first, multi-host product | PTY, Terminal navigation, memory, hosts, accounts and sharing | Shared Session UI composes inside a different interaction shell |
-| Superset Side Agent | Future lightweight embedded host | Dashboard, chart, filters and Superset authorization context | Feature profiles can expose a deliberately smaller surface |
+| DataMama | Internal data product using a constrained Agent host | Identity, sharing, Dashboard/Superset context, data policy, product extensions and deployment | A lightweight consumer can combine shared Sessions with domain context |
 
 Solvely Workbench is a frozen compatibility reference, not an active migration target.
 
-Data Skill Lab currently incubates inside the Personal repository, but all of its modes are thin Profiles of the Core Minimal Host. The former Personal-host execution path was removed after Candidate/Baseline comparison. Source location is not product ownership: Platform stays project-free, while Gold, scoring and evaluation policy remain outside Core.
+Data Skill Lab is maintained outside the Personal repository and all of its modes are thin Profiles of the Core Minimal Host. Platform stays project-free, while Gold, scoring and evaluation policy remain outside Core.
 
 ## Ownership
 
@@ -62,6 +65,7 @@ Platform never reads a product database, chooses a package manager, stores crede
 - A Session can exist with no project. Project-scoped consumers may add `contextId` and labels without placing product fields in Core records.
 - Minimal Host Session creation accepts an optional bounded initial Composer draft and an owner-scoped idempotency key. The draft is portable unsent state: it survives refresh, is cleared when the first user Turn is accepted, and is excluded from Session lists, shared projections, Observer output and Runtime input until the user submits it.
 - Minimal Host Turn submission also accepts an optional owner-and-Session-scoped idempotency key. The private store reserves the request before Runtime side effects, replays an accepted response for the same payload, rejects key reuse with a different payload, and never exposes the reservation ledger through list, owner-detail, shared or Observer projections.
+- `SessionClientOperationController` supplies product-neutral browser mutation identity. A client retains the same key for an unchanged target and payload until the response is known, while transport, authentication, persistence and user-facing error policy remain consumer-owned.
 - `SessionBrowser` and `SessionWorkspace` own common list, transcript, Composer, queue, approval, attachment, Subagent, Realtime and responsive interaction semantics.
 - Completed commentary remains grouped by Turn, but the newest completed process starts expanded so content visible during execution does not disappear at the completion boundary; disclosure state remains user-controlled. Message-body images retain their aspect ratio and use bounded thumbnail dimensions. A host-resolved image link keeps the shared keyboard/click behavior and opens through the existing file action instead of granting Platform filesystem access. Image files open in a viewport-centered lightbox with a dimmed, blurred backdrop and bounded contain sizing; non-image documents keep the side-panel preview.
 - `steer`, `queuedTurns`, `messageEdit`, and `messageFork` are separate feature-profile choices. The UI requires both the relevant flag and a supplied action; Runtime capabilities remain the execution authority.
@@ -69,8 +73,8 @@ Platform never reads a product database, chooses a package manager, stores crede
 - Minimal Host can consume a bounded, Gateway-verified shared-Session access envelope. It projects only explicitly granted read-only transcripts/resources and can create a new-owner continuation by copying visible content into a fresh Runtime; consumers still own identity, Share/link state, revocation, audit and envelope paging.
 - The Minimal Host treats live Session synchronization as correctness: its event stream sends heartbeats, the client reconnects with the last observed event id, and running or waiting Sessions poll authoritative state until they leave that state. Persisted technical progress remains available through the shared collapsed detail surface.
 - The Minimal Host's cross-owner Observer is a read-only operational surface that is disabled unless a consumer configures a trusted authorization header. Its default page is intentionally limited to a searchable Session list and the persisted process for each Turn: user input, externally emitted commentary, structured tool/command steps, and the final answer. Bounded redacted Run logs remain available from a separate diagnostic API instead of crowding the process page. The event stream carries invalidation notices rather than raw Runtime payloads. Consumers own the administrator grant and must remove browser-supplied claims at their gateway. Hidden model reasoning is never part of this contract.
-- Composer classifies dropped directories separately from uploadable files. Platform owns that interaction and appends host-resolved references; consumers opt in through `actions.onResolveDroppedDirectories` and retain local-path authorization and fallback policy.
-- Composer keeps GFM Markdown as the submitted portable value but renders formatted content by default after rich paste or focus leaves formatted source. Users explicitly enter edit mode before seeing or changing the source; preview links and images remain inert so a draft cannot navigate or fetch external content.
+- Composer classifies dropped directories separately from uploadable files. The whole Session detail surface routes file drags to that shared interaction, including the opaque Finder preview phase; consumers opt in through `actions.onResolveDroppedDirectories` and retain local-path authorization and fallback policy.
+- Composer remains a direct text editor and never substitutes a formatted preview for the user's draft. Ordinary clipboard HTML wrappers use the exact plain-text value; structurally complex clipboard content becomes an attachment through the existing staged Resource flow instead of adding a second editing mode.
 - Products own full-text search backends, navigation and any content rendered through extension slots.
 - Host file actions receive the original authorized reference. Platform renders and normalizes metadata but does not grant filesystem access.
 
@@ -112,5 +116,6 @@ When a change crosses the boundary, Platform defines the contract and the consum
 - Data Skill Lab is the canary for minimal, project-free and constrained-capability composition.
 - Agent Terminal owns PTY, mobile shell and multi-host regression while adopting shared Session surfaces.
 - Automatic tests establish contract correctness; consumer browser or workflow acceptance establishes that the product remains usable. One does not replace the other.
+- A successful consumer canary is compatibility evidence, not adoption. Formal adoption requires that consumer's package and lockfile to pin the released tag and its own acceptance record to name the same version.
 
 Release and consumer adoption gates are defined in [`operations/RELEASING.md`](operations/RELEASING.md). Active Agent Terminal migration scope is defined separately in [`specs/agent-terminal-migration.md`](specs/agent-terminal-migration.md).

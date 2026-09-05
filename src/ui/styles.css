@@ -372,23 +372,6 @@
 .cwu-upload-status { color: var(--cwu-muted); }
 .cwu-upload-error { color: var(--cwu-error); }
 .cwu-composer textarea { width: 100%; min-height: 68px; max-height: 220px; resize: none; overflow-y: auto; border: 0; outline: 0; background: transparent; color: var(--cwu-text); padding: 6px 7px; font: inherit; font-size: 14px; line-height: 1.5; }
-.cwu-composer-preview { position: relative; min-height: 68px; max-height: 220px; overflow: auto; border-radius: 10px; outline: 0; background: transparent; color: var(--cwu-text); padding: 6px 48px 6px 7px; cursor: text; font-size: 14px; line-height: 1.5; }
-.cwu-composer-preview:hover, .cwu-composer-preview:focus-visible { background: color-mix(in srgb, var(--cwu-accent) 4%, transparent); }
-.cwu-composer-preview:focus-visible { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cwu-accent) 45%, var(--cwu-border)); }
-.cwu-composer-preview-edit { position: sticky; z-index: 1; top: 0; float: right; margin-right: -40px; border-radius: 999px; background: color-mix(in srgb, var(--cwu-surface) 92%, var(--cwu-accent)); color: var(--cwu-accent); padding: 2px 7px; font-size: 9px; font-weight: 650; line-height: 1.6; }
-.cwu-composer-preview-content > :first-child { margin-top: 0; }
-.cwu-composer-preview-content > :last-child { margin-bottom: 0; }
-.cwu-composer-preview-content p, .cwu-composer-preview-content blockquote, .cwu-composer-preview-content pre, .cwu-composer-preview-content ul, .cwu-composer-preview-content ol, .cwu-composer-preview-content table { margin: 0 0 8px; }
-.cwu-composer-preview-content h1, .cwu-composer-preview-content h2, .cwu-composer-preview-content h3, .cwu-composer-preview-content h4, .cwu-composer-preview-content h5, .cwu-composer-preview-content h6 { margin: 0 0 7px; font-size: 1em; line-height: 1.4; }
-.cwu-composer-preview-content ul, .cwu-composer-preview-content ol { padding-left: 22px; }
-.cwu-composer-preview-content blockquote { border-left: 2px solid var(--cwu-border); padding-left: 10px; color: var(--cwu-muted); }
-.cwu-composer-preview-content pre { overflow-x: auto; border-radius: 7px; background: var(--cwu-soft); padding: 8px 10px; }
-.cwu-composer-preview-content code { border-radius: 4px; background: var(--cwu-soft); padding: 1px 4px; font: .9em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.cwu-composer-preview-content pre code { background: transparent; padding: 0; }
-.cwu-composer-preview-content table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
-.cwu-composer-preview-content th, .cwu-composer-preview-content td { border: 1px solid var(--cwu-border); padding: 4px 7px; text-align: left; }
-.cwu-composer-preview-link { color: var(--cwu-accent); text-decoration: underline; text-underline-offset: 2px; }
-.cwu-composer-preview-image { color: var(--cwu-muted); font-style: italic; }
 .cwu-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--cwu-muted); font-size: 11px; }
 .cwu-composer-meta { min-width: 0; flex-wrap: wrap; }
 .cwu-composer-actions { flex: 0 0 auto; }

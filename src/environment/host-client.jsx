@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { SessionClientOperationController } from '../session-client.js';
 import { SessionBrowser } from '../ui/index.jsx';
 import { sessionMessageBranchEligibility } from '../features/session-branch.js';
 import { maintainMinimalHostEventStream } from './host-event-stream.js';
@@ -39,6 +40,8 @@ function MinimalHostApp() {
   const refreshTimer = useRef(null);
   const refreshRunning = useRef(false);
   const refreshQueued = useRef(false);
+  const operationController = useRef(null);
+  operationController.current ||= new SessionClientOperationController();
 
   const request = useCallback(async (path, options = {}) => {
     const response = await fetch(hostUrl(path), {
@@ -197,8 +200,18 @@ function MinimalHostApp() {
 
   async function createSession() {
     setError('');
+    const operation = operationController.current.begin({
+      scope: 'session-create',
+      targetId: 'new',
+      payload: {},
+    });
     try {
-      const body = await request('api/sessions', { method: 'POST', body: JSON.stringify({}) });
+      const body = await request('api/sessions', {
+        method: 'POST',
+        headers: { 'idempotency-key': operation.idempotencyKey },
+        body: JSON.stringify(operation.payload),
+      });
+      operationController.current.complete(operation);
       selectSessionId(body.session.sessionId);
       await refreshSessions();
     } catch (nextError) {
@@ -239,11 +252,21 @@ function MinimalHostApp() {
 
   async function submit({ prompt, mode, attachments = [] }) {
     setError('');
+    const operation = operationController.current.begin({
+      scope: 'turn',
+      targetId: selectedId,
+      payload: { prompt, mode, attachments },
+    });
     try {
-      await request(`api/sessions/${encodeURIComponent(selectedId)}/turns`, {
+      const result = await request(`api/sessions/${encodeURIComponent(selectedId)}/turns`, {
         method: 'POST',
-        body: JSON.stringify({ prompt, mode, attachments }),
+        headers: { 'idempotency-key': operation.idempotencyKey },
+        body: JSON.stringify(operation.payload),
       });
+      if (result.idempotent && result.pending) {
+        throw new Error('这条消息仍在确认中，请稍后重试。');
+      }
+      operationController.current.complete(operation);
       setSession((current) => current ? { ...current, status: 'running', statusLabel: '正在处理' } : current);
       scheduleRefresh();
     } catch (nextError) {

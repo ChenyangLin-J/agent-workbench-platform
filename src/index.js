@@ -43,6 +43,11 @@ export {
 export { FilesystemResourceStore } from './filesystem-resource-store.js';
 
 export {
+  SessionClientOperationController,
+  sessionOperationFingerprint,
+} from './session-client.js';
+
+export {
   normalizeSessionFeatures,
   normalizeSideChatMode,
   normalizeSubagentMode,

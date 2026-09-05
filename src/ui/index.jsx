@@ -12,7 +12,6 @@ import '../browser/subagent-elements.js';
 import {
   appendComposerReferences,
   clipboardAttachmentFiles,
-  composerHasMarkdownFormatting,
   composerDropPayload,
   documentPreviewPresentation,
   groupSessionMessages,
@@ -30,6 +29,7 @@ import {
   normalizeSideChatPanelViewModel,
   renderFileCitationsAsMarkdown,
   resolveDocumentResourceHref,
+  richClipboardHasComplexStructure,
   richClipboardText,
   sessionTranscriptAwayFromLatest,
   sessionStatusTone,
@@ -47,10 +47,6 @@ const MARKDOWN_REMARK_PLUGINS = [remarkGfm, [remarkMath, { singleDollarTextMath:
 const USER_MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const MARKDOWN_REHYPE_PLUGINS = [[rehypeKatex, { strict: false }]];
 const DOCUMENT_MARKDOWN_REHYPE_PLUGINS = [rehypeDocumentHeadingIds, ...MARKDOWN_REHYPE_PLUGINS];
-const COMPOSER_MARKDOWN_COMPONENTS = {
-  a: ({ children }) => <span className="cwu-composer-preview-link">{children}</span>,
-  img: ({ alt }) => <span className="cwu-composer-preview-image">{alt ? `图片：${alt}` : '图片'}</span>,
-};
 let temporaryAttachmentSequence = 0;
 
 export function CapabilityPanel({ manager, actions = {}, labels = {} }) {
@@ -883,7 +879,6 @@ export function SessionWorkspace({
   const submitFollowRef = useRef(false);
   const messageActivityRef = useRef({ sessionId: view.sessionId, key: '' });
   const [draft, setDraft] = useState(view.draft);
-  const [composerPreview, setComposerPreview] = useState(() => composerHasMarkdownFormatting(view.draft));
   const [attachments, setAttachments] = useState([]);
   const [attachmentUploadState, setAttachmentUploadState] = useState({ status: 'idle', error: '' });
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
@@ -935,7 +930,6 @@ export function SessionWorkspace({
     followLatestRef.current = true;
     submitFollowRef.current = false;
     setDraft(view.draft);
-    setComposerPreview(composerHasMarkdownFormatting(view.draft));
     setAttachments([]);
     setAttachmentUploadState({ status: 'idle', error: '' });
     setAttachmentDragActive(false);
@@ -1038,7 +1032,6 @@ export function SessionWorkspace({
     followLatest();
     setSubmitting(true);
     setDraft('');
-    setComposerPreview(false);
     setAttachments((current) => current.filter((attachment) => attachment.status === 'error'));
     setAttachmentUploadState({ status: 'idle', error: '' });
     try {
@@ -1049,7 +1042,6 @@ export function SessionWorkspace({
       });
     } catch (error) {
       setDraft(submittedDraft);
-      setComposerPreview(composerHasMarkdownFormatting(submittedDraft));
       setAttachments((current) => [...submittedAttachments, ...current].slice(0, uploadPolicy.maxCount));
       throw error;
     } finally {
@@ -1191,7 +1183,8 @@ export function SessionWorkspace({
     const payload = composerDropPayload(event.dataTransfer);
     const hasDirectories = payload.directories.length > 0;
     const hasFiles = payload.files.length > 0;
-    if (!hasDirectories && (!hasFiles || attachments.length >= uploadPolicy.maxCount)) return;
+    const opaqueFilePreview = !hasDirectories && !hasFiles;
+    if (!hasDirectories && ((!hasFiles && !opaqueFilePreview) || attachments.length >= uploadPolicy.maxCount)) return;
     event.dataTransfer.dropEffect = hasDirectories ? 'link' : 'copy';
     setAttachmentDragKind(hasDirectories ? hasFiles ? 'mixed' : 'directories' : 'files');
     setAttachmentDragActive(true);
@@ -1253,6 +1246,22 @@ export function SessionWorkspace({
     setAttachmentUploadState({ status: errors.length ? 'error' : 'idle', error: errors[0] || '' });
   }
 
+  function dragStartedOutsideComposer(event) {
+    return !event.target?.closest?.('agent-session-composer');
+  }
+
+  function handleWorkspaceAttachmentDrag(event) {
+    if (dragStartedOutsideComposer(event)) handleAttachmentDrag(event);
+  }
+
+  function handleWorkspaceAttachmentDragLeave(event) {
+    if (dragStartedOutsideComposer(event)) handleAttachmentDragLeave(event);
+  }
+
+  async function handleWorkspaceAttachmentDrop(event) {
+    if (dragStartedOutsideComposer(event)) await handleAttachmentDrop(event);
+  }
+
   async function handleComposerPaste(event) {
     if (!actions.onUploadAttachments || composerDisabled || uploading) return;
     const files = clipboardAttachmentFiles(event.clipboardData);
@@ -1263,10 +1272,13 @@ export function SessionWorkspace({
     }
     const plainText = event.clipboardData?.getData('text/plain') || '';
     const richHtml = event.clipboardData?.getData('text/html') || '';
-    const text = richClipboardText(richHtml, plainText);
-    if (!shouldConvertPastedTextToAttachment(draft, text, {
+    const markdown = richClipboardText(richHtml, plainText);
+    const structured = richClipboardHasComplexStructure(markdown, richHtml);
+    const text = structured ? markdown : plainText || markdown;
+    const attachPaste = structured || shouldConvertPastedTextToAttachment(draft, text, {
       textLimit: SESSION_COMPOSER_TEXT_LIMIT,
-    })) {
+    });
+    if (!attachPaste) {
       if (!richHtml.trim() || !text) return;
       event.preventDefault();
       const target = event.currentTarget;
@@ -1275,7 +1287,6 @@ export function SessionWorkspace({
       const end = Number.isInteger(target.selectionEnd) ? target.selectionEnd : start;
       const nextDraft = `${value.slice(0, start)}${text}${value.slice(end)}`;
       setDraft(nextDraft);
-      setComposerPreview(true);
       actions.onDraftChange?.(nextDraft);
       requestAnimationFrame(() => {
         target.focus();
@@ -1286,20 +1297,9 @@ export function SessionWorkspace({
     event.preventDefault();
     await uploadFiles([new File(
       [text],
-      `粘贴${richHtml.trim() ? '内容' : '文本'}-${compactLocalTimestamp(new Date())}.${richHtml.trim() ? 'md' : 'txt'}`,
-      { type: richHtml.trim() ? 'text/markdown' : 'text/plain' },
+      `粘贴${structured ? '内容' : '文本'}-${compactLocalTimestamp(new Date())}.${structured ? 'md' : 'txt'}`,
+      { type: structured ? 'text/markdown' : 'text/plain' },
     )]);
-  }
-
-  function editFormattedComposer() {
-    if (composerDisabled) return;
-    setComposerPreview(false);
-    requestAnimationFrame(() => {
-      const target = composerRef.current;
-      if (!target) return;
-      target.focus();
-      target.setSelectionRange(target.value.length, target.value.length);
-    });
   }
 
   async function openSubagents() {
@@ -1341,7 +1341,14 @@ export function SessionWorkspace({
   }
 
   return (
-    <div className="cwu-session-shell" data-status={view.status}>
+    <div
+      className="cwu-session-shell"
+      data-status={view.status}
+      onDragEnter={handleWorkspaceAttachmentDrag}
+      onDragLeave={handleWorkspaceAttachmentDragLeave}
+      onDragOver={handleWorkspaceAttachmentDrag}
+      onDrop={handleWorkspaceAttachmentDrop}
+    >
       {documentPreview ? (
         <DocumentPreview
           documentResourceUrl={actions.documentResourceUrl}
@@ -1584,31 +1591,7 @@ export function SessionWorkspace({
                 {attachmentUploadState.error ? <span className="cwu-upload-error">{attachmentUploadState.error}</span> : null}
               </div>
             ) : null}
-            {composerPreview && draft.trim() ? (
-              <div
-                aria-label={labels.editFormattedComposer || '格式化内容，点击编辑'}
-                className="cwu-composer-preview"
-                onClick={(event) => {
-                  event.preventDefault();
-                  editFormattedComposer();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter' && event.key !== ' ') return;
-                  event.preventDefault();
-                  editFormattedComposer();
-                }}
-                role="button"
-                tabIndex={composerDisabled ? -1 : 0}
-              >
-                <span className="cwu-composer-preview-edit">{labels.editFormattedComposerLabel || '编辑'}</span>
-                <div className="cwu-composer-preview-content">
-                  <ReactMarkdown
-                    components={COMPOSER_MARKDOWN_COMPONENTS}
-                    remarkPlugins={USER_MARKDOWN_REMARK_PLUGINS}
-                  >{draft}</ReactMarkdown>
-                </div>
-              </div>
-            ) : <textarea
+            <textarea
               aria-label={labels.composerPlaceholder || '输入需求'}
               disabled={composerDisabled}
               maxLength={SESSION_COMPOSER_TEXT_LIMIT}
@@ -1622,15 +1605,12 @@ export function SessionWorkspace({
                   submit(composer.primaryMode);
                 }
               }}
-              onBlur={() => {
-                if (composerHasMarkdownFormatting(draft)) setComposerPreview(true);
-              }}
               onPaste={handleComposerPaste}
               placeholder={labels.composerPlaceholder || '补充需求、反馈问题，或者继续修改…'}
               ref={composerRef}
               rows={3}
               value={draft}
-            />}
+            />
             <div className="cwu-composer-footer">
               <div className="cwu-composer-meta">
                 {enabledFeatures.attachments === 'visible' && actions.onUploadAttachments ? (

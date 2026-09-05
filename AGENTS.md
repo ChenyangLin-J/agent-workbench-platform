@@ -3,7 +3,7 @@
 ## Scope
 
 - This repository is the product-neutral `@agent-workbench/platform` package. Product navigation, projects, tasks, memories, credential values, accounts, profiles, deployment policy, persistent data, and host authorization belong in consumer repositories.
-- Current consumer shapes are Personal Workbench, the independent minimal Data Skill Lab, and Agent Terminal Web. Superset is a future lightweight consumer; Solvely Workbench is a frozen reference. A consumer's current source location does not change ownership: Data Skill Lab may incubate under Personal, but its contracts must remain project-free and independently hostable.
+- Current consumer shapes are Personal Workbench, the independent minimal Data Skill Lab, Agent Terminal Web, and DataMama's constrained Agent host. Solvely Workbench is a frozen reference. Data Skill Lab lives in its own repository and its contracts must remain project-free; DataMama owns Superset, identity, data policy, product extensions and deployment.
 - Consumers must supply their own App Server connection, stores, data directory, browser profile, capability Profile, product context, side-effect handlers, and authorization decisions.
 
 ## Before changing code

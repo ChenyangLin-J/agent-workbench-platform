@@ -68,6 +68,25 @@ try {
   await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '输入问题……');
   await waitFor(() => proxyState.eventConnections >= 2);
 
+  const formula = '周包改成 *52，然后周转月根据用户是周就是 周费用*52，月就是月费用*12 对吧。';
+  await composer.evaluate((element, plainText) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', plainText);
+    clipboardData.setData('text/html', `<p>${plainText}</p>`);
+    element.select();
+    element.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData,
+    }));
+  }, formula);
+  if (await composer.inputValue() !== formula) {
+    throw new Error('Plain rich clipboard formula was rewritten instead of preserving literal asterisks.');
+  }
+  if (await page.getByRole('button', { name: '格式化内容，点击编辑' }).count()) {
+    throw new Error('Plain rich clipboard formula incorrectly entered formatted preview.');
+  }
+
   await composer.evaluate((element) => {
     const clipboardData = new DataTransfer();
     clipboardData.setData('text/plain', '结论 重点 第一项');
@@ -79,26 +98,31 @@ try {
       clipboardData,
     }));
   });
-  const formattedComposer = page.getByRole('button', { name: '格式化内容，点击编辑' });
-  await formattedComposer.waitFor();
-  if (await formattedComposer.getByText('**重点**', { exact: true }).count()) {
-    throw new Error('Composer exposed Markdown source instead of the formatted preview.');
+  await page.locator('.cwu-attachment strong').filter({ hasText: '粘贴内容-' }).waitFor();
+  if (!await page.locator('.cwu-attachment strong').filter({ hasText: '.md' }).count()) {
+    throw new Error('Structured rich clipboard content did not become a Markdown attachment.');
   }
-  await formattedComposer.getByText('重点', { exact: true }).waitFor();
-  await formattedComposer.click();
-  await composer.waitFor();
-  if (!await composer.inputValue().then((value) => value.includes('**重点**'))) {
-    throw new Error('Formatted Composer did not preserve Markdown as the submitted source.');
+  if (await page.getByRole('button', { name: '格式化内容，点击编辑' }).count()) {
+    throw new Error('Composer still exposed the removed formatted preview.');
   }
 
-  await page.getByLabel('添加图片或附件').setInputFiles({
-    name: 'browser-canary.txt',
-    mimeType: 'text/plain',
-    buffer: Buffer.from('BROWSER_ATTACHMENT_CANARY'),
+  await page.locator('.cwu-session-header').evaluate((element) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File(['BROWSER_ATTACHMENT_CANARY'], 'browser-canary.txt', { type: 'text/plain' }));
+    for (const type of ['dragenter', 'dragover', 'drop']) {
+      element.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }));
+    }
   });
   await page.getByText('已就绪', { exact: false }).waitFor();
   await composer.fill('browser smoke');
+  const submittedTurnRequest = page.waitForRequest((request) => (
+    request.method() === 'POST' && /\/api\/sessions\/[^/]+\/turns$/.test(new URL(request.url()).pathname)
+  ));
   await page.getByRole('button', { name: '发送' }).click();
+  const submittedTurnKey = (await submittedTurnRequest).headers()['idempotency-key'];
+  if (!/^turn:[A-Za-z0-9._:-]+$/.test(submittedTurnKey || '')) {
+    throw new Error('Minimal Host browser Turn did not include an idempotency key.');
+  }
   await waitFor(() => provider.createdSessions[0]?.startedTurns.length === 1);
   await page.getByRole('button', { name: '停止当前处理' }).waitFor();
   await page.getByRole('button', { name: '下一轮' }).waitFor();
@@ -299,7 +323,7 @@ try {
   if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, formatted Composer, attachment, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

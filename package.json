@@ -1,6 +1,6 @@
 {
   "name": "@agent-workbench/platform",
-  "version": "0.18.8",
+  "version": "0.19.0",
   "description": "Shared Codex runtime, Session UI, Sub Agent, Realtime, runnable environments, browser, and capability primitives for independent agent workbench products.",
   "license": "MIT",
   "repository": {
@@ -36,6 +36,7 @@
   "exports": {
     ".": "./src/index.js",
     "./session": "./src/session.js",
+    "./session-client": "./src/session-client.js",
     "./subagents": "./src/subagents.js",
     "./attachments": "./src/attachments.js",
     "./resources": "./src/resources.js",

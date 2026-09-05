@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Consumer Host Convergence UI Reference</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #26221e; background: #f3f0eb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px; }
+    main { width: min(1120px, 100%); margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    .intro { margin: 0 0 24px; color: #69615a; }
+    .states { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .state { margin: 0; }
+    figcaption { margin-bottom: 8px; color: #69615a; font-size: 13px; }
+    .shell { min-height: 520px; display: grid; grid-template-rows: auto 1fr auto; overflow: hidden; border: 1px solid #d8d1c8; border-radius: 16px; background: #fff; box-shadow: 0 16px 38px rgb(72 59 45 / 8%); }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid #ebe6df; }
+    header strong { font-size: 14px; }
+    header span { color: #7a726a; font-size: 12px; }
+    .conversation { display: grid; align-content: start; gap: 14px; padding: 22px 20px; background: linear-gradient(#fff, #fcfaf7); }
+    .message { max-width: 84%; padding: 12px 14px; border-radius: 13px; background: #f0ede8; font-size: 13px; line-height: 1.5; }
+    .message.agent { justify-self: start; }
+    .message.user { justify-self: end; background: #efe9df; }
+    .composer { position: relative; margin: 14px; min-height: 104px; padding: 14px; border: 1px solid #d8d1c8; border-radius: 14px; background: #fff; }
+    .composer p { margin: 0; color: #91887f; font-size: 13px; }
+    .controls { position: absolute; right: 12px; bottom: 10px; display: flex; gap: 8px; }
+    button { border: 0; border-radius: 9px; padding: 7px 12px; color: white; background: #6a5a47; }
+    .dragging .shell { outline: 2px solid rgb(164 105 47 / 18%); outline-offset: 2px; }
+    .dragging .composer { border-color: #a4692f; box-shadow: 0 0 0 3px rgb(164 105 47 / 14%); }
+    .dropzone { position: absolute; inset: 5px; display: grid; place-items: center; border: 1px dashed #a4692f; border-radius: 11px; color: #8b5727; background: rgb(250 244 235 / 96%); font-size: 13px; font-weight: 650; }
+    h2 { margin: 30px 0 12px; font-size: 18px; }
+    .paste-states { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .paste-card { min-height: 150px; border: 1px solid #d8d1c8; border-radius: 14px; background: #fff; padding: 14px; }
+    .paste-card > span { color: #69615a; font-size: 12px; }
+    .paste-content { position: relative; min-height: 86px; margin-top: 10px; border: 1px solid #d8d1c8; border-radius: 11px; padding: 12px; white-space: pre-wrap; font-size: 13px; line-height: 1.55; }
+    .paste-content.attachment { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fcfaf7; }
+    .file { color: #8b5727; font-weight: 650; }
+    .note { margin-top: 20px; padding: 14px 16px; border-left: 3px solid #a4692f; background: #fff; color: #5f574f; font-size: 13px; line-height: 1.55; }
+    @media (max-width: 780px) { body { padding: 18px; } .states, .paste-states { grid-template-columns: 1fr; } .shell { min-height: 440px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Consumer Host Convergence · 交互参考</h1>
+    <p class="intro">本里程碑不改变 Session 布局；只把整个详情区的拖拽输入路由到既有 Composer 状态。</p>
+    <section class="states" aria-label="Session 拖拽状态对照">
+      <figure class="state">
+        <figcaption>默认状态</figcaption>
+        <div class="shell">
+          <header><strong>Skill 评估结果</strong><span>已完成</span></header>
+          <div class="conversation">
+            <div class="message user">比较 Candidate 和 Baseline 的结果。</div>
+            <div class="message agent">两个 Environment 使用相同模型、隔离与数据适配器。</div>
+          </div>
+          <div class="composer"><p>输入消息或添加附件</p><div class="controls"><button>发送</button></div></div>
+        </div>
+      </figure>
+      <figure class="state dragging">
+        <figcaption>文件进入 Session 详情任意位置</figcaption>
+        <div class="shell">
+          <header><strong>Skill 评估结果</strong><span>已完成</span></header>
+          <div class="conversation">
+            <div class="message user">比较 Candidate 和 Baseline 的结果。</div>
+            <div class="message agent">两个 Environment 使用相同模型、隔离与数据适配器。</div>
+          </div>
+          <div class="composer"><div class="dropzone">松开即可添加附件</div></div>
+        </div>
+      </figure>
+    </section>
+    <p class="note">验收：从标题、正文或空白区进入都显示同一个 Composer dropzone；Finder 只暴露 <code>Files</code> 的预览阶段也必须显示；从 Composer 内进入时不得触发第二套处理；窄屏保持同一状态和文案。</p>
+    <h2>粘贴状态</h2>
+    <section class="paste-states" aria-label="Composer 粘贴状态对照">
+      <div class="paste-card">
+        <span>普通文本：保持编辑态和原始字符</span>
+        <div class="paste-content">周包改成 *52，周费用*52，月费用*12。</div>
+      </div>
+      <div class="paste-card">
+        <span>结构化富文本：转为附件，Composer 仍直接编辑</span>
+        <div class="paste-content attachment"><span class="file">▤ 粘贴内容-20260904-183000.md</span><span>已就绪</span></div>
+      </div>
+    </section>
+    <p class="note">验收：普通句子即使剪贴板同时包含 HTML，也不显示“编辑”预览、不插入 <code>\*</code>；标题、列表、表格、代码块、引用或多段内容直接成为附件，Composer 始终是同一个输入框。</p>
+  </main>
+</body>
+</html>

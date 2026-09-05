@@ -620,11 +620,14 @@ export function clipboardAttachmentFiles(clipboardData) {
   });
 }
 
-export function composerHasMarkdownFormatting(value) {
+export function richClipboardHasComplexStructure(value, html = '') {
   const content = String(value || '');
   if (!content.trim()) return false;
+  const source = String(html || '');
+  if (/<(?:h[1-6]|ul|ol|li|table|thead|tbody|tr|pre|blockquote)\b/i.test(source)) return true;
+  if ((source.match(/<(?:p|div)\b/gi) || []).length > 1) return true;
   return /(^|\n)\s{0,3}(?:#{1,6}\s+|>\s+|[-+*]\s+|\d+[.)]\s+|```|~~~|\|.+\|\s*$)/m.test(content)
-    || /(?:\*\*[^\n*]+\*\*|__[^\n_]+__|~~[^\n~]+~~|`[^\n`]+`|\[[^\]\n]+\]\([^\s)]+(?:\s+"[^"]*")?\))/.test(content);
+    || /\n\s*\n/.test(content);
 }
 
 function transferItems(dataTransfer) {
@@ -750,12 +753,26 @@ export function shouldConvertPastedTextToAttachment(draft, text, {
 
 export function richClipboardText(html = '', plainText = '') {
   const source = String(html || '').trim();
-  if (!source) return String(plainText || '');
+  const fallback = String(plainText || '');
+  if (!source) return fallback;
   try {
-    return richTextTurndown.turndown(source).trim() || String(plainText || '');
+    const markdown = richTextTurndown.turndown(source).trim();
+    if (!markdown) return fallback;
+    if (fallback && clipboardTextForComparison(markdown, { unescapeMarkdown: true })
+      === clipboardTextForComparison(fallback)) {
+      return fallback;
+    }
+    return markdown;
   } catch {
-    return String(plainText || '');
+    return fallback;
   }
+}
+
+function clipboardTextForComparison(value, { unescapeMarkdown = false } = {}) {
+  const text = unescapeMarkdown
+    ? String(value || '').replace(/\\([\\`*_\[\]{}()#+.!>|~-])/g, '$1')
+    : String(value || '');
+  return text.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 export function sessionTranscriptAwayFromLatest({
