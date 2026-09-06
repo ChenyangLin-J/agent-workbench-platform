@@ -648,6 +648,7 @@ export function clipboardAttachmentFiles(clipboardData) {
 export function richClipboardHasComplexStructure(value, html = '') {
   const content = String(value || '');
   if (!content.trim()) return false;
+  if (/^\s{0,3}#{1,6}[\t ]+\S[^\r\n]*$/.test(content.trim())) return false;
   const source = String(html || '');
   if (/<(?:h[1-6]|ul|ol|li|table|thead|tbody|tr|pre|blockquote)\b/i.test(source)) return true;
   if ((source.match(/<(?:p|div)\b/gi) || []).length > 1) return true;

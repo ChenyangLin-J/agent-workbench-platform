@@ -397,6 +397,9 @@ test('Composer routes only structurally complex clipboard text to an attachment'
   assert.equal(richClipboardHasComplexStructure('普通的一句话'), false);
   assert.equal(richClipboardHasComplexStructure('这里有 **重点** 和 [链接](https://example.com)'), false);
   assert.equal(richClipboardHasComplexStructure('金额是 2 * 3，不是列表'), false);
+  assert.equal(richClipboardHasComplexStructure('# 单独复制的短标题', '<h1>单独复制的短标题</h1>'), false);
+  assert.equal(richClipboardHasComplexStructure('# **带样式的单独标题**', '<h1><strong>带样式的单独标题</strong></h1>'), false);
+  assert.equal(richClipboardHasComplexStructure('# 标题\n\n正文', '<h1>标题</h1><p>正文</p>'), true);
   assert.equal(richClipboardHasComplexStructure('## 结论\n\n- 第一项'), true);
   assert.equal(richClipboardHasComplexStructure('第一段\n\n第二段'), true);
   assert.equal(richClipboardHasComplexStructure('| 指标 |\n| --- |\n| 42 |'), true);
