@@ -300,11 +300,12 @@ test('Session UI embeds visualizations in a sandbox and renders image media', as
   assert.match(source, /remarkMath/);
   assert.match(source, /rehypeKatex/);
   assert.match(source, /singleDollarTextMath: false/);
-  assert.match(source, /<MediaGallery items=\{message\.media\}/);
+  assert.match(source, /publishesMedia && message\.media\?\.length/);
+  assert.match(source, /!publishesMedia \? \{ img: \(\) => null \}/);
   assert.match(styles, /\.cwu-inline-visualization iframe/);
   assert.match(styles, /katex\/dist\/katex\.min\.css/);
   assert.match(styles, /\.katex-display/);
-  assert.match(styles, /\.cwu-message-media img/);
+  assert.match(styles, /\.cwu-message-media img \{[^}]*width: auto;[^}]*height: auto;[^}]*object-fit: contain;/);
 });
 
 test('Session UI exposes product extension content without owning product navigation or canvas', async () => {

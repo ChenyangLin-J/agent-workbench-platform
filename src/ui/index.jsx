@@ -37,7 +37,7 @@ import {
   sessionStatusTone,
   shouldConvertPastedTextToAttachment,
 } from './model.js';
-import { sessionComposerPresentation } from '../session.js';
+import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
 import { normalizeSessionFeatures } from '../capabilities.js';
 import { normalizeAttachmentPolicy, normalizeSessionAttachment } from '../attachments.js';
 import { useSessionUserInput } from '../ui-hooks.js';
@@ -2240,13 +2240,17 @@ function Message({
 }) {
   const isUser = message.role === 'user';
   const isCommentary = message.phase === 'commentary';
+  const publishesMedia = sessionMessagePublishesMedia(message);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(message.content);
   const [savingEdit, setSavingEdit] = useState(false);
   const [forking, setForking] = useState(false);
   const canEdit = isUser && message.canEdit && typeof onEditMessage === 'function';
   const canFork = isUser && message.canFork && typeof onForkMessage === 'function';
-  const markdownComponents = markdownLinkComponents(onOpenLink, onRevealLink, revealLabel);
+  const markdownComponents = {
+    ...(markdownLinkComponents(onOpenLink, onRevealLink, revealLabel) || {}),
+    ...(!publishesMedia ? { img: () => null } : {}),
+  };
   const inline = extractVisualizationReferences(message.content);
   const visualizations = typeof visualizationUrl === 'function'
     ? inline.references.map((reference) => ({
@@ -2343,7 +2347,7 @@ function Message({
           ) : null}
         </div>
       ) : null}
-      {message.media?.length ? <MediaGallery items={message.media} onOpenAttachment={onOpenAttachment} /> : null}
+      {publishesMedia && message.media?.length ? <MediaGallery items={message.media} onOpenAttachment={onOpenAttachment} /> : null}
       {visualizations.map((item) => (
         <div className={`cwu-inline-visualization${item.mode === 'wide' ? ' is-wide' : ''}`} key={item.path || item.file}>
           <iframe

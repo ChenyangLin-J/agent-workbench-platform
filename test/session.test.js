@@ -6,6 +6,7 @@ import {
   groupSessionSummaries,
   sessionComposerPresentation,
   sessionCurrentTask,
+  sessionMessagePublishesMedia,
   sessionMessagePresentation,
   sessionStatusTone,
   sessionTaskPresentation,
@@ -117,3 +118,14 @@ test('Agent and Personal share message roles and running composer actions', () =
     showSecondary: false,
   });
 });
+
+for (const fixture of [
+  { label: 'project-free', context: {} },
+  { label: 'project-scoped', context: { contextId: 'project-1', contextLabel: 'Project One' } },
+]) {
+  test(`only user input and final answers publish media in a ${fixture.label} Session`, () => {
+    assert.equal(sessionMessagePublishesMedia({ ...fixture.context, role: 'user', media: [{ kind: 'image' }] }), true);
+    assert.equal(sessionMessagePublishesMedia({ ...fixture.context, role: 'assistant', phase: 'final_answer', media: [{ kind: 'image' }] }), true);
+    assert.equal(sessionMessagePublishesMedia({ ...fixture.context, role: 'assistant', phase: 'commentary', media: [{ kind: 'image' }] }), false);
+  });
+}

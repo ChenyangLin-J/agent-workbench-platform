@@ -106,6 +106,11 @@ export function sessionMessagePresentation(message = {}) {
   };
 }
 
+export function sessionMessagePublishesMedia(message = {}) {
+  const presentation = sessionMessagePresentation(message);
+  return presentation.role === 'user' || presentation.phase === 'answer';
+}
+
 export function sessionComposerPresentation({
   running = false,
   previewOnly = false,
