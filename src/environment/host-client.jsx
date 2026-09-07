@@ -18,16 +18,36 @@ const messageEditEnabled = featureEnabled('messageEdit');
 const messageForkEnabled = featureEnabled('messageFork') && bootstrap.runtimeCapabilities?.fork !== false;
 const queuedTurnsEnabled = featureEnabled('queuedTurns');
 const sessionSharing = bootstrap.sessionSharing?.enabled === true ? bootstrap.sessionSharing : null;
+const startsWithNewSession = bootstrap.sessionStart === 'new';
 const initialSessionId = new URLSearchParams(globalThis.location?.search || '').get('session');
 const RUNNING_SESSION_POLL_MS = 2_000;
 const SHARED_SESSION_POLL_MS = 5_000;
+const DEFAULT_SESSION_STORAGE_KEY = 'agent-workbench.minimal-host.default-session.v1';
 
 function hostUrl(path) {
   return resolveMinimalHostUrl(path, { baseUrl: hostBaseUrl });
 }
 
+function restoreDefaultSessionId() {
+  try {
+    return globalThis.sessionStorage?.getItem(DEFAULT_SESSION_STORAGE_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberDefaultSessionId(sessionId) {
+  try {
+    if (sessionId) globalThis.sessionStorage?.setItem(DEFAULT_SESSION_STORAGE_KEY, sessionId);
+    else globalThis.sessionStorage?.removeItem(DEFAULT_SESSION_STORAGE_KEY);
+  } catch {
+    // Storage may be unavailable in privacy-restricted browser contexts.
+  }
+}
+
 function MinimalHostApp() {
   const [sessions, setSessions] = useState([]);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState(initialSessionId);
   const selectedIdRef = useRef(initialSessionId);
   const [session, setSession] = useState(null);
@@ -41,6 +61,10 @@ function MinimalHostApp() {
   const refreshRunning = useRef(false);
   const refreshQueued = useRef(false);
   const operationController = useRef(null);
+  const defaultSessionCreationAttempted = useRef(false);
+  const defaultSessionId = useRef(
+    startsWithNewSession && !initialSessionId ? restoreDefaultSessionId() : null,
+  );
   operationController.current ||= new SessionClientOperationController();
 
   const request = useCallback(async (path, options = {}) => {
@@ -108,7 +132,10 @@ function MinimalHostApp() {
       (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
     );
     setSessions(nextSessions);
-    selectSessionId((current) => selectMinimalHostSession(nextSessions, current));
+    setSessionsLoaded(true);
+    selectSessionId((current) => selectMinimalHostSession(nextSessions, current || defaultSessionId.current, {
+      fallback: startsWithNewSession && !initialSessionId ? 'none' : 'newest',
+    }));
     return nextSessions;
   }, [request, selectSessionId]);
 
@@ -212,12 +239,28 @@ function MinimalHostApp() {
         body: JSON.stringify(operation.payload),
       });
       operationController.current.complete(operation);
+      if (startsWithNewSession && !initialSessionId) {
+        defaultSessionId.current = body.session.sessionId;
+        rememberDefaultSessionId(body.session.sessionId);
+      }
       selectSessionId(body.session.sessionId);
       await refreshSessions();
     } catch (nextError) {
       setError(nextError.message);
     }
   }
+
+  useEffect(() => {
+    if (
+      !startsWithNewSession
+      || initialSessionId
+      || !sessionsLoaded
+      || selectedId
+      || defaultSessionCreationAttempted.current
+    ) return;
+    defaultSessionCreationAttempted.current = true;
+    void createSession();
+  }, [selectedId, sessionsLoaded]);
 
   async function continueSharedSession() {
     if (!selectedId || continuing) return;
@@ -267,6 +310,10 @@ function MinimalHostApp() {
         throw new Error('这条消息仍在确认中，请稍后重试。');
       }
       operationController.current.complete(operation);
+      if (defaultSessionId.current === selectedId) {
+        defaultSessionId.current = null;
+        rememberDefaultSessionId(null);
+      }
       setSession((current) => current ? { ...current, status: 'running', statusLabel: '正在处理' } : current);
       scheduleRefresh();
     } catch (nextError) {

@@ -524,6 +524,52 @@ test('Minimal Host uploads Session attachments, passes them to Runtime, and deri
   });
 });
 
+test('Minimal Host gives Runtime the exact managed-file path without exposing it to browser projections', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-managed-file-path-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
+  const provider = new FakeRuntimeProvider();
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store, resourceStore });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = { 'content-type': 'application/json' };
+  const created = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST', headers, body: '{}',
+  }).then((response) => response.json());
+  const sessionId = created.session.sessionId;
+  const content = JSON.stringify({ metric: 'registrations', value: 42 });
+  const attachment = await fetch(`${listening.url}/api/sessions/${sessionId}/attachments`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ attachment: {
+      name: 'dashboard-chart.json',
+      type: 'application/json',
+      size: Buffer.byteLength(content),
+      data: `data:application/json;base64,${Buffer.from(content).toString('base64')}`,
+    } }),
+  }).then((response) => response.json()).then((body) => body.attachment);
+  assert.equal(JSON.stringify(attachment).includes(root), false);
+
+  const turnResponse = await fetch(`${listening.url}/api/sessions/${sessionId}/turns`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ prompt: '读取 Dashboard 图表', attachments: [attachment] }),
+  });
+  assert.equal(turnResponse.status, 202);
+  const runtimeInput = provider.createdSessions[0].startedTurns[0].input;
+  assert.equal(runtimeInput[2].type, 'mention');
+  assert.equal(runtimeInput[2].name, 'dashboard-chart.json');
+  assert.match(runtimeInput[2].path, /[/\\\\]resources[/\\\\]blobs[/\\\\]res_/);
+  assert.equal(runtimeInput[1].text.includes(runtimeInput[2].path), true);
+  assert.match(runtimeInput[1].text, /display name is not necessarily present/);
+
+  const detail = await fetch(`${listening.url}/api/sessions/${sessionId}`).then((response) => response.json());
+  assert.equal(JSON.stringify(detail.session.messages[0].attachments).includes(root), false);
+  assert.equal(detail.session.messages[0].attachments[0].name, 'dashboard-chart.json');
+});
+
 test('Minimal Host leaves failed Turn attachments staged and rejects cross-Session reuse', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-resource-failure-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -972,6 +1018,8 @@ test('Minimal Host presentation selects the newest available Session and preserv
   assert.equal(selectMinimalHostSession(sessions), 'newest');
   assert.equal(selectMinimalHostSession(sessions, 'older'), 'older');
   assert.equal(selectMinimalHostSession(sessions, 'missing'), 'newest');
+  assert.equal(selectMinimalHostSession(sessions, null, { fallback: 'none' }), null);
+  assert.equal(selectMinimalHostSession(sessions, 'older', { fallback: 'none' }), 'older');
   assert.equal(selectMinimalHostSession([], 'missing'), null);
   assert.deepEqual(minimalHostSessionPresentation({ title: 'New Session', contextLabel: 'Environment' }), {
     title: '新对话',

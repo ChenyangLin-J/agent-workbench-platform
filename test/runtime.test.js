@@ -66,6 +66,8 @@ test('App Server attachment inputs inline text and pair generic files with a tra
   });
   assert.equal(fileInputs.length, 2);
   assert.match(fileInputs[0].text, /report\.pdf/);
+  assert.match(fileInputs[0].text, /exact local path "\/tmp\/report\.pdf"/);
+  assert.match(fileInputs[0].text, /not necessarily present in the current working directory/);
   assert.deepEqual(fileInputs[1], { type: 'mention', name: 'report.pdf', path: '/tmp/report.pdf' });
   assert.throws(() => appServerAttachmentInputs({
     mimeType: 'text/plain', name: 'large.txt', path: '/tmp/large.txt', textContent: 'too large', size: 9,
