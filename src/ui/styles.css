@@ -234,6 +234,9 @@
 .cwu-message-media a, .cwu-message-media button { width: min(360px, 100%); display: grid; place-items: center; min-width: 0; overflow: hidden; border: 1px solid var(--cwu-border); border-radius: 12px; background: var(--cwu-soft); padding: 0; cursor: zoom-in; }
 .cwu-message-media button:hover, .cwu-message-media button:focus-visible { border-color: var(--cwu-accent); outline: none; }
 .cwu-message-media img { display: block; width: auto; height: auto; max-width: 100%; max-height: 240px; object-fit: contain; }
+.cwu-message.is-user .cwu-message-media { max-height: none; }
+.cwu-message.is-user .cwu-message-media a, .cwu-message.is-user .cwu-message-media button { width: min(300px, 100%); background: var(--cwu-surface); }
+.cwu-message.is-user .cwu-message-media img { max-height: 220px; }
 .cwu-message .katex-display, .cwu-document-content .katex-display { max-width: 100%; margin: 14px 0; padding: 3px 0 7px; overflow-x: auto; overflow-y: hidden; }
 .cwu-inline-visualization { margin-top: 14px; }
 .cwu-inline-visualization iframe { display: block; width: 100%; height: min(620px, 68vh); border: 1px solid var(--cwu-border); border-radius: 12px; background: var(--cwu-surface); }

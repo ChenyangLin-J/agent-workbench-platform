@@ -308,7 +308,9 @@ test('Session UI embeds visualizations in a sandbox and renders image media', as
   assert.match(source, /remarkMath/);
   assert.match(source, /rehypeKatex/);
   assert.match(source, /singleDollarTextMath: false/);
-  assert.match(source, /publishesMedia && message\.media\?\.length/);
+  assert.match(source, /const inlineMedia = \[\.\.\.\(publishesMedia \? message\.media \|\| \[\] : \[\]\)\]/);
+  assert.match(source, /attachment\.kind === 'image' && attachment\.previewUrl/);
+  assert.match(source, /<MediaGallery items=\{inlineMedia\} onOpenAttachment=\{onOpenAttachment\}/);
   assert.match(source, /!publishesMedia \? \{ img: \(\) => null \}/);
   assert.match(styles, /\.cwu-inline-visualization iframe/);
   assert.match(styles, /katex\/dist\/katex\.min\.css/);
@@ -442,7 +444,10 @@ test('Session UI keeps explicit submissions visible across mobile viewport chang
   assert.match(source, /submitFollowRef\.current = true;/);
   assert.match(source, /window\.visualViewport\?\.addEventListener\('resize', followAfterViewportChange\)/);
   assert.match(source, /onPointerDown=\{stopSubmitFollow\}/);
-  assert.match(source, /onWheel=\{stopSubmitFollow\}/);
+  assert.match(source, /onWheel=\{handleTranscriptWheel\}/);
+  assert.match(source, /if \(scrollingUp\) \{\s*pauseLatestFollow\(\);/);
+  assert.match(source, /if \(event\.deltaY < 0\) pauseLatestFollow\(\);/);
+  assert.match(source, /onTouchMove=\{handleTranscriptTouchMove\}/);
   assert.match(styles, /\.cwu-session-shell \{[^}]*height: 100vh;[^}]*height: 100dvh;/);
   assert.match(styles, /\.cwu-session-main \{[^}]*height: calc\(100vh - 64px\);[^}]*height: calc\(100dvh - 64px\);/);
   assert.match(styles, /\.cwu-transcript \{[^}]*overscroll-behavior: contain;[^}]*-webkit-overflow-scrolling: touch;/);

@@ -222,14 +222,66 @@ try {
     throw new Error('Browser attachment was not passed to Runtime input.');
   }
   await page.getByText('browser smoke', { exact: true }).first().waitFor();
-  const uploadedImage = page.locator('.cwu-message.is-user .cwu-message-attachment', { hasText: 'browser-preview.png' });
+  const uploadedImage = page.getByRole('button', { name: '查看图片：browser-preview.png' });
   await uploadedImage.waitFor();
+  if (!await uploadedImage.locator('img').count()) {
+    throw new Error('Uploaded image was not rendered as an inline user-message thumbnail.');
+  }
   await uploadedImage.click();
   await page.getByRole('dialog', { name: '文件预览：browser-preview.png' }).waitFor();
   await page.getByRole('button', { name: '关闭文件预览' }).click();
   await page.getByRole('dialog', { name: '文件预览：browser-preview.png' }).waitFor({ state: 'detached' });
 
   const runtime = provider.createdSessions[0];
+  const scrollCanary = Array.from({ length: 80 }, (_, index) => `Streaming scroll canary ${index + 1}`).join('\n\n');
+  runtime.emit('event', {
+    type: 'item_started',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: runtime.activeTurnId,
+    providerEvent: 'item/started',
+    payload: { item: {
+      id: 'browser-smoke-scroll-commentary',
+      type: 'agentMessage',
+      phase: 'commentary',
+      status: 'inProgress',
+      text: scrollCanary,
+    } },
+  });
+  const transcript = page.locator('.cwu-transcript');
+  await page.getByText('Streaming scroll canary 80', { exact: true }).waitFor();
+  await page.waitForFunction(() => {
+    const element = document.querySelector('.cwu-transcript');
+    return element && element.scrollHeight - element.clientHeight > 400
+      && element.scrollHeight - element.scrollTop - element.clientHeight < 4;
+  });
+  const scrolledPosition = await transcript.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -80 }));
+    element.scrollTop = Math.max(0, element.scrollTop - 80);
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    return element.scrollTop;
+  });
+  await page.getByRole('button', { name: '滚动到最新消息' }).waitFor();
+  runtime.emit('event', {
+    type: 'item_delta',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: runtime.activeTurnId,
+    providerEvent: 'item/agentMessage/delta',
+    payload: { itemId: 'browser-smoke-scroll-commentary', delta: '\n\nStreaming after upward scroll' },
+  });
+  await page.getByText('Streaming after upward scroll', { exact: true }).waitFor();
+  await page.waitForTimeout(300);
+  const afterStreamPosition = await transcript.evaluate((element) => ({
+    scrollTop: element.scrollTop,
+    bottomDistance: element.scrollHeight - element.scrollTop - element.clientHeight,
+  }));
+  if (Math.abs(afterStreamPosition.scrollTop - scrolledPosition) > 12 || afterStreamPosition.bottomDistance < 24) {
+    throw new Error(`Streaming content pulled an upward-reading transcript back to the bottom: ${JSON.stringify({ scrolledPosition, afterStreamPosition })}`);
+  }
+  await page.getByRole('button', { name: '滚动到最新消息，有新消息' }).click();
+  await page.waitForFunction(() => {
+    const element = document.querySelector('.cwu-transcript');
+    return element && element.scrollHeight - element.scrollTop - element.clientHeight < 4;
+  });
   proxyState.dropEventStreams();
   runtime.emit('event', {
     type: 'item_started',
@@ -306,6 +358,7 @@ try {
   await page.reload();
   await page.getByText('1 个对话', { exact: true }).waitFor();
   await page.getByText('Browser smoke OK', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '查看图片：browser-preview.png' }).waitFor();
   await page.getByRole('button', { name: '查看图片：generated-browser-smoke-generated.png' }).click();
   await page.getByRole('dialog', { name: '文件预览：generated-browser-smoke-generated.png' }).waitFor();
   await page.getByRole('button', { name: '关闭文件预览' }).click();
@@ -439,7 +492,7 @@ try {
   if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, recent-Session root return, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, uploaded-image lightbox, durable generated-image media/lightbox, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, recent-Session root return, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, uploaded-image message thumbnail/lightbox, upward-reading stability during streaming, durable generated-image media/lightbox, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

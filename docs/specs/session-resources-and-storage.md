@@ -369,7 +369,7 @@ Platform therefore handles files as a shared capability, but does not centralize
 - Attachment chips display name, type, size or resolution when known, upload state, and a removable/error state.
 - A directory chip is visually and semantically distinct from a file upload.
 - Send is disabled only for unresolved or failed resources, with the blocking reason shown.
-- After Send, committed resources render inside the user message even while the assistant is running.
+- After Send, committed resources render inside the user message even while the assistant is running. Authorized image attachments render as bounded inline thumbnails and retain the ordinary attachment fallback if preview resolution fails.
 - Resource actions are capability-driven: preview, download, reveal/open in workspace, copy authorized reference, and remove are shown only when backed by the Host.
 - Copying a path is available only for authorized local workspace references. Managed uploads expose a resource action, not their private storage path.
 - Missing, quarantined, or unauthorized content renders an explicit state; it never disappears from transcript history.

@@ -108,24 +108,34 @@ function MinimalHostApp() {
   const presentSession = useCallback(async (value) => {
     const presented = minimalHostSessionPresentation(value);
     if (!attachmentsEnabled || !presented.sessionId) return presented;
-    const messages = await Promise.all((presented.messages || []).map(async (message) => ({
-      ...message,
-      media: (await Promise.all((message.media || []).map(async (media) => {
-        if (media?.src) return media;
-        const src = await loadSessionMediaUrl(presented.sessionId, media).catch(() => '');
+    const messages = await Promise.all((presented.messages || []).map(async (message) => {
+      const attachments = await Promise.all((message.attachments || []).map(async (attachment) => {
+        const mimeType = String(attachment?.mimeType || attachment?.resource?.display?.mimeType || '').toLowerCase();
+        if (attachment?.kind !== 'image' && !mimeType.startsWith('image/')) return attachment;
+        const previewUrl = await loadSessionMediaUrl(presented.sessionId, {
+          resourceId: attachment?.resource?.id || attachment?.id,
+          mimeType,
+        }).catch(() => '');
+        return previewUrl ? { ...attachment, previewUrl } : attachment;
+      }));
+      const media = (await Promise.all((message.media || []).map(async (item) => {
+        const mediaItem = item;
+        if (mediaItem?.src) return mediaItem;
+        const src = await loadSessionMediaUrl(presented.sessionId, mediaItem).catch(() => '');
         if (!src) return null;
         return {
-          id: media.resourceId,
+          id: mediaItem.resourceId,
           kind: 'image',
           src,
-          alt: media.name || '图片',
-          name: media.name || '图片',
-          attachmentId: media.resourceId,
-          mimeType: media.mimeType,
-          size: media.size,
+          alt: mediaItem.name || '图片',
+          name: mediaItem.name || '图片',
+          attachmentId: mediaItem.resourceId,
+          mimeType: mediaItem.mimeType,
+          size: mediaItem.size,
         };
-      }))).filter(Boolean),
-    })));
+      }))).filter(Boolean);
+      return { ...message, attachments, media };
+    }));
     return { ...presented, messages };
   }, [loadSessionMediaUrl]);
 
