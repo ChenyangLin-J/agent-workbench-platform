@@ -87,6 +87,25 @@ try {
     throw new Error('A standalone copied heading incorrectly became an attachment.');
   }
 
+  const standaloneBullet = '-   定时通知按钮定位到真实 Superset Header';
+  await composer.evaluate((element, plainText) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', plainText);
+    clipboardData.setData('text/html', '<ul><li>定时通知按钮定位到真实 Superset Header</li></ul>');
+    element.select();
+    element.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData,
+    }));
+  }, standaloneBullet);
+  if (await composer.inputValue() !== standaloneBullet) {
+    throw new Error('A standalone copied bullet did not remain inline plain text.');
+  }
+  if (await page.locator('.cwu-attachment').count()) {
+    throw new Error('A standalone copied bullet incorrectly became an attachment.');
+  }
+
   const formula = '周包改成 *52，然后周转月根据用户是周就是 周费用*52，月就是月费用*12 对吧。';
   await composer.evaluate((element, plainText) => {
     const clipboardData = new DataTransfer();
@@ -371,7 +390,7 @@ try {
   if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, standalone-heading paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

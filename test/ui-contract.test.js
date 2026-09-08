@@ -404,7 +404,10 @@ test('Composer routes only structurally complex clipboard text to an attachment'
   assert.equal(richClipboardHasComplexStructure('金额是 2 * 3，不是列表'), false);
   assert.equal(richClipboardHasComplexStructure('# 单独复制的短标题', '<h1>单独复制的短标题</h1>'), false);
   assert.equal(richClipboardHasComplexStructure('# **带样式的单独标题**', '<h1><strong>带样式的单独标题</strong></h1>'), false);
+  assert.equal(richClipboardHasComplexStructure('-   定时通知按钮定位到真实 Superset Header', '<ul><li>定时通知按钮定位到真实 Superset Header</li></ul>'), false);
+  assert.equal(richClipboardHasComplexStructure('1. 单独复制的一项', '<ol><li>单独复制的一项</li></ol>'), false);
   assert.equal(richClipboardHasComplexStructure('# 标题\n\n正文', '<h1>标题</h1><p>正文</p>'), true);
+  assert.equal(richClipboardHasComplexStructure('- 第一项\n- 第二项', '<ul><li>第一项</li><li>第二项</li></ul>'), true);
   assert.equal(richClipboardHasComplexStructure('## 结论\n\n- 第一项'), true);
   assert.equal(richClipboardHasComplexStructure('第一段\n\n第二段'), true);
   assert.equal(richClipboardHasComplexStructure('| 指标 |\n| --- |\n| 42 |'), true);
