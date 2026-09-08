@@ -59,6 +59,8 @@ Implemented in Platform:
 - atomic Environment/Run creation, contained paths, symlink escape checks and retained project-free Session state;
 - optional consumer-owned Session transcript/Resource roots, separate Run-local Runtime bindings and queued Turns, and a source-retaining migration from one stopped Run;
 - `env create`, `run`, `inspect` and `stop` plus the built-in Session UI and Codex Runtime lifecycle;
+- read-only `env ps` discovery that groups Docker sidecars by Run and distinguishes
+  a verified active supervisor from orphaned or unresolved labeled resources;
 - effective isolation derived from nine enforcement facets rather than provider self-report;
 - a real Docker ephemeral provider for offline Profiles and immutable `skill-source` snapshots, including exact owned-resource cleanup, a bounded startup/readiness window with actionable workload/ingress diagnostics, and a repeatable Docker smoke test;
 - a fixed model egress sidecar that stages either an unexpired ChatGPT access token or one consumer-bound OpenAI-compatible gateway key, never exposes the upstream credential to the workload, and permits only Responses routes;

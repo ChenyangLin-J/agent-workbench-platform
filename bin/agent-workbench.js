@@ -13,6 +13,7 @@ import {
   createDockerIsolationProvider,
   createEnvironment,
   createEnvironmentRun,
+  inspectDockerRunInventory,
   inspectEnvironment,
   runDataAdapterServer,
   runFixedIngressProxy,
@@ -114,6 +115,11 @@ async function main(argv) {
       dataAdapterCredentialBroker: createDataAdapterCredentialBroker({ bindings }),
     }),
   ]);
+
+  if (command === 'ps') {
+    if (positional.length > 0) throw cliError('CLI_TARGET_UNEXPECTED', 'env ps does not accept an Environment or Run target.');
+    return print(await inspectDockerRunInventory());
+  }
 
   if (command === 'create') {
     const profilePath = requiredOption(options.profile, '--profile');
@@ -257,7 +263,7 @@ function print(value) {
 }
 
 function helpText() {
-  return `Agent Workbench runnable Minimal Host\n\nUsage:\n  agent-workbench env create --profile <profile.json> [--bindings <private-bindings.json>] [--root <storage>] [--id <id>]\n  agent-workbench env run <environment-or-run> [--bindings <private-bindings.json>] [--root <storage>] [--port <port>]\n  agent-workbench env migrate-sessions <run> --bindings <private-bindings.json> [--root <storage>]\n  agent-workbench env inspect <environment-or-run> [--root <storage>]\n  agent-workbench env stop <environment-or-run> [--root <storage>]\n\nThe built-in development provider is explicitly non-isolated. A Profile that requires\nguarded-host or ephemeral-machine will fail at run time instead of downgrading.\n`;
+  return `Agent Workbench runnable Minimal Host\n\nUsage:\n  agent-workbench env create --profile <profile.json> [--bindings <private-bindings.json>] [--root <storage>] [--id <id>]\n  agent-workbench env run <environment-or-run> [--bindings <private-bindings.json>] [--root <storage>] [--port <port>]\n  agent-workbench env migrate-sessions <run> --bindings <private-bindings.json> [--root <storage>]\n  agent-workbench env inspect <environment-or-run> [--root <storage>]\n  agent-workbench env ps\n  agent-workbench env stop <environment-or-run> [--root <storage>]\n\nThe built-in development provider is explicitly non-isolated. A Profile that requires\nguarded-host or ephemeral-machine will fail at run time instead of downgrading.\n`;
 }
 
 function cliError(code, message) {
