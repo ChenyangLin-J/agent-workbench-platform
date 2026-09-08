@@ -362,6 +362,67 @@ try {
   await page.getByRole('button', { name: '查看图片：generated-browser-smoke-generated.png' }).click();
   await page.getByRole('dialog', { name: '文件预览：generated-browser-smoke-generated.png' }).waitFor();
   await page.getByRole('button', { name: '关闭文件预览' }).click();
+  const completedTranscript = page.locator('.cwu-transcript');
+  const completedScrollSetup = await completedTranscript.evaluate((element) => {
+    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight - 260);
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    return {
+      contentHeight: element.scrollHeight,
+      viewportHeight: element.clientHeight,
+    };
+  });
+  if (completedScrollSetup.contentHeight <= completedScrollSetup.viewportHeight) {
+    throw new Error('Completed-response scroll fixture was not tall enough to exercise downward reading.');
+  }
+  await page.getByRole('button', { name: '滚动到最新消息' }).waitFor();
+  await completedTranscript.evaluate((element) => {
+    const samples = {
+      heights: [element.clientHeight],
+      positions: [element.scrollTop],
+    };
+    const resizeObserver = new ResizeObserver(() => samples.heights.push(element.clientHeight));
+    resizeObserver.observe(element);
+    element.addEventListener('scroll', () => samples.positions.push(element.scrollTop), { passive: true });
+    globalThis.__completedResponseScrollProbe = { resizeObserver, samples };
+  });
+  const completedTranscriptBox = await completedTranscript.boundingBox();
+  if (!completedTranscriptBox) throw new Error('Completed-response transcript was not visible.');
+  await page.mouse.move(
+    completedTranscriptBox.x + completedTranscriptBox.width / 2,
+    completedTranscriptBox.y + completedTranscriptBox.height / 2,
+  );
+  for (let index = 0; index < 10; index += 1) {
+    await page.mouse.wheel(0, 32);
+    await page.waitForTimeout(40);
+  }
+  await page.waitForFunction(() => {
+    const element = document.querySelector('.cwu-transcript');
+    return element && element.scrollHeight - element.scrollTop - element.clientHeight < 4;
+  });
+  await page.waitForTimeout(250);
+  const completedScrollResult = await completedTranscript.evaluate((element) => {
+    const probe = globalThis.__completedResponseScrollProbe;
+    probe?.resizeObserver?.disconnect();
+    delete globalThis.__completedResponseScrollProbe;
+    return {
+      bottomDistance: element.scrollHeight - element.scrollTop - element.clientHeight,
+      shortcutVisible: Boolean(document.querySelector('.cwu-scroll-latest')),
+      heights: probe?.samples?.heights || [],
+      positions: probe?.samples?.positions || [],
+    };
+  });
+  const completedViewportHeights = new Set(completedScrollResult.heights);
+  const completedScrollReversed = completedScrollResult.positions.some((position, index, positions) => (
+    index > 0 && position < positions[index - 1] - 1
+  ));
+  if (
+    completedScrollResult.bottomDistance >= 4
+    || completedScrollResult.shortcutVisible
+    || completedViewportHeights.size !== 1
+    || completedScrollReversed
+  ) {
+    throw new Error(`Completed response jittered while scrolling down: ${JSON.stringify(completedScrollResult)}`);
+  }
   const latestProcess = page.locator('details.cwu-commentary-group').last();
   await latestProcess.getByText('Preparing browser smoke', { exact: true }).waitFor();
   if (!await latestProcess.evaluate((details) => details.open)) {
@@ -492,7 +553,7 @@ try {
   if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, recent-Session root return, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, uploaded-image message thumbnail/lightbox, upward-reading stability during streaming, durable generated-image media/lightbox, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, recent-Session root return, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, uploaded-image message thumbnail/lightbox, upward-reading stability during streaming, completed-response downward-scroll stability, durable generated-image media/lightbox, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);
