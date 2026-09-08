@@ -407,6 +407,7 @@ export class EnvironmentSessionStore {
         for (const message of session.messages) {
           if (message.turnId === event.runtimeTurnId) message.turnStatus = event.payload?.status || 'completed';
         }
+        publishTurnMedia(session, event.runtimeTurnId);
       } else if (event.type === 'request_opened') {
         session.status = 'waiting';
       } else if (['request_resolved', 'request_rejected', 'request_expired'].includes(event.type)) {
@@ -674,11 +675,12 @@ function sharedContinuationMessages(messages, uuid, now) {
     phase: message?.phase === 'commentary' ? 'commentary' : 'answer',
     content: String(message?.content || '').slice(0, 200_000),
     attachments: Array.isArray(message?.attachments) ? structuredClone(message.attachments) : [],
+    media: Array.isArray(message?.media) ? structuredClone(message.media) : [],
     turnId: null,
     turnStatus: 'completed',
     copiedFromShared: true,
     createdAt: validTimestamp(message?.createdAt) || now(),
-  })).filter((message) => message.content || message.attachments.length);
+  })).filter((message) => message.content || message.attachments.length || message.media.length);
 }
 
 function validTimestamp(value) {
@@ -732,7 +734,19 @@ function applyRuntimeItem(session, event) {
     else if (!session.messages.some((candidate) => candidate.role === role && candidate.turnId === message.turnId && candidate.content === content)) {
       session.messages.push(message);
     }
+    if (role === 'assistant' && message.phase !== 'commentary') publishTurnMedia(session, event.runtimeTurnId);
     return;
+  }
+  if (item.type === 'imageGeneration' && item.publishedMedia) {
+    const turnId = String(event.runtimeTurnId || '');
+    if (turnId) {
+      session.publishedMediaByTurn ||= {};
+      const media = session.publishedMediaByTurn[turnId] ||= [];
+      if (!media.some((candidate) => candidate.resourceId === item.publishedMedia.resourceId)) {
+        media.push(structuredClone(item.publishedMedia));
+      }
+      publishTurnMedia(session, turnId);
+    }
   }
   const id = String(item.id || `technical-${event.runtimeTurnId || 'unknown'}-${session.technicalItems.length}`);
   const existing = session.technicalItems.find((candidate) => candidate.id === id);
@@ -760,6 +774,32 @@ function bindLatestUserMessage(session, turnId) {
   if (message) {
     message.turnId = turnId;
     message.turnStatus = 'inProgress';
+  }
+}
+
+function publishTurnMedia(session, turnId) {
+  const published = session.publishedMediaByTurn?.[turnId];
+  if (!Array.isArray(published) || !published.length) return;
+  const targets = session.messages.filter((message) => (
+    message.role === 'assistant' && message.phase !== 'commentary' && message.turnId === turnId
+  ));
+  const target = targets.at(-1);
+  if (!target) return;
+  const publishedIds = new Set(published.map((media) => media.resourceId));
+  for (const message of targets) {
+    const retained = (message.media || []).filter((media) => !publishedIds.has(media?.resourceId));
+    if (message === target) {
+      const seen = new Set(retained.map((media) => media?.resourceId).filter(Boolean));
+      message.media = [...retained, ...published.filter((media) => {
+        if (!media?.resourceId || seen.has(media.resourceId)) return false;
+        seen.add(media.resourceId);
+        return true;
+      })];
+    } else if (retained.length) {
+      message.media = retained;
+    } else {
+      delete message.media;
+    }
   }
 }
 
@@ -804,7 +844,15 @@ function runtimeItemTitle(item) {
 
 function runtimeItemDetail(item) {
   const sections = [];
-  if (item.type === 'reasoning') {
+  if (item.type === 'imageGeneration') {
+    addRuntimeSection(
+      sections,
+      'Publication',
+      item.publishedMedia
+        ? 'Generated image published as a Session resource.'
+        : item.publicationError?.code || 'Generated image was not published.',
+    );
+  } else if (item.type === 'reasoning') {
     addRuntimeSection(sections, 'Summary', Array.isArray(item.summary) ? item.summary.join('\n') : item.summary);
   } else if (item.type === 'mcpToolCall') {
     addRuntimeSection(sections, 'Input', runtimeValueText(item.arguments));

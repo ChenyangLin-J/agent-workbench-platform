@@ -14,9 +14,15 @@ import {
 } from '../src/environment/index.js';
 import { FilesystemResourceStore } from '../src/filesystem-resource-store.js';
 import { RESOURCE_SCHEMA } from '../src/resources.js';
-import { minimalHostSessionPresentation, selectMinimalHostSession } from '../src/environment/host-presentation.js';
+import {
+  minimalHostSessionPresentation,
+  selectMinimalHostSession,
+  shouldAutoCreateMinimalHostSession,
+} from '../src/environment/host-presentation.js';
 import { FakeRuntimeProvider } from './core-testkit.js';
 import { resolveMinimalHostUrl } from '../src/environment/host-url.js';
+
+const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 test('Minimal Host creates and runs project-free Sessions through the Core Kernel', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-'));
@@ -68,6 +74,88 @@ test('Minimal Host creates and runs project-free Sessions through the Core Kerne
   }
   assert.deepEqual(detail.session.messages.map((message) => message.content), ['hello', 'hi']);
   assert.equal('projectId' in detail.session, false);
+});
+
+test('Minimal Host persists native generated images and publishes authorized message media', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-result-image-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const provider = new FakeRuntimeProvider({ capabilities: { fork: true } });
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({
+    manifest: runManifest(root, 'run-result-image'),
+    kernel,
+    sessionStore: store,
+    accessToken: 'result-image-token',
+  });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = { 'content-type': 'application/json', 'x-agent-workbench-token': 'result-image-token' };
+  const created = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST', headers, body: JSON.stringify({ title: 'Result image' }),
+  }).then((response) => response.json()).then((body) => body.session);
+  const submitted = await fetch(`${listening.url}/api/sessions/${created.sessionId}/turns`, {
+    method: 'POST', headers, body: JSON.stringify({ prompt: '生成一张图' }),
+  }).then((response) => response.json());
+  const runtime = provider.createdSessions[0];
+  runtime.emit('event', {
+    type: 'item_completed',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: submitted.result.runtimeTurnId,
+    payload: { item: {
+      id: 'native-result-image',
+      type: 'imageGeneration',
+      status: 'completed',
+      result: ONE_PIXEL_PNG,
+      savedPath: '/private/runtime/generated.png',
+    } },
+  });
+  runtime.emit('event', {
+    type: 'item_completed',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: submitted.result.runtimeTurnId,
+    payload: { item: {
+      id: 'native-result-answer',
+      type: 'agentMessage',
+      phase: 'final_answer',
+      status: 'completed',
+      text: '图片已生成',
+    } },
+  });
+  runtime.complete(submitted.result.runtimeTurnId);
+
+  await eventually(async () => {
+    const detail = await store.get(created.sessionId);
+    return detail.messages.some((message) => message.media?.length === 1);
+  });
+  const detail = await fetch(`${listening.url}/api/sessions/${created.sessionId}`, { headers })
+    .then((response) => response.json()).then((body) => body.session);
+  const answer = detail.messages.find((message) => message.id === 'native-result-answer');
+  assert.equal(answer.media.length, 1);
+  assert.equal(answer.media[0].type, 'resourceImage');
+  assert.equal(answer.media[0].mimeType, 'image/png');
+  const resourceId = answer.media[0].resourceId;
+  const content = await fetch(
+    `${listening.url}/api/sessions/${created.sessionId}/attachments/${resourceId}/content`,
+    { headers },
+  );
+  assert.equal(content.status, 200);
+  assert.equal(content.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await content.arrayBuffer()), Buffer.from(ONE_PIXEL_PNG, 'base64'));
+  const persisted = await readFile(join(root, 'state', 'sessions.json'), 'utf8');
+  assert.equal(persisted.includes(ONE_PIXEL_PNG), false);
+  assert.equal(persisted.includes('/private/runtime/generated.png'), false);
+  const branch = await fetch(`${listening.url}/api/sessions/${created.sessionId}/branches`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ replaceTurnId: submitted.result.runtimeTurnId, intent: 'fork' }),
+  }).then((response) => response.json()).then((body) => body.session);
+  const branchMedia = branch.messages.find((message) => message.role === 'assistant').media[0];
+  assert.notEqual(branchMedia.resourceId, resourceId);
+  assert.equal((await fetch(
+    `${listening.url}/api/sessions/${branch.sessionId}/attachments/${branchMedia.resourceId}/content`,
+    { headers },
+  )).status, 200);
 });
 
 test('Minimal Host defers an empty Runtime thread so the first Turn survives a Host restart', async (t) => {
@@ -1021,6 +1109,22 @@ test('Minimal Host presentation selects the newest available Session and preserv
   assert.equal(selectMinimalHostSession(sessions, null, { fallback: 'none' }), null);
   assert.equal(selectMinimalHostSession(sessions, 'older', { fallback: 'none' }), 'older');
   assert.equal(selectMinimalHostSession([], 'missing'), null);
+  assert.equal(shouldAutoCreateMinimalHostSession({
+    startsWithNewSession: true,
+    sessionsLoaded: true,
+    sessions: [],
+  }), true);
+  assert.equal(shouldAutoCreateMinimalHostSession({
+    startsWithNewSession: true,
+    sessionsLoaded: true,
+    sessions,
+  }), false);
+  assert.equal(shouldAutoCreateMinimalHostSession({
+    startsWithNewSession: true,
+    sessionsLoaded: true,
+    sessions: [],
+    initialSessionId: 'deep-link',
+  }), false);
   assert.deepEqual(minimalHostSessionPresentation({ title: 'New Session', contextLabel: 'Environment' }), {
     title: '新对话',
     contextLabel: '',

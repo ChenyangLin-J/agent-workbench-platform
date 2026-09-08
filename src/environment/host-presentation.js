@@ -19,6 +19,22 @@ export function minimalHostSessionPresentation(session = {}) {
   };
 }
 
+export function shouldAutoCreateMinimalHostSession({
+  creationAttempted = false,
+  initialSessionId = null,
+  selectedId = null,
+  sessions = [],
+  sessionsLoaded = false,
+  startsWithNewSession = false,
+} = {}) {
+  return startsWithNewSession
+    && !initialSessionId
+    && sessionsLoaded
+    && sessions.length === 0
+    && !selectedId
+    && !creationAttempted;
+}
+
 function sessionIdentifier(session) {
   const value = session?.sessionId || session?.id;
   return value == null ? null : String(value);

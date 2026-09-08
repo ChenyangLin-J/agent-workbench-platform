@@ -122,6 +122,94 @@ test('Session store keeps one product-visible user message when Runtime echoes a
   );
 });
 
+test('Session store publishes generated media only on the final Agent message and deduplicates retries', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-result-media-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot });
+  const session = await store.create({ title: 'Generated image' });
+  await store.recordUserInput(session.sessionId, '生成图片', { turnId: 'turn-image' });
+  const media = {
+    type: 'resourceImage',
+    resourceId: 'res_generated-image-1',
+    name: 'generated-image-1.png',
+    mimeType: 'image/png',
+    size: 68,
+  };
+  const imageEvent = {
+    type: 'item_completed',
+    sessionId: session.sessionId,
+    runtimeTurnId: 'turn-image',
+    createdAt: 1_700_000_000_000,
+    payload: { item: {
+      id: 'image-1',
+      type: 'imageGeneration',
+      status: 'completed',
+      publishedMedia: media,
+    } },
+  };
+  await store.applyEvent(imageEvent);
+  await store.applyEvent({
+    type: 'item_completed',
+    sessionId: session.sessionId,
+    runtimeTurnId: 'turn-image',
+    createdAt: 1_700_000_001_000,
+    payload: { item: {
+      id: 'commentary-image-turn',
+      type: 'agentMessage',
+      phase: 'commentary',
+      status: 'completed',
+      text: '图片已准备',
+    } },
+  });
+  assert.equal((await store.get(session.sessionId)).messages.at(-1).media, undefined);
+  await store.applyEvent({
+    type: 'item_completed',
+    sessionId: session.sessionId,
+    runtimeTurnId: 'turn-image',
+    createdAt: 1_700_000_002_000,
+    payload: { item: {
+      id: 'answer-image-turn',
+      type: 'agentMessage',
+      phase: 'final_answer',
+      status: 'completed',
+      text: '这是生成结果',
+    } },
+  });
+  await store.applyEvent(imageEvent);
+  const view = await store.get(session.sessionId);
+  const commentary = view.messages.find((message) => message.phase === 'commentary');
+  const answer = view.messages.find((message) => message.id === 'answer-image-turn');
+  assert.equal(commentary.media, undefined);
+  assert.deepEqual(answer.media, [media]);
+  const persisted = await readFile(join(stateRoot, 'sessions.json'), 'utf8');
+  assert.equal(persisted.includes('data:image/'), false);
+  assert.equal(persisted.includes('savedPath'), false);
+});
+
+test('Session store never persists raw generated-image bytes when publication is unavailable', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-unpublished-image-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot });
+  const session = await store.create({ title: 'Unpublished image' });
+  await store.applyEvent({
+    type: 'item_completed',
+    sessionId: session.sessionId,
+    runtimeTurnId: 'turn-unpublished-image',
+    payload: { item: {
+      id: 'image-unpublished',
+      type: 'imageGeneration',
+      status: 'completed',
+      result: 'PRIVATE_BASE64_IMAGE_PAYLOAD',
+      savedPath: '/private/runtime/unpublished.png',
+    } },
+  });
+  const view = await store.get(session.sessionId);
+  assert.match(view.technicalItems[0].detail, /Generated image was not published/);
+  const persisted = await readFile(join(stateRoot, 'sessions.json'), 'utf8');
+  assert.equal(persisted.includes('PRIVATE_BASE64_IMAGE_PAYLOAD'), false);
+  assert.equal(persisted.includes('/private/runtime/unpublished.png'), false);
+});
+
 test('Session store serializes concurrent binding updates without losing fields', async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-'));
   t.after(() => rm(stateRoot, { recursive: true, force: true }));

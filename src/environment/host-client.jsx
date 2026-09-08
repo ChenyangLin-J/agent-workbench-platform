@@ -5,7 +5,11 @@ import { SessionClientOperationController } from '../session-client.js';
 import { SessionBrowser } from '../ui/index.jsx';
 import { sessionMessageBranchEligibility } from '../features/session-branch.js';
 import { maintainMinimalHostEventStream } from './host-event-stream.js';
-import { minimalHostSessionPresentation, selectMinimalHostSession } from './host-presentation.js';
+import {
+  minimalHostSessionPresentation,
+  selectMinimalHostSession,
+  shouldAutoCreateMinimalHostSession,
+} from './host-presentation.js';
 import { resolveMinimalHostUrl } from './host-url.js';
 import '../ui/styles.css';
 import './assets/host.css';
@@ -22,27 +26,9 @@ const startsWithNewSession = bootstrap.sessionStart === 'new';
 const initialSessionId = new URLSearchParams(globalThis.location?.search || '').get('session');
 const RUNNING_SESSION_POLL_MS = 2_000;
 const SHARED_SESSION_POLL_MS = 5_000;
-const DEFAULT_SESSION_STORAGE_KEY = 'agent-workbench.minimal-host.default-session.v1';
 
 function hostUrl(path) {
   return resolveMinimalHostUrl(path, { baseUrl: hostBaseUrl });
-}
-
-function restoreDefaultSessionId() {
-  try {
-    return globalThis.sessionStorage?.getItem(DEFAULT_SESSION_STORAGE_KEY) || null;
-  } catch {
-    return null;
-  }
-}
-
-function rememberDefaultSessionId(sessionId) {
-  try {
-    if (sessionId) globalThis.sessionStorage?.setItem(DEFAULT_SESSION_STORAGE_KEY, sessionId);
-    else globalThis.sessionStorage?.removeItem(DEFAULT_SESSION_STORAGE_KEY);
-  } catch {
-    // Storage may be unavailable in privacy-restricted browser contexts.
-  }
 }
 
 function MinimalHostApp() {
@@ -55,17 +41,93 @@ function MinimalHostApp() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [continuing, setContinuing] = useState(false);
+  const [documentPreview, setDocumentPreview] = useState(null);
   const continuationKey = useRef(null);
+  const documentPreviewUrl = useRef(null);
+  const sessionMediaUrls = useRef({ sessionId: null, entries: new Map() });
   const openedShares = useRef(new Set());
   const refreshTimer = useRef(null);
   const refreshRunning = useRef(false);
   const refreshQueued = useRef(false);
   const operationController = useRef(null);
-  const defaultSessionCreationAttempted = useRef(false);
-  const defaultSessionId = useRef(
-    startsWithNewSession && !initialSessionId ? restoreDefaultSessionId() : null,
-  );
+  const automaticSessionCreationAttempted = useRef(false);
   operationController.current ||= new SessionClientOperationController();
+
+  const closeDocumentPreview = useCallback(() => {
+    setDocumentPreview(null);
+    if (documentPreviewUrl.current) URL.revokeObjectURL(documentPreviewUrl.current);
+    documentPreviewUrl.current = null;
+  }, []);
+
+  const clearSessionMediaUrls = useCallback((sessionId = null) => {
+    if (sessionId && sessionMediaUrls.current.sessionId !== sessionId) return;
+    for (const entry of sessionMediaUrls.current.entries.values()) {
+      if (entry.url) URL.revokeObjectURL(entry.url);
+    }
+    sessionMediaUrls.current = { sessionId: null, entries: new Map() };
+  }, []);
+
+  const loadSessionMediaUrl = useCallback(async (sessionId, media) => {
+    const resourceId = String(media?.resourceId || media?.attachmentId || '').trim();
+    if (!sessionId || !resourceId) return String(media?.src || '');
+    if (sessionMediaUrls.current.sessionId !== sessionId) {
+      clearSessionMediaUrls();
+      sessionMediaUrls.current.sessionId = sessionId;
+    }
+    const cached = sessionMediaUrls.current.entries.get(resourceId);
+    if (cached) return cached.promise;
+    const entry = { promise: null, url: '' };
+    entry.promise = fetch(hostUrl(
+      `api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(resourceId)}/content`,
+    ), {
+      headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
+    }).then(async (response) => {
+      if (!response.ok) throw new Error(`图片读取失败 (${response.status})`);
+      const blob = await response.blob();
+      if (!String(blob.type || media.mimeType || '').toLowerCase().startsWith('image/')) {
+        throw new Error('资源不是可预览图片');
+      }
+      const url = URL.createObjectURL(blob);
+      if (sessionMediaUrls.current.sessionId !== sessionId
+        || sessionMediaUrls.current.entries.get(resourceId) !== entry) {
+        URL.revokeObjectURL(url);
+        return '';
+      }
+      entry.url = url;
+      return url;
+    }).catch((error) => {
+      if (sessionMediaUrls.current.entries.get(resourceId) === entry) {
+        sessionMediaUrls.current.entries.delete(resourceId);
+      }
+      throw error;
+    });
+    sessionMediaUrls.current.entries.set(resourceId, entry);
+    return entry.promise;
+  }, [clearSessionMediaUrls]);
+
+  const presentSession = useCallback(async (value) => {
+    const presented = minimalHostSessionPresentation(value);
+    if (!attachmentsEnabled || !presented.sessionId) return presented;
+    const messages = await Promise.all((presented.messages || []).map(async (message) => ({
+      ...message,
+      media: (await Promise.all((message.media || []).map(async (media) => {
+        if (media?.src) return media;
+        const src = await loadSessionMediaUrl(presented.sessionId, media).catch(() => '');
+        if (!src) return null;
+        return {
+          id: media.resourceId,
+          kind: 'image',
+          src,
+          alt: media.name || '图片',
+          name: media.name || '图片',
+          attachmentId: media.resourceId,
+          mimeType: media.mimeType,
+          size: media.size,
+        };
+      }))).filter(Boolean),
+    })));
+    return { ...presented, messages };
+  }, [loadSessionMediaUrl]);
 
   const request = useCallback(async (path, options = {}) => {
     const response = await fetch(hostUrl(path), {
@@ -133,19 +195,31 @@ function MinimalHostApp() {
     );
     setSessions(nextSessions);
     setSessionsLoaded(true);
-    selectSessionId((current) => selectMinimalHostSession(nextSessions, current || defaultSessionId.current, {
-      fallback: startsWithNewSession && !initialSessionId ? 'none' : 'newest',
-    }));
+    selectSessionId((current) => selectMinimalHostSession(nextSessions, current, { fallback: 'newest' }));
     return nextSessions;
   }, [request, selectSessionId]);
 
   const refreshSession = useCallback(async (sessionId = selectedIdRef.current) => {
     if (!sessionId) return null;
     const body = await request(`api/sessions/${encodeURIComponent(sessionId)}`);
-    const nextSession = messageActionPresentation(minimalHostSessionPresentation(body.session));
-    if (selectedIdRef.current === sessionId) setSession(nextSession);
+    if (selectedIdRef.current !== sessionId) return null;
+    const nextSession = messageActionPresentation(await presentSession(body.session));
+    if (selectedIdRef.current !== sessionId) {
+      clearSessionMediaUrls(sessionId);
+      return null;
+    }
+    setSession(nextSession);
     return nextSession;
-  }, [request]);
+  }, [clearSessionMediaUrls, presentSession, request]);
+
+  useEffect(() => {
+    closeDocumentPreview();
+    clearSessionMediaUrls();
+    return () => {
+      closeDocumentPreview();
+      clearSessionMediaUrls();
+    };
+  }, [clearSessionMediaUrls, closeDocumentPreview, selectedId]);
 
   const scheduleRefresh = useCallback(() => {
     refreshQueued.current = true;
@@ -239,10 +313,6 @@ function MinimalHostApp() {
         body: JSON.stringify(operation.payload),
       });
       operationController.current.complete(operation);
-      if (startsWithNewSession && !initialSessionId) {
-        defaultSessionId.current = body.session.sessionId;
-        rememberDefaultSessionId(body.session.sessionId);
-      }
       selectSessionId(body.session.sessionId);
       await refreshSessions();
     } catch (nextError) {
@@ -251,16 +321,17 @@ function MinimalHostApp() {
   }
 
   useEffect(() => {
-    if (
-      !startsWithNewSession
-      || initialSessionId
-      || !sessionsLoaded
-      || selectedId
-      || defaultSessionCreationAttempted.current
-    ) return;
-    defaultSessionCreationAttempted.current = true;
+    if (!shouldAutoCreateMinimalHostSession({
+      creationAttempted: automaticSessionCreationAttempted.current,
+      initialSessionId,
+      selectedId,
+      sessions,
+      sessionsLoaded,
+      startsWithNewSession,
+    })) return;
+    automaticSessionCreationAttempted.current = true;
     void createSession();
-  }, [selectedId, sessionsLoaded]);
+  }, [selectedId, sessions.length, sessionsLoaded]);
 
   async function continueSharedSession() {
     if (!selectedId || continuing) return;
@@ -280,6 +351,7 @@ function MinimalHostApp() {
       selectSessionId(nextSession.sessionId);
       setSession(nextSession);
       await refreshSessions();
+      await refreshSession(nextSession.sessionId);
       setNotice('已创建副本，可以继续提问。');
       if (sourceShareId && sessionSharing) {
         void productRequest(`session-shares/${encodeURIComponent(sourceShareId)}/forked`, {
@@ -310,10 +382,6 @@ function MinimalHostApp() {
         throw new Error('这条消息仍在确认中，请稍后重试。');
       }
       operationController.current.complete(operation);
-      if (defaultSessionId.current === selectedId) {
-        defaultSessionId.current = null;
-        rememberDefaultSessionId(null);
-      }
       setSession((current) => current ? { ...current, status: 'running', statusLabel: '正在处理' } : current);
       scheduleRefresh();
     } catch (nextError) {
@@ -338,9 +406,24 @@ function MinimalHostApp() {
   }
 
   async function openAttachment(attachment) {
-    if (!selectedId || !attachment?.id) return;
+    if (!selectedId || !attachment) return;
+    if (attachment.kind === 'image' && attachment.previewUrl) {
+      closeDocumentPreview();
+      setDocumentPreview({
+        name: attachment.name || '图片',
+        format: 'image',
+        mimeType: attachment.mimeType || 'image/*',
+        size: attachment.size || 0,
+        src: attachment.previewUrl,
+        downloadUrl: attachment.previewUrl,
+        attachmentId: attachment.id || null,
+      });
+      return;
+    }
+    if (!attachment.id) return;
+    const openingSessionId = selectedId;
     const response = await fetch(hostUrl(
-      `api/sessions/${encodeURIComponent(selectedId)}/attachments/${encodeURIComponent(attachment.id)}/content`,
+      `api/sessions/${encodeURIComponent(openingSessionId)}/attachments/${encodeURIComponent(attachment.id)}/content`,
     ), {
       headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
     });
@@ -348,7 +431,26 @@ function MinimalHostApp() {
       const body = await response.json().catch(() => ({}));
       throw new Error(body.error?.message || `附件读取失败 (${response.status})`);
     }
-    const objectUrl = URL.createObjectURL(await response.blob());
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    if (selectedIdRef.current !== openingSessionId) {
+      URL.revokeObjectURL(objectUrl);
+      return;
+    }
+    if (attachment.kind === 'image' || String(blob.type || attachment.mimeType || '').toLowerCase().startsWith('image/')) {
+      closeDocumentPreview();
+      documentPreviewUrl.current = objectUrl;
+      setDocumentPreview({
+        name: attachment.name || '图片',
+        format: 'image',
+        mimeType: blob.type || attachment.mimeType || 'image/*',
+        size: blob.size || attachment.size || 0,
+        src: objectUrl,
+        downloadUrl: objectUrl,
+        attachmentId: attachment.id,
+      });
+      return;
+    }
     globalThis.open(objectUrl, '_blank', 'noopener');
     setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
   }
@@ -377,6 +479,7 @@ function MinimalHostApp() {
       selectSessionId(nextSession.sessionId);
       setSession(nextSession);
       await refreshSessions();
+      await refreshSession(nextSession.sessionId);
       scheduleRefresh();
       return nextSession;
     } catch (nextError) {
@@ -405,6 +508,7 @@ function MinimalHostApp() {
   const sessionBranchable = !sharedReadOnly;
   const detail = useMemo(() => session ? {
     session,
+    documentPreview,
     features: {
       attachments: attachmentsEnabled ? 'visible' : 'hidden',
       externalLink: false,
@@ -423,6 +527,7 @@ function MinimalHostApp() {
       onUploadAttachments: attachmentsEnabled && sessionMutable ? uploadAttachments : null,
       onResolveDroppedDirectories: attachmentsEnabled && sessionMutable ? resolveDroppedDirectories : null,
       onOpenAttachment: attachmentsEnabled ? openAttachment : null,
+      onCloseDocument: closeDocumentPreview,
       onInterrupt: sessionMutable && session.status === 'running' ? interrupt : null,
       onEditMessage: messageEditEnabled && sessionBranchable ? (input) => branchMessage(input, 'edit') : null,
       onForkMessage: messageForkEnabled && sessionBranchable ? (input) => branchMessage(input, 'fork') : null,
@@ -452,7 +557,7 @@ function MinimalHostApp() {
         </div>
       ) : null,
     },
-  } : null, [session, selectedId, sessionMutable, sessionBranchable, sharedReadOnly, continuing, productRequest]);
+  } : null, [session, documentPreview, selectedId, sessionMutable, sessionBranchable, sharedReadOnly, continuing, productRequest]);
 
   const runtimeError = session?.status === 'error'
     ? userFacingRuntimeError(session.runtimeBinding?.lastError)

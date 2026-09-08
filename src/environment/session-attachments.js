@@ -177,37 +177,54 @@ export async function cloneEnvironmentSessionMessageAttachments({
   const normalizedTargetSessionId = normalizeSessionId(targetSessionId);
   const resourceStore = attachmentStore({ root, store });
   const cloned = new Map();
+  async function cloneResource(resourceId, turnId = null) {
+    if (!cloned.has(resourceId)) {
+      cloned.set(resourceId, (async () => {
+        const opened = await resourceStore.read(resourceId, { sessionId: normalizedSourceSessionId });
+        if (opened.descriptor.mode !== 'managed') return null;
+        const staged = await resourceStore.stage({
+          kind: opened.descriptor.kind,
+          owner: { sessionId: normalizedTargetSessionId },
+          display: opened.descriptor.display,
+          bytes: opened.bytes,
+          originType: 'migration',
+          capabilities: {
+            preview: opened.descriptor.capabilities.preview === true,
+            download: opened.descriptor.capabilities.download === true,
+            openInWorkspace: false,
+          },
+        });
+        return resourceStore.commit(staged.id, {
+          sessionId: normalizedTargetSessionId,
+          turnId,
+        });
+      })());
+    }
+    return cloned.get(resourceId);
+  }
   const sourceMessages = Array.isArray(messages) ? messages : [];
-  return Promise.all(sourceMessages.map(async (message) => ({
-    ...message,
-    attachments: (await Promise.all((message?.attachments || []).map(async (attachment) => {
+  return Promise.all(sourceMessages.map(async (message) => {
+    const attachments = (await Promise.all((message?.attachments || []).map(async (attachment) => {
       const resource = attachment?.resource;
       const resourceId = String(attachment?.id || resource?.id || '').trim();
       if (!resourceId || resource?.mode === 'external') return null;
-      if (!cloned.has(resourceId)) {
-        cloned.set(resourceId, (async () => {
-          const opened = await resourceStore.read(resourceId, { sessionId: normalizedSourceSessionId });
-          if (opened.descriptor.mode !== 'managed') return null;
-          const staged = await resourceStore.stage({
-            kind: opened.descriptor.kind,
-            owner: { sessionId: normalizedTargetSessionId },
-            display: opened.descriptor.display,
-            bytes: opened.bytes,
-            originType: 'migration',
-            capabilities: {
-              preview: opened.descriptor.capabilities.preview === true,
-              download: opened.descriptor.capabilities.download === true,
-              openInWorkspace: false,
-            },
-          });
-          return browserAttachment(await resourceStore.commit(staged.id, {
-            sessionId: normalizedTargetSessionId,
-          }));
-        })());
-      }
-      return cloned.get(resourceId);
-    }))).filter(Boolean),
-  })));
+      const descriptor = await cloneResource(resourceId, message?.turnId || null);
+      return descriptor ? browserAttachment(descriptor) : null;
+    }))).filter(Boolean);
+    const media = (await Promise.all((message?.media || []).map(async (item) => {
+      const resourceId = String(item?.resourceId || '').trim();
+      if (!resourceId) return null;
+      const descriptor = await cloneResource(resourceId, message?.turnId || null);
+      return descriptor ? {
+        type: 'resourceImage',
+        resourceId: descriptor.id,
+        name: descriptor.display.name,
+        mimeType: descriptor.display.mimeType,
+        size: descriptor.display.size,
+      } : null;
+    }))).filter(Boolean);
+    return { ...message, attachments, media };
+  }));
 }
 
 async function openRequestedAttachment(store, attachment, sessionId) {

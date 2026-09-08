@@ -14,6 +14,7 @@ import {
 } from '../src/environment/index.js';
 import { FakeRuntimeProvider } from '../test/core-testkit.js';
 
+const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 const root = await mkdtemp(join(tmpdir(), 'awb-browser-smoke-'));
 const provider = new FakeRuntimeProvider({ capabilities: { fork: true, steer: true } });
 const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
@@ -181,6 +182,24 @@ try {
       uploadError: await page.locator('.cwu-attachment-error').allTextContents(),
     })}`, { cause: error });
   }
+  await page.locator('.cwu-session-header').evaluate((element, encodedPng) => {
+    const bytes = Uint8Array.from(atob(encodedPng), (character) => character.charCodeAt(0));
+    const file = new File([bytes], 'browser-preview.png', { type: 'image/png' });
+    const dataTransfer = {
+      types: ['Files'],
+      items: [{ kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => null }],
+      files: [file],
+      dropEffect: 'none',
+      getData: () => '',
+    };
+    for (const type of ['dragenter', 'dragover', 'drop']) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+      element.dispatchEvent(event);
+    }
+  }, ONE_PIXEL_PNG);
+  await page.locator('.cwu-attachment', { hasText: 'browser-preview.png' })
+    .getByText('已就绪', { exact: false }).waitFor();
   await composer.fill('browser smoke');
   const submittedTurnRequest = page.waitForRequest((request) => (
     request.method() === 'POST' && /\/api\/sessions\/[^/]+\/turns$/.test(new URL(request.url()).pathname)
@@ -203,6 +222,12 @@ try {
     throw new Error('Browser attachment was not passed to Runtime input.');
   }
   await page.getByText('browser smoke', { exact: true }).first().waitFor();
+  const uploadedImage = page.locator('.cwu-message.is-user .cwu-message-attachment', { hasText: 'browser-preview.png' });
+  await uploadedImage.waitFor();
+  await uploadedImage.click();
+  await page.getByRole('dialog', { name: '文件预览：browser-preview.png' }).waitFor();
+  await page.getByRole('button', { name: '关闭文件预览' }).click();
+  await page.getByRole('dialog', { name: '文件预览：browser-preview.png' }).waitFor({ state: 'detached' });
 
   const runtime = provider.createdSessions[0];
   proxyState.dropEventStreams();
@@ -246,6 +271,19 @@ try {
     runtimeSessionId: runtime.runtimeSessionId,
     runtimeTurnId: runtime.activeTurnId,
     providerEvent: 'item/completed',
+    payload: { item: {
+      id: 'browser-smoke-generated',
+      type: 'imageGeneration',
+      status: 'completed',
+      result: ONE_PIXEL_PNG,
+      savedPath: '/private/runtime/browser-smoke-generated.png',
+    } },
+  });
+  runtime.emit('event', {
+    type: 'item_completed',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: runtime.activeTurnId,
+    providerEvent: 'item/completed',
     createdAt: Date.parse('2026-09-03T10:19:38.250Z'),
     payload: { item: {
       id: 'browser-smoke-tool',
@@ -260,6 +298,17 @@ try {
   });
   runtime.complete();
   await page.getByText('Browser smoke OK', { exact: true }).waitFor();
+  const generatedImage = page.getByRole('button', { name: '查看图片：generated-browser-smoke-generated.png' });
+  await generatedImage.waitFor();
+  await generatedImage.click();
+  await page.getByRole('dialog', { name: '文件预览：generated-browser-smoke-generated.png' }).waitFor();
+  await page.getByRole('button', { name: '关闭文件预览' }).click();
+  await page.reload();
+  await page.getByText('1 个对话', { exact: true }).waitFor();
+  await page.getByText('Browser smoke OK', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '查看图片：generated-browser-smoke-generated.png' }).click();
+  await page.getByRole('dialog', { name: '文件预览：generated-browser-smoke-generated.png' }).waitFor();
+  await page.getByRole('button', { name: '关闭文件预览' }).click();
   const latestProcess = page.locator('details.cwu-commentary-group').last();
   await latestProcess.getByText('Preparing browser smoke', { exact: true }).waitFor();
   if (!await latestProcess.evaluate((details) => details.open)) {
@@ -390,7 +439,7 @@ try {
   if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, recent-Session root return, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, uploaded-image lightbox, durable generated-image media/lightbox, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

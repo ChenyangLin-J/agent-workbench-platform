@@ -74,10 +74,13 @@ test('Minimal Host browser mutations use reusable idempotency operations', async
   assert.match(source, /result\.idempotent && result\.pending/);
   assert.match(source, /operationController\.current\.complete\(operation\)/);
   assert.match(source, /bootstrap\.sessionStart === 'new'/);
-  assert.match(source, /defaultSessionCreationAttempted/);
-  assert.match(source, /agent-workbench\.minimal-host\.default-session\.v1/);
-  assert.match(source, /defaultSessionId\.current === selectedId/);
-  assert.match(source, /fallback: startsWithNewSession && !initialSessionId \? 'none' : 'newest'/);
+  assert.match(source, /automaticSessionCreationAttempted/);
+  assert.match(source, /shouldAutoCreateMinimalHostSession/);
+  assert.match(source, /fallback: 'newest'/);
+  assert.doesNotMatch(source, /agent-workbench\.minimal-host\.default-session/);
+  assert.match(source, /documentPreview/);
+  assert.match(source, /onCloseDocument: closeDocumentPreview/);
+  assert.match(source, /URL\.revokeObjectURL/);
 });
 
 test('Session browser keeps header actions on one row at constrained widths', async () => {
