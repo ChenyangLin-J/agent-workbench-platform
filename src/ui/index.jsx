@@ -1641,7 +1641,7 @@ export function SessionWorkspace({
                     <span aria-hidden="true">＋</span>附件
                   </label>
                 ) : null}
-                {view.models.length && actions.onExecutionProfileChange ? (
+                {!running && view.models.length && actions.onExecutionProfileChange ? (
                   <div className="cwu-execution-controls" aria-label={labels.executionSettings || '执行设置'}>
                     <label title={labels.model || '模型'}>
                       <span>{labels.model || '模型'}</span>
@@ -1700,7 +1700,7 @@ export function SessionWorkspace({
                       type="button"
                     >⚡ Fast</button>
                   </div>
-                ) : view.executionProfile.label ? <span className="cwu-execution-profile">{view.executionProfile.label}</span> : null}
+                ) : !running && view.executionProfile.label ? <span className="cwu-execution-profile">{view.executionProfile.label}</span> : null}
               </div>
               <div className="cwu-composer-actions">
                 {running && actions.onInterrupt ? (

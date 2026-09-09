@@ -137,6 +137,61 @@ test('Session item merging keeps an authoritative id for a semantic live duplica
   assert.deepEqual(mergeSessionItems([canonical], [live]), [canonical]);
 });
 
+test('Session item merging collapses an attachment-only optimistic copy without losing canonical media', () => {
+  const canonical = {
+    id: 'message-1',
+    turnId: 'turn-1',
+    type: 'userMessage',
+    content: [
+      {
+        type: 'text',
+        text: '<agent-workbench-attachment id="res_attachment_1" name="screenshot.png" kind="image" mime="image%2Fpng" size="42">\n\n</agent-workbench-attachment>',
+      },
+      { type: 'localImage', path: '/tmp/attachment-1.png' },
+    ],
+  };
+  const optimistic = {
+    id: 'local-1',
+    turnId: 'turn-1',
+    type: 'userMessage',
+    content: [
+      { type: 'text', text: '' },
+      { type: 'attachment', id: 'res_attachment_1', name: 'screenshot.png', kind: 'image', mimeType: 'image/png', size: 42 },
+    ],
+  };
+
+  assert.deepEqual(mergeSessionItems([canonical], [optimistic]), [canonical]);
+});
+
+test('Session item upsert replaces an attachment-only optimistic copy with canonical media', () => {
+  const session = {
+    items: [{
+      id: 'local-1',
+      turnId: 'turn-1',
+      type: 'userMessage',
+      content: [
+        { type: 'text', text: '' },
+        { type: 'attachment', id: 'res_attachment_1', name: 'screenshot.png', kind: 'image', mimeType: 'image/png', size: 42 },
+      ],
+    }],
+  };
+  upsertSessionItem(session, {
+    id: 'message-1',
+    type: 'userMessage',
+    content: [
+      {
+        type: 'text',
+        text: '<agent-workbench-attachment id="res_attachment_1" name="screenshot.png" kind="image" mime="image%2Fpng" size="42">\n\n</agent-workbench-attachment>',
+      },
+      { type: 'localImage', path: '/tmp/attachment-1.png' },
+    ],
+  }, 'turn-1');
+
+  assert.equal(session.items.length, 1);
+  assert.equal(session.items[0].id, 'message-1');
+  assert.equal(session.items[0].content[1].type, 'localImage');
+});
+
 test('Session event classification is product-neutral', () => {
   assert.equal(sessionEventThreadId({ params: { turn: { threadId: 'session-1' } } }), 'session-1');
   assert.equal(sessionEventTurnId({ params: { turn: { id: 'turn-1' } } }), 'turn-1');

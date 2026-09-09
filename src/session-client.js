@@ -102,20 +102,50 @@ export function sessionItemAttachmentMarkers(item) {
   }));
 }
 
+function sessionItemSemanticKey(item) {
+  if (!['userMessage', 'agentMessage'].includes(item?.type) || !item.turnId) return null;
+  const presentation = sessionItemAttachmentPresentation(item);
+  const embeddedAttachments = Array.isArray(item.content)
+    ? item.content.filter((part) => part?.type === 'attachment').map((part) => ({
+        id: part.id,
+        name: part.name,
+        kind: part.kind,
+        mimeType: part.mimeType,
+        size: part.size,
+      }))
+    : [];
+  const attachments = presentation.attachments.length
+    ? presentation.attachments
+    : embeddedAttachments;
+  if (!presentation.text && !attachments.length) return null;
+  const attachmentKeys = attachments.map((attachment) => (
+    attachment.id
+      ? ['id', String(attachment.id)]
+      : [
+          'metadata',
+          String(attachment.name || ''),
+          String(attachment.kind || attachment.sourceKind || ''),
+          String(attachment.mimeType || ''),
+          Number(attachment.size) || 0,
+        ]
+  ));
+  return JSON.stringify([item.turnId, item.type, presentation.text, attachmentKeys]);
+}
+
 export function mergeSessionItems(baseItems = [], overlayItems = []) {
   const merged = [];
   const idIndexes = new Map();
   const semanticIndexes = new Map();
   for (const item of [...baseItems, ...overlayItems]) {
-    const semanticKey = ['userMessage', 'agentMessage'].includes(item.type) && item.turnId
-      ? `${item.turnId}:${item.type}:${sessionItemText(item)}`
-      : null;
+    const semanticKey = sessionItemSemanticKey(item);
     const idIndex = item.id ? idIndexes.get(item.id) : undefined;
     const semanticIndex = semanticKey ? semanticIndexes.get(semanticKey) : undefined;
     const index = idIndex ?? semanticIndex;
     if (index !== undefined) {
       const existing = merged[index];
-      merged[index] = { ...existing, ...item, id: existing.id || item.id };
+      merged[index] = idIndex !== undefined
+        ? { ...existing, ...item, id: existing.id || item.id }
+        : { ...item, ...existing, id: existing.id || item.id };
       if (merged[index].id) idIndexes.set(merged[index].id, index);
       if (semanticKey) semanticIndexes.set(semanticKey, index);
       continue;
@@ -190,11 +220,11 @@ export function upsertSessionItem(session, item, turnId) {
   if (!session || !item) return;
   if (!Array.isArray(session.items)) session.items = [];
   const next = { ...item, turnId: turnId || item.turnId };
-  const nextText = ['userMessage', 'agentMessage'].includes(next.type) ? sessionItemText(next) : null;
+  const nextSemanticKey = sessionItemSemanticKey(next);
   const idIndex = next.id ? session.items.findIndex((current) => current.id === next.id) : -1;
-  const semanticIndex = nextText ? session.items.findIndex((current) => current.turnId === next.turnId
-    && current.type === next.type
-    && sessionItemText(current) === nextText) : -1;
+  const semanticIndex = nextSemanticKey
+    ? session.items.findIndex((current) => sessionItemSemanticKey(current) === nextSemanticKey)
+    : -1;
   if (idIndex >= 0 && semanticIndex >= 0 && idIndex !== semanticIndex) {
     session.items[semanticIndex] = {
       ...session.items[semanticIndex],
