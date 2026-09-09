@@ -453,6 +453,15 @@ test('Session UI wraps long transcript content on narrow touch screens', async (
   assert.match(styles, /@media \(max-width: 520px\)[\s\S]*?\.cwu-execution-controls \{[^}]*max-width: none;/);
 });
 
+test('Session Composer responds to its own available width inside consumer sidebars', async () => {
+  const styles = await readFile(stylesUrl, 'utf8');
+
+  assert.match(styles, /\.cwu-composer-wrap \{[^}]*container: cwu-composer \/ inline-size;/);
+  assert.match(styles, /@container cwu-composer \(max-width: 559px\)[\s\S]*?\.cwu-composer-footer \{[^}]*flex-wrap: wrap;/);
+  assert.match(styles, /@container cwu-composer \(max-width: 559px\)[\s\S]*?\.cwu-composer-meta \{[^}]*width: 100%;[^}]*overflow-x: auto;/);
+  assert.match(styles, /@container cwu-composer \(max-width: 559px\)[\s\S]*?\.cwu-composer-actions \{[^}]*width: 100%;[^}]*justify-content: flex-end;/);
+});
+
 test('Side Chat React UI owns shared interaction while products supply actions and storage', async () => {
   const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
   assert.match(source, /export function SideChatPanel/);
