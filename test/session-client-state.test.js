@@ -163,6 +163,30 @@ test('Session item merging collapses an attachment-only optimistic copy without 
   assert.deepEqual(mergeSessionItems([canonical], [optimistic]), [canonical]);
 });
 
+test('Session item merging keeps text submissions stable while canonical attachment metadata catches up', () => {
+  const canonical = {
+    id: 'message-1',
+    turnId: 'turn-1',
+    type: 'userMessage',
+    content: [{
+      type: 'text',
+      text: 'Continue\n<agent-workbench-attachment id="directory-1" name="Project" kind="file" mime="inode%2Fdirectory">\nProject\n</agent-workbench-attachment>',
+    }],
+  };
+  const optimistic = {
+    id: 'local-1',
+    turnId: 'turn-1',
+    type: 'userMessage',
+    content: [
+      { type: 'text', text: 'Continue' },
+      { type: 'attachment', id: 'directory-1', name: 'Project', kind: 'directory', mimeType: 'inode/directory', size: 0 },
+      { type: 'attachment', id: 'file-1', name: 'notes.txt', kind: 'file', mimeType: 'text/plain', size: 12 },
+    ],
+  };
+
+  assert.deepEqual(mergeSessionItems([canonical], [optimistic]), [canonical]);
+});
+
 test('Session item upsert replaces an attachment-only optimistic copy with canonical media', () => {
   const session = {
     items: [{

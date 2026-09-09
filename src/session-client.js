@@ -117,7 +117,8 @@ function sessionItemSemanticKey(item) {
   const attachments = presentation.attachments.length
     ? presentation.attachments
     : embeddedAttachments;
-  if (!presentation.text && !attachments.length) return null;
+  if (presentation.text) return JSON.stringify([item.turnId, item.type, presentation.text]);
+  if (!attachments.length) return null;
   const attachmentKeys = attachments.map((attachment) => (
     attachment.id
       ? ['id', String(attachment.id)]
@@ -129,7 +130,7 @@ function sessionItemSemanticKey(item) {
           Number(attachment.size) || 0,
         ]
   ));
-  return JSON.stringify([item.turnId, item.type, presentation.text, attachmentKeys]);
+  return JSON.stringify([item.turnId, item.type, '', attachmentKeys]);
 }
 
 export function mergeSessionItems(baseItems = [], overlayItems = []) {
