@@ -145,7 +145,15 @@ test('WebSocket startup failures remain retryable on the same connection object'
     requestTimeoutMs: 20,
   });
   t.after(() => initializeConnection.close());
-  await assert.rejects(initializeConnection.start(), (error) => error.code === 'APP_SERVER_REQUEST_TIMEOUT');
+  // The production request timer is deliberately unref'd so it cannot keep a
+  // process alive by itself. Keep this synthetic, handle-free socket fixture
+  // alive until that timer proves the timeout path.
+  const keepAlive = setInterval(() => {}, 1_000);
+  try {
+    await assert.rejects(initializeConnection.start(), (error) => error.code === 'APP_SERVER_REQUEST_TIMEOUT');
+  } finally {
+    clearInterval(keepAlive);
+  }
   assert.equal(initializeConnection.state, 'stopped');
   assert.deepEqual(await initializeConnection.start(), { userAgent: 'fake-ws' });
 });
