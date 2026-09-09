@@ -1,7 +1,12 @@
-export function selectMinimalHostSession(sessions = [], selectedId = null) {
+export function selectMinimalHostSession(
+  sessions = [],
+  selectedId = null,
+  { fallback = 'newest' } = {},
+) {
   const ids = sessions.map(sessionIdentifier).filter(Boolean);
   const current = selectedId == null ? null : String(selectedId);
-  return current && ids.includes(current) ? current : ids[0] || null;
+  if (current && ids.includes(current)) return current;
+  return fallback === 'none' ? null : ids[0] || null;
 }
 
 export function minimalHostSessionPresentation(session = {}) {
@@ -12,6 +17,22 @@ export function minimalHostSessionPresentation(session = {}) {
       ? session.contextLabel
       : '',
   };
+}
+
+export function shouldAutoCreateMinimalHostSession({
+  creationAttempted = false,
+  initialSessionId = null,
+  selectedId = null,
+  sessions = [],
+  sessionsLoaded = false,
+  startsWithNewSession = false,
+} = {}) {
+  return startsWithNewSession
+    && !initialSessionId
+    && sessionsLoaded
+    && sessions.length === 0
+    && !selectedId
+    && !creationAttempted;
 }
 
 function sessionIdentifier(session) {

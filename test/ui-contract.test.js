@@ -73,6 +73,14 @@ test('Minimal Host browser mutations use reusable idempotency operations', async
   assert.match(source, /'idempotency-key': operation\.idempotencyKey/);
   assert.match(source, /result\.idempotent && result\.pending/);
   assert.match(source, /operationController\.current\.complete\(operation\)/);
+  assert.match(source, /bootstrap\.sessionStart === 'new'/);
+  assert.match(source, /automaticSessionCreationAttempted/);
+  assert.match(source, /shouldAutoCreateMinimalHostSession/);
+  assert.match(source, /fallback: 'newest'/);
+  assert.doesNotMatch(source, /agent-workbench\.minimal-host\.default-session/);
+  assert.match(source, /documentPreview/);
+  assert.match(source, /onCloseDocument: closeDocumentPreview/);
+  assert.match(source, /URL\.revokeObjectURL/);
 });
 
 test('Session browser keeps header actions on one row at constrained widths', async () => {
@@ -300,7 +308,9 @@ test('Session UI embeds visualizations in a sandbox and renders image media', as
   assert.match(source, /remarkMath/);
   assert.match(source, /rehypeKatex/);
   assert.match(source, /singleDollarTextMath: false/);
-  assert.match(source, /publishesMedia && message\.media\?\.length/);
+  assert.match(source, /const inlineMedia = \[\.\.\.\(publishesMedia \? message\.media \|\| \[\] : \[\]\)\]/);
+  assert.match(source, /attachment\.kind === 'image' && attachment\.previewUrl/);
+  assert.match(source, /<MediaGallery items=\{inlineMedia\} onOpenAttachment=\{onOpenAttachment\}/);
   assert.match(source, /!publishesMedia \? \{ img: \(\) => null \}/);
   assert.match(styles, /\.cwu-inline-visualization iframe/);
   assert.match(styles, /katex\/dist\/katex\.min\.css/);
@@ -345,8 +355,8 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /target\.scrollTo\(\{ top: target\.scrollHeight, behavior: 'smooth' \}\)/);
   assert.match(source, /labels\.newMessages \|\| '有新消息'/);
   assert.match(styles, /\.cwu-scroll-latest/);
-  assert.match(styles, /\.cwu-scroll-latest \{[^}]*align-self: center/);
-  assert.match(styles, /\.cwu-scroll-latest \{[^}]*margin: 0 auto 8px/);
+  assert.match(styles, /\.cwu-scroll-latest \{[^}]*position: absolute/);
+  assert.match(styles, /\.cwu-scroll-latest \{[^}]*transform: translate\(-50%, calc\(-100% - 8px\)\)/);
   assert.match(source, /supportedEfforts\.includes\(view\.executionProfile\.reasoningEffort\)/);
   const hooks = await readFile(hooksUrl, 'utf8');
   assert.match(source, /useSessionUserInput/);
@@ -399,7 +409,10 @@ test('Composer routes only structurally complex clipboard text to an attachment'
   assert.equal(richClipboardHasComplexStructure('金额是 2 * 3，不是列表'), false);
   assert.equal(richClipboardHasComplexStructure('# 单独复制的短标题', '<h1>单独复制的短标题</h1>'), false);
   assert.equal(richClipboardHasComplexStructure('# **带样式的单独标题**', '<h1><strong>带样式的单独标题</strong></h1>'), false);
+  assert.equal(richClipboardHasComplexStructure('-   定时通知按钮定位到真实 Superset Header', '<ul><li>定时通知按钮定位到真实 Superset Header</li></ul>'), false);
+  assert.equal(richClipboardHasComplexStructure('1. 单独复制的一项', '<ol><li>单独复制的一项</li></ol>'), false);
   assert.equal(richClipboardHasComplexStructure('# 标题\n\n正文', '<h1>标题</h1><p>正文</p>'), true);
+  assert.equal(richClipboardHasComplexStructure('- 第一项\n- 第二项', '<ul><li>第一项</li><li>第二项</li></ul>'), true);
   assert.equal(richClipboardHasComplexStructure('## 结论\n\n- 第一项'), true);
   assert.equal(richClipboardHasComplexStructure('第一段\n\n第二段'), true);
   assert.equal(richClipboardHasComplexStructure('| 指标 |\n| --- |\n| 42 |'), true);
@@ -431,7 +444,10 @@ test('Session UI keeps explicit submissions visible across mobile viewport chang
   assert.match(source, /submitFollowRef\.current = true;/);
   assert.match(source, /window\.visualViewport\?\.addEventListener\('resize', followAfterViewportChange\)/);
   assert.match(source, /onPointerDown=\{stopSubmitFollow\}/);
-  assert.match(source, /onWheel=\{stopSubmitFollow\}/);
+  assert.match(source, /onWheel=\{handleTranscriptWheel\}/);
+  assert.match(source, /if \(scrollingUp\) \{\s*pauseLatestFollow\(\);/);
+  assert.match(source, /if \(event\.deltaY < 0\) pauseLatestFollow\(\);/);
+  assert.match(source, /onTouchMove=\{handleTranscriptTouchMove\}/);
   assert.match(styles, /\.cwu-session-shell \{[^}]*height: 100vh;[^}]*height: 100dvh;/);
   assert.match(styles, /\.cwu-session-main \{[^}]*height: calc\(100vh - 64px\);[^}]*height: calc\(100dvh - 64px\);/);
   assert.match(styles, /\.cwu-transcript \{[^}]*overscroll-behavior: contain;[^}]*-webkit-overflow-scrolling: touch;/);

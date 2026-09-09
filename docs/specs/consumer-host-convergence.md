@@ -42,7 +42,7 @@ Personal now pins the released `v0.20.0` slice. Its Session state module only re
 
 Reviewable interface reference: [Consumer Host Convergence UI](../mockups/consumer-host-convergence.html).
 
-The Composer has one editing state: the textarea remains visible and no formatted-preview/edit step exists. An ordinary sentence uses the clipboard's plain text exactly, so multiplication asterisks and similar punctuation are not escaped in the submitted prompt. Headings, lists, tables, fenced code, blockquotes, and multi-paragraph rich content become Markdown attachments; long unstructured text keeps the existing plain-text attachment threshold. While a request is in flight, existing submitting states remain unchanged. If transport fails before a response is known, or the server reports that an identical reservation is still pending, the Composer restores the same user-visible draft; sending the unchanged request again reuses its operation identity. Changing the target or payload creates a new operation. A confirmed accepted response clears the retained identity.
+The Composer has one editing state: the textarea remains visible and no formatted-preview/edit step exists. An ordinary sentence, standalone heading, or single list item uses the clipboard's plain text exactly, so multiplication asterisks and similar punctuation are not escaped in the submitted prompt. Multi-block content, multi-item lists, tables, fenced code, blockquotes, and multi-paragraph rich content become Markdown attachments; long unstructured text keeps the existing plain-text attachment threshold. While a request is in flight, existing submitting states remain unchanged. If transport fails before a response is known, or the server reports that an identical reservation is still pending, the Composer restores the same user-visible draft; sending the unchanged request again reuses its operation identity. Changing the target or payload creates a new operation. A confirmed accepted response clears the retained identity.
 
 ## Remaining migration
 
@@ -68,6 +68,6 @@ Current adoption is intentionally asymmetric: Personal production pins `v0.20.0`
 - Product events, extension recovery, transport and queue-failure presentation stay consumer callbacks.
 - Minimal Host uses the export for Session creation and Turn submission.
 - Personal consumes the released state/event slice through the public package and tests only package mounting, Host adapters and product-owned effects for compatible upgrades.
-- Plain rich-text paste preserves literal punctuation and remains in the editable Composer; structurally complex paste becomes an attachment and no Composer preview is rendered.
+- Plain rich-text paste, a standalone heading, and a single list item preserve literal text and remain in the editable Composer; structurally complex paste becomes an attachment and no Composer preview is rendered.
 - Existing project-free Platform tests and Minimal Host browser smoke remain green.
 - A Platform commit candidate and a consumer's formal release pin are recorded as separate states. Candidate acceptance can happen before the stable tag, but no shared migration is called deployed until the same accepted Platform SHA is promoted and formally pinned.

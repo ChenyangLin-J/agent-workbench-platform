@@ -154,10 +154,32 @@ agent-workbench env create --profile ./profile.json
 agent-workbench env run <environment-id-or-path>
 agent-workbench env migrate-sessions <stopped-run> --bindings ./bindings.json
 agent-workbench env inspect <environment-id-run-id-or-path>
+agent-workbench env ps
 agent-workbench env stop <environment-id-run-id-or-path>
 ```
 
 Use `--root <directory>` on every command to replace the default `~/.agent-workbench/environments`. `env run` on an Environment creates a new immutable Run; running an existing stopped Run resumes its retained Session state. `env stop` on an Environment stops its active Runs.
+
+`env ps` is the read-only host inventory for Docker Runs. It groups the workload,
+ingress, model broker and data-adapter containers by their
+`ai.agent-workbench.run` owner label, then verifies the Run manifest and recorded
+supervisor process. Its runtime state deliberately differs from the stored
+manifest state:
+
+- `active` means the manifest says `running` and the exact supervisor process is
+  still owned by that Run;
+- `orphaned` means labeled containers remain but no active supervisor can be
+  proved, including a stale `running` manifest after an ungraceful controller
+  exit;
+- `unresolved` means the containers cannot be mapped to one readable, matching
+  Run manifest.
+
+Inventory never stops containers or rewrites a manifest. To recover an orphaned
+Run, inspect its exact `runRoot`, then invoke `env stop <runRoot>`. The stop path
+removes only container and network ids recorded by that manifest and carrying the
+same Run owner label; unresolved resources require manual read-only diagnosis.
+Do not use generic `docker rm` or `docker system prune` as an Environment
+lifecycle substitute.
 
 To adopt portable persistence for existing filesystem state, stop the source Run and call `env migrate-sessions` before starting the first Run that uses the new root. The destination declared by the bindings must not exist. The command copies transcripts and Resources, verifies committed references and managed digests, excludes Runtime bindings and queued Turns, and retains the source. A Session created by the old Run remains read-only for direct continuation in the new Run; reading it never creates a replacement Runtime thread. When Edit or Fork is enabled, an owner can explicitly branch an eligible retained user message into a fresh current-Run Runtime with bounded transcript context. The old Runtime binding is never resumed or copied.
 
@@ -192,6 +214,11 @@ Docker Runs use a read-only workload container with dropped capabilities, no-new
 For an `ephemeral-machine` Run with `no-external-effects` or the enforced `read-only-data-adapter-allowlist`, Docker is the executable sandbox boundary. Codex therefore runs with `danger-full-access` and no per-command approval *inside that container*; nesting bubblewrap is not required and is not assumed to work on Docker Desktop. This does not grant host access: outer mounts, constructed environment, dropped capabilities, internal network, fixed brokers and per-Run identity remain the enforcement facts. Development mode and unenforced external effects keep interactive approval. Domain credentials must stay in enforcing sidecars.
 
 Stopping a Run removes its child processes and provider-owned ephemeral resources, then recreates an empty private transient-credential directory. It retains the manifest and Runtime state. Run-scoped Sessions/resources remain under that Run; portable Sessions/resources remain under the consumer-bound root. Retention or deletion of either is consumer policy and is not an implicit part of `stop`.
+
+Retaining a Run means retaining its manifest and state, not keeping its containers
+running. Consumers own their concurrency and rollback budget. Before creating a
+heavy disposable Run, inventory current resources; a stale predecessor should
+block new startup until the owning consumer decides whether to stop it.
 
 ## Verification
 

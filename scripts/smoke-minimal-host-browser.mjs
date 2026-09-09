@@ -14,6 +14,7 @@ import {
 } from '../src/environment/index.js';
 import { FakeRuntimeProvider } from '../test/core-testkit.js';
 
+const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 const root = await mkdtemp(join(tmpdir(), 'awb-browser-smoke-'));
 const provider = new FakeRuntimeProvider({ capabilities: { fork: true, steer: true } });
 const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
@@ -85,6 +86,25 @@ try {
   }
   if (await page.locator('.cwu-attachment').count()) {
     throw new Error('A standalone copied heading incorrectly became an attachment.');
+  }
+
+  const standaloneBullet = '-   定时通知按钮定位到真实 Superset Header';
+  await composer.evaluate((element, plainText) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', plainText);
+    clipboardData.setData('text/html', '<ul><li>定时通知按钮定位到真实 Superset Header</li></ul>');
+    element.select();
+    element.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData,
+    }));
+  }, standaloneBullet);
+  if (await composer.inputValue() !== standaloneBullet) {
+    throw new Error('A standalone copied bullet did not remain inline plain text.');
+  }
+  if (await page.locator('.cwu-attachment').count()) {
+    throw new Error('A standalone copied bullet incorrectly became an attachment.');
   }
 
   const formula = '周包改成 *52，然后周转月根据用户是周就是 周费用*52，月就是月费用*12 对吧。';
@@ -162,6 +182,24 @@ try {
       uploadError: await page.locator('.cwu-attachment-error').allTextContents(),
     })}`, { cause: error });
   }
+  await page.locator('.cwu-session-header').evaluate((element, encodedPng) => {
+    const bytes = Uint8Array.from(atob(encodedPng), (character) => character.charCodeAt(0));
+    const file = new File([bytes], 'browser-preview.png', { type: 'image/png' });
+    const dataTransfer = {
+      types: ['Files'],
+      items: [{ kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => null }],
+      files: [file],
+      dropEffect: 'none',
+      getData: () => '',
+    };
+    for (const type of ['dragenter', 'dragover', 'drop']) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+      element.dispatchEvent(event);
+    }
+  }, ONE_PIXEL_PNG);
+  await page.locator('.cwu-attachment', { hasText: 'browser-preview.png' })
+    .getByText('已就绪', { exact: false }).waitFor();
   await composer.fill('browser smoke');
   const submittedTurnRequest = page.waitForRequest((request) => (
     request.method() === 'POST' && /\/api\/sessions\/[^/]+\/turns$/.test(new URL(request.url()).pathname)
@@ -184,8 +222,66 @@ try {
     throw new Error('Browser attachment was not passed to Runtime input.');
   }
   await page.getByText('browser smoke', { exact: true }).first().waitFor();
+  const uploadedImage = page.getByRole('button', { name: '查看图片：browser-preview.png' });
+  await uploadedImage.waitFor();
+  if (!await uploadedImage.locator('img').count()) {
+    throw new Error('Uploaded image was not rendered as an inline user-message thumbnail.');
+  }
+  await uploadedImage.click();
+  await page.getByRole('dialog', { name: '文件预览：browser-preview.png' }).waitFor();
+  await page.getByRole('button', { name: '关闭文件预览' }).click();
+  await page.getByRole('dialog', { name: '文件预览：browser-preview.png' }).waitFor({ state: 'detached' });
 
   const runtime = provider.createdSessions[0];
+  const scrollCanary = Array.from({ length: 80 }, (_, index) => `Streaming scroll canary ${index + 1}`).join('\n\n');
+  runtime.emit('event', {
+    type: 'item_started',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: runtime.activeTurnId,
+    providerEvent: 'item/started',
+    payload: { item: {
+      id: 'browser-smoke-scroll-commentary',
+      type: 'agentMessage',
+      phase: 'commentary',
+      status: 'inProgress',
+      text: scrollCanary,
+    } },
+  });
+  const transcript = page.locator('.cwu-transcript');
+  await page.getByText('Streaming scroll canary 80', { exact: true }).waitFor();
+  await page.waitForFunction(() => {
+    const element = document.querySelector('.cwu-transcript');
+    return element && element.scrollHeight - element.clientHeight > 400
+      && element.scrollHeight - element.scrollTop - element.clientHeight < 4;
+  });
+  const scrolledPosition = await transcript.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -80 }));
+    element.scrollTop = Math.max(0, element.scrollTop - 80);
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    return element.scrollTop;
+  });
+  await page.getByRole('button', { name: '滚动到最新消息' }).waitFor();
+  runtime.emit('event', {
+    type: 'item_delta',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: runtime.activeTurnId,
+    providerEvent: 'item/agentMessage/delta',
+    payload: { itemId: 'browser-smoke-scroll-commentary', delta: '\n\nStreaming after upward scroll' },
+  });
+  await page.getByText('Streaming after upward scroll', { exact: true }).waitFor();
+  await page.waitForTimeout(300);
+  const afterStreamPosition = await transcript.evaluate((element) => ({
+    scrollTop: element.scrollTop,
+    bottomDistance: element.scrollHeight - element.scrollTop - element.clientHeight,
+  }));
+  if (Math.abs(afterStreamPosition.scrollTop - scrolledPosition) > 12 || afterStreamPosition.bottomDistance < 24) {
+    throw new Error(`Streaming content pulled an upward-reading transcript back to the bottom: ${JSON.stringify({ scrolledPosition, afterStreamPosition })}`);
+  }
+  await page.getByRole('button', { name: '滚动到最新消息，有新消息' }).click();
+  await page.waitForFunction(() => {
+    const element = document.querySelector('.cwu-transcript');
+    return element && element.scrollHeight - element.scrollTop - element.clientHeight < 4;
+  });
   proxyState.dropEventStreams();
   runtime.emit('event', {
     type: 'item_started',
@@ -227,6 +323,19 @@ try {
     runtimeSessionId: runtime.runtimeSessionId,
     runtimeTurnId: runtime.activeTurnId,
     providerEvent: 'item/completed',
+    payload: { item: {
+      id: 'browser-smoke-generated',
+      type: 'imageGeneration',
+      status: 'completed',
+      result: ONE_PIXEL_PNG,
+      savedPath: '/private/runtime/browser-smoke-generated.png',
+    } },
+  });
+  runtime.emit('event', {
+    type: 'item_completed',
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: runtime.activeTurnId,
+    providerEvent: 'item/completed',
     createdAt: Date.parse('2026-09-03T10:19:38.250Z'),
     payload: { item: {
       id: 'browser-smoke-tool',
@@ -241,6 +350,79 @@ try {
   });
   runtime.complete();
   await page.getByText('Browser smoke OK', { exact: true }).waitFor();
+  const generatedImage = page.getByRole('button', { name: '查看图片：generated-browser-smoke-generated.png' });
+  await generatedImage.waitFor();
+  await generatedImage.click();
+  await page.getByRole('dialog', { name: '文件预览：generated-browser-smoke-generated.png' }).waitFor();
+  await page.getByRole('button', { name: '关闭文件预览' }).click();
+  await page.reload();
+  await page.getByText('1 个对话', { exact: true }).waitFor();
+  await page.getByText('Browser smoke OK', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '查看图片：browser-preview.png' }).waitFor();
+  await page.getByRole('button', { name: '查看图片：generated-browser-smoke-generated.png' }).click();
+  await page.getByRole('dialog', { name: '文件预览：generated-browser-smoke-generated.png' }).waitFor();
+  await page.getByRole('button', { name: '关闭文件预览' }).click();
+  const completedTranscript = page.locator('.cwu-transcript');
+  const completedScrollSetup = await completedTranscript.evaluate((element) => {
+    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight - 260);
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    return {
+      contentHeight: element.scrollHeight,
+      viewportHeight: element.clientHeight,
+    };
+  });
+  if (completedScrollSetup.contentHeight <= completedScrollSetup.viewportHeight) {
+    throw new Error('Completed-response scroll fixture was not tall enough to exercise downward reading.');
+  }
+  await page.getByRole('button', { name: '滚动到最新消息' }).waitFor();
+  await completedTranscript.evaluate((element) => {
+    const samples = {
+      heights: [element.clientHeight],
+      positions: [element.scrollTop],
+    };
+    const resizeObserver = new ResizeObserver(() => samples.heights.push(element.clientHeight));
+    resizeObserver.observe(element);
+    element.addEventListener('scroll', () => samples.positions.push(element.scrollTop), { passive: true });
+    globalThis.__completedResponseScrollProbe = { resizeObserver, samples };
+  });
+  const completedTranscriptBox = await completedTranscript.boundingBox();
+  if (!completedTranscriptBox) throw new Error('Completed-response transcript was not visible.');
+  await page.mouse.move(
+    completedTranscriptBox.x + completedTranscriptBox.width / 2,
+    completedTranscriptBox.y + completedTranscriptBox.height / 2,
+  );
+  for (let index = 0; index < 10; index += 1) {
+    await page.mouse.wheel(0, 32);
+    await page.waitForTimeout(40);
+  }
+  await page.waitForFunction(() => {
+    const element = document.querySelector('.cwu-transcript');
+    return element && element.scrollHeight - element.scrollTop - element.clientHeight < 4;
+  });
+  await page.waitForTimeout(250);
+  const completedScrollResult = await completedTranscript.evaluate((element) => {
+    const probe = globalThis.__completedResponseScrollProbe;
+    probe?.resizeObserver?.disconnect();
+    delete globalThis.__completedResponseScrollProbe;
+    return {
+      bottomDistance: element.scrollHeight - element.scrollTop - element.clientHeight,
+      shortcutVisible: Boolean(document.querySelector('.cwu-scroll-latest')),
+      heights: probe?.samples?.heights || [],
+      positions: probe?.samples?.positions || [],
+    };
+  });
+  const completedViewportHeights = new Set(completedScrollResult.heights);
+  const completedScrollReversed = completedScrollResult.positions.some((position, index, positions) => (
+    index > 0 && position < positions[index - 1] - 1
+  ));
+  if (
+    completedScrollResult.bottomDistance >= 4
+    || completedScrollResult.shortcutVisible
+    || completedViewportHeights.size !== 1
+    || completedScrollReversed
+  ) {
+    throw new Error(`Completed response jittered while scrolling down: ${JSON.stringify(completedScrollResult)}`);
+  }
   const latestProcess = page.locator('details.cwu-commentary-group').last();
   await latestProcess.getByText('Preparing browser smoke', { exact: true }).waitFor();
   if (!await latestProcess.evaluate((details) => details.open)) {
@@ -371,7 +553,7 @@ try {
   if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, standalone-heading paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, recent-Session root return, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, uploaded-image message thumbnail/lightbox, upward-reading stability during streaming, completed-response downward-scroll stability, durable generated-image media/lightbox, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);

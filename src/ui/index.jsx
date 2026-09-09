@@ -879,6 +879,8 @@ export function SessionWorkspace({
   const composerRef = useRef(null);
   const followLatestRef = useRef(true);
   const submitFollowRef = useRef(false);
+  const transcriptScrollTopRef = useRef(0);
+  const transcriptTouchYRef = useRef(null);
   const messageActivityRef = useRef({ sessionId: view.sessionId, key: '' });
   const [draft, setDraft] = useState(view.draft);
   const [attachments, setAttachments] = useState([]);
@@ -937,6 +939,8 @@ export function SessionWorkspace({
   useEffect(() => {
     followLatestRef.current = true;
     submitFollowRef.current = false;
+    transcriptScrollTopRef.current = 0;
+    transcriptTouchYRef.current = null;
     setDraft(view.draft);
     setAttachments([]);
     setAttachmentUploadState({ status: 'idle', error: '' });
@@ -965,6 +969,7 @@ export function SessionWorkspace({
         const target = transcriptRef.current;
         if (!target) return;
         target.scrollTop = target.scrollHeight;
+        transcriptScrollTopRef.current = target.scrollTop;
         setAwayFromLatest(false);
         setHasNewMessagesBelow(false);
       });
@@ -986,6 +991,7 @@ export function SessionWorkspace({
     const target = transcriptRef.current;
     if (target && followLatestRef.current) {
       target.scrollTop = target.scrollHeight;
+      transcriptScrollTopRef.current = target.scrollTop;
       setAwayFromLatest(false);
       setHasNewMessagesBelow(false);
     } else if (hasNewActivity) {
@@ -1006,21 +1012,65 @@ export function SessionWorkspace({
     setHasNewMessagesBelow(false);
     requestAnimationFrame(() => {
       const target = transcriptRef.current;
-      if (target) target.scrollTop = target.scrollHeight;
+      if (target) {
+        target.scrollTop = target.scrollHeight;
+        transcriptScrollTopRef.current = target.scrollTop;
+      }
     });
   }
 
   function updateFollowState(event) {
     const target = event.currentTarget;
-    const away = sessionTranscriptAwayFromLatest(target);
-    followLatestRef.current = !away;
-    if (away) submitFollowRef.current = false;
-    setAwayFromLatest(away);
-    if (!away) setHasNewMessagesBelow(false);
+    const previousScrollTop = transcriptScrollTopRef.current;
+    const scrollingUp = target.scrollTop < previousScrollTop - 1;
+    transcriptScrollTopRef.current = target.scrollTop;
+    if (scrollingUp) {
+      pauseLatestFollow();
+      return;
+    }
+    const atLatest = !sessionTranscriptAwayFromLatest(target, 24);
+    if (atLatest) {
+      followLatestRef.current = true;
+      setAwayFromLatest(false);
+      setHasNewMessagesBelow(false);
+      return;
+    }
+    if (!followLatestRef.current || sessionTranscriptAwayFromLatest(target)) {
+      followLatestRef.current = false;
+      submitFollowRef.current = false;
+      setAwayFromLatest(true);
+    }
   }
 
   function stopSubmitFollow() {
     submitFollowRef.current = false;
+  }
+
+  function pauseLatestFollow() {
+    followLatestRef.current = false;
+    submitFollowRef.current = false;
+    setAwayFromLatest(true);
+  }
+
+  function handleTranscriptWheel(event) {
+    stopSubmitFollow();
+    if (event.deltaY < 0) pauseLatestFollow();
+  }
+
+  function handleTranscriptTouchStart(event) {
+    stopSubmitFollow();
+    transcriptTouchYRef.current = event.touches?.[0]?.clientY ?? null;
+  }
+
+  function handleTranscriptTouchMove(event) {
+    const nextY = event.touches?.[0]?.clientY ?? null;
+    const previousY = transcriptTouchYRef.current;
+    if (nextY != null && previousY != null && nextY > previousY + 2) pauseLatestFollow();
+    transcriptTouchYRef.current = nextY;
+  }
+
+  function handleTranscriptTouchEnd() {
+    transcriptTouchYRef.current = null;
   }
 
   function scrollToLatest() {
@@ -1029,6 +1079,7 @@ export function SessionWorkspace({
     followLatestRef.current = true;
     setHasNewMessagesBelow(false);
     target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
+    transcriptScrollTopRef.current = target.scrollHeight;
   }
 
   async function submit(mode = 'turn') {
@@ -1412,7 +1463,11 @@ export function SessionWorkspace({
           className="cwu-transcript"
           onPointerDown={stopSubmitFollow}
           onScroll={updateFollowState}
-          onWheel={stopSubmitFollow}
+          onTouchCancel={handleTranscriptTouchEnd}
+          onTouchEnd={handleTranscriptTouchEnd}
+          onTouchMove={handleTranscriptTouchMove}
+          onTouchStart={handleTranscriptTouchStart}
+          onWheel={handleTranscriptWheel}
           ref={transcriptRef}
         >
           {extensions.renderBeforeMessages?.({ session: view }) || null}
@@ -2261,9 +2316,29 @@ function Message({
   const directiveContent = extractRemarkDirectives(inline.references.length ? inline.markdown : message.content);
   const renderedContent = renderFileCitationsAsMarkdown(directiveContent.markdown);
   const markdownContent = isUser ? renderedContent : normalizeMarkdownMath(renderedContent);
+  const attachmentMedia = isUser
+    ? (message.attachments || []).filter((attachment) => (
+        attachment.kind === 'image' && attachment.previewUrl
+      )).map((attachment) => ({
+        id: `attachment-media-${attachment.id}`,
+        attachmentId: attachment.id,
+        kind: 'image',
+        src: attachment.previewUrl,
+        alt: attachment.name,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      }))
+    : [];
+  const inlineMedia = [...(publishesMedia ? message.media || [] : [])];
+  const inlineMediaAttachmentIds = new Set(inlineMedia.map((item) => item.attachmentId || item.id));
+  for (const item of attachmentMedia) {
+    if (!inlineMediaAttachmentIds.has(item.attachmentId)) inlineMedia.push(item);
+  }
   const visibleAttachments = isUser
     ? (message.attachments || []).filter((attachment) => (
-        attachment.kind !== 'image' || !message.media?.length
+        !(attachment.kind === 'image' && attachment.previewUrl)
+        && (attachment.kind !== 'image' || !message.media?.length)
       ))
     : [];
   const defaultContent = <>
@@ -2347,7 +2422,7 @@ function Message({
           ) : null}
         </div>
       ) : null}
-      {publishesMedia && message.media?.length ? <MediaGallery items={message.media} onOpenAttachment={onOpenAttachment} /> : null}
+      {inlineMedia.length ? <MediaGallery items={inlineMedia} onOpenAttachment={onOpenAttachment} /> : null}
       {visualizations.map((item) => (
         <div className={`cwu-inline-visualization${item.mode === 'wide' ? ' is-wide' : ''}`} key={item.path || item.file}>
           <iframe

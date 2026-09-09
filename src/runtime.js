@@ -83,6 +83,7 @@ export function appServerAttachmentInputs({
 } = {}) {
   const input = appServerAttachmentInput({ mimeType, name, path });
   const normalizedName = String(name || 'attachment').trim() || 'attachment';
+  const normalizedPath = String(path || '').trim();
   const normalizedMimeType = String(mimeType || '').toLowerCase();
   const kind = sessionAttachmentKind({ mimeType: normalizedMimeType, name: normalizedName, path });
   if (['text/plain', 'text/markdown', 'text/x-markdown'].includes(normalizedMimeType) && textContent != null) {
@@ -109,7 +110,7 @@ export function appServerAttachmentInputs({
     mimeType: normalizedMimeType,
     size,
     content: input.type === 'mention'
-      ? `Read the attached local file @${normalizedName} and use its contents for this request.`
+      ? `Read the attached local file ${JSON.stringify(normalizedName)} from the exact local path ${JSON.stringify(normalizedPath)} and use its contents for this request. The display name is not necessarily present in the current working directory.`
       : `Attached ${kind}: ${normalizedName}`,
   });
   return [

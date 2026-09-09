@@ -7,6 +7,7 @@ import { MAX_SESSION_ATTACHMENT_BYTES } from '../attachments.js';
 import { SessionBranchController } from '../features/session-branch.js';
 import { SessionTurnQueue, createQueuedTurnDispatcher } from '../features/turn-queue.js';
 import { resolveContainedPath } from './paths.js';
+import { MinimalHostResultImageProjector } from './result-image-projector.js';
 import {
   cloneEnvironmentSessionMessageAttachments,
   commitEnvironmentSessionAttachments,
@@ -60,6 +61,9 @@ export function createMinimalHost({
   const resourcesRoot = manifest.paths.resources || join(manifest.paths.state || manifest.paths.workspace, 'resources');
   const sessionResourceStore = attachmentsEnabled
     ? resourceStore || createEnvironmentSessionResourceStore({ root: resourcesRoot })
+    : null;
+  const resultImageProjector = attachmentsEnabled
+    ? new MinimalHostResultImageProjector({ resourceStore: sessionResourceStore, runId: manifest.id })
     : null;
   const clients = new Set();
   const server = createServer((request, response) => {
@@ -294,7 +298,7 @@ export function createMinimalHost({
                 targetSessionId: sessionId,
                 store: sessionResourceStore,
               })
-            : messages.map((message) => ({ ...message, attachments: [] })),
+            : messages.map((message) => ({ ...message, attachments: [], media: [] })),
         });
         if (continuation.created) {
           await kernel.attach(continuation.session.sessionId, runtimeAttachOptions(manifest));
@@ -630,7 +634,9 @@ export function createMinimalHost({
     server,
     async start() {
       const dispatcher = await dispatcherReady;
-      if (!unsubscribeEvents) unsubscribeEvents = subscribeStore(kernel, sessionStore, dispatcher);
+      if (!unsubscribeEvents) {
+        unsubscribeEvents = subscribeStore(kernel, sessionStore, dispatcher, { resultImageProjector });
+      }
       if (queuedTurnsEnabled) await dispatcher.recover();
       if (socketPath) await rm(socketPath, { force: true });
       await new Promise((resolve, reject) => {
@@ -764,6 +770,9 @@ function sharedSessionProjection(session, grant, { summary = false } = {}) {
       turnStatus: message.turnStatus,
       createdAt: message.createdAt,
       attachments: (message.attachments || []).map(sharedAttachmentProjection).filter(Boolean),
+      media: grant.permissions.has('resource.read')
+        ? (message.media || []).map(sharedMediaProjection).filter(Boolean)
+        : [],
     })),
     technicalItems: [],
     plan: [],
@@ -784,6 +793,18 @@ function sharedAttachmentProjection(attachment) {
       }
     : null;
   return { ...attachment, ...(resource ? { resource } : {}) };
+}
+
+function sharedMediaProjection(media) {
+  const resourceId = accessIdentifier(media?.resourceId);
+  if (!resourceId || media?.type !== 'resourceImage') return null;
+  return {
+    type: 'resourceImage',
+    resourceId,
+    name: String(media.name || '图片').slice(0, 255),
+    mimeType: String(media.mimeType || 'image/*').slice(0, 120),
+    size: Number.isSafeInteger(Number(media.size)) ? Number(media.size) : 0,
+  };
 }
 
 function publicRuntimeBinding(binding) {
@@ -859,8 +880,10 @@ async function chmodSocketPrivate(socketPath) {
   }
 }
 
-function subscribeStore(kernel, sessionStore, dispatcher) {
-  const listener = (event) => void sessionStore.applyEvent(event)
+function subscribeStore(kernel, sessionStore, dispatcher, { resultImageProjector = null } = {}) {
+  const listener = (event) => void Promise.resolve(
+    resultImageProjector ? resultImageProjector.projectEvent(event) : event,
+  ).then((projectedEvent) => sessionStore.applyEvent(projectedEvent))
     .then(() => event.type === 'turn_completed' ? dispatcher.startNext(event.sessionId) : null)
     .catch(() => {});
   kernel.on?.('event', listener);
@@ -968,7 +991,7 @@ function createMinimalHostBranchController({
                   targetSessionId: sessionId,
                   store: sessionResourceStore,
                 })
-              : messages.map((message) => ({ ...message, attachments: [] })),
+              : messages.map((message) => ({ ...message, attachments: [], media: [] })),
           });
           let projectedInput;
           if (intent === 'fork') {
