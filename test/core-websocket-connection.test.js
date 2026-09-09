@@ -6,6 +6,10 @@ import {
   WebSocketAppServerConnection,
 } from '../src/runtime/core/index.js';
 
+function fakeCloseEvent(code = 1000, reason = '') {
+  return Object.assign(new Event('close'), { code, reason });
+}
+
 class FakeWebSocket extends EventTarget {
   static instances = [];
   static behaviors = [];
@@ -61,7 +65,7 @@ class FakeWebSocket extends EventTarget {
 
   close() {
     this.readyState = 3;
-    this.dispatchEvent(new CloseEvent('close', { code: 1000 }));
+    this.dispatchEvent(fakeCloseEvent());
   }
 }
 
@@ -176,7 +180,7 @@ test('explicit close stays terminal and stale sockets cannot disturb a replaceme
 
   staleSocket.serverSend({ method: 'stale/event', params: {} });
   staleSocket.dispatchEvent(new Event('error'));
-  staleSocket.dispatchEvent(new CloseEvent('close', { code: 1006 }));
+  staleSocket.dispatchEvent(fakeCloseEvent(1006));
   assert.equal(connection.state, 'ready');
   assert.equal(connection.socket, currentSocket);
   assert.deepEqual(notifications, []);
