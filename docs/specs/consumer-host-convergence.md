@@ -63,7 +63,7 @@ Current adoption is intentionally asymmetric: Personal production pins `v0.20.0`
 - The controller is browser-safe, product-free and covered through its public export.
 - Authoritative snapshots replace canonical fields without dropping optimistic/live messages or a non-terminal known active Turn.
 - Request, queue, delta, active-Turn and reconnect transitions behave identically with no context and with injected product context.
-- Internal maintenance such as context compaction is exposed as running activity and retained as technical detail while remaining non-result-bearing; it does not change unread state or the last user-visible result.
+- Internal maintenance such as context compaction is exposed as running activity and retained as technical detail while remaining non-result-bearing, including when a completion event omits lifecycle metadata; it does not change unread state or the last user-visible result. The shared detail shows its activity label above the Composer and routes input to the next-Turn queue instead of steer until compaction finishes.
 - A completion only clears its matching active Turn, and item/list activity can restore polling after a missed start event.
 - Product events, extension recovery, transport and queue-failure presentation stay consumer callbacks.
 - Minimal Host uses the export for Session creation and Turn submission.

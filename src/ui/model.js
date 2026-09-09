@@ -163,6 +163,8 @@ export function normalizeSessionViewModel(value = {}) {
       ? value.status
       : 'idle',
     statusLabel: String(value.statusLabel || '空闲'),
+    activityKind: stringOrNull(value.activityKind ?? value.activeActivityKind),
+    activityLabel: String(value.activityLabel || ''),
     messages: Array.isArray(value.messages)
       ? value.messages.map((message, index) => ({
           ...sessionMessagePresentation(message),

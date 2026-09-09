@@ -103,6 +103,27 @@ test('persisted bindings resume through a provider-neutral runtime id', async (t
   assert.equal(provider.createdSessions[0].cwd, '/workspace/project');
 });
 
+test('a Runtime exit drops the attached instance so the next attach resumes cleanly', async (t) => {
+  const provider = new FakeRuntimeProvider();
+  const store = new InMemoryBindingStore();
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store });
+  t.after(() => kernel.close());
+  const attached = await kernel.attach('session-a', { cwd: '/workspace/project' });
+  const firstRuntime = provider.createdSessions[0];
+  firstRuntime.emit('exit', {
+    runtimeSessionId: attached.runtimeSessionId,
+    runtimeTurnId: null,
+    reason: 'connection_exited',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(kernel.sessions.has('session-a'), false);
+
+  const resumed = await kernel.attach('session-a');
+  assert.equal(provider.createdSessions.length, 2);
+  assert.notEqual(provider.createdSessions[1], firstRuntime);
+  assert.equal(resumed.runtimeSessionId, attached.runtimeSessionId);
+});
+
 test('a newly created Runtime Session can be adopted without a resume round trip', async (t) => {
   const provider = new FakeRuntimeProvider();
   const store = new InMemoryBindingStore();

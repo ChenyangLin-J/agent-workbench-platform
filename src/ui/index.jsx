@@ -913,6 +913,7 @@ export function SessionWorkspace({
     submitting,
     canSteer: enabledFeatures.steer,
     canQueue: enabledFeatures.queuedTurns,
+    activityKind: view.activityKind,
   });
   const canSubmit = Boolean((draft.trim() || readyAttachments.length)
     && !composerDisabled
@@ -1539,7 +1540,11 @@ export function SessionWorkspace({
             )}
 
             {view.status === 'running' ? (
-              <RuntimeProgress plan={view.plan} />
+              <RuntimeProgress
+                activityKind={view.activityKind}
+                activityLabel={view.activityLabel}
+                plan={view.plan}
+              />
             ) : null}
 
             {view.pendingRequests.map((request) => (
@@ -2622,10 +2627,11 @@ function sandboxedHtmlSource(content) {
   return `<!doctype html><html><head>${policy}</head><body>${source}</body></html>`;
 }
 
-function RuntimeProgress({ plan }) {
+function RuntimeProgress({ activityKind = null, activityLabel = '', plan }) {
+  const label = activityLabel || (activityKind === 'contextCompaction' ? '整理上下文' : '正在处理');
   return (
     <section className="cwu-progress" aria-live="polite">
-      <div className="cwu-progress-title"><i aria-hidden="true" />正在处理</div>
+      <div className="cwu-progress-title"><i aria-hidden="true" />{label}</div>
       {plan.length ? (
         <ol>{plan.map((step) => <li data-status={step.status} key={step.id}>{step.text}</li>)}</ol>
       ) : <p>Agent 正在继续处理，新的进展会自动出现。</p>}

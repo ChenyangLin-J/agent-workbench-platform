@@ -606,6 +606,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
     isDraft: true,
     draft: '可恢复的输入',
     composerDisabled: true,
+    activeActivityKind: 'contextCompaction',
+    activityLabel: '整理上下文',
     messages: [{ id: 'm1', role: 'user', content: '问题', turnStatus: 'completed', canEdit: true, canFork: true }],
     technicalDetailsAvailable: ['turn-1', 'turn-1'],
     technicalDetailsLoading: true,
@@ -623,6 +625,8 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(session.isDraft, true);
   assert.equal(session.draft, '可恢复的输入');
   assert.equal(session.composerDisabled, true);
+  assert.equal(session.activityKind, 'contextCompaction');
+  assert.equal(session.activityLabel, '整理上下文');
   assert.equal(session.messages[0].canEdit, true);
   assert.equal(session.messages[0].turnStatus, 'completed');
   assert.deepEqual(session.technicalDetailsAvailable, ['turn-1']);

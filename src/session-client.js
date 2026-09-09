@@ -327,6 +327,50 @@ export function createSessionEventController({
     return (state.sessionList || []).find((session) => session.id === threadId) || null;
   }
 
+  function turnResultLifecycle(threadId, turnId = null) {
+    const lifecycle = state.sessionRuntimeResultBearing?.[threadId] || null;
+    if (!lifecycle) return null;
+    if (turnId && lifecycle.turnId && lifecycle.turnId !== turnId) return null;
+    return lifecycle;
+  }
+
+  function rememberTurnResultLifecycle(threadId, turnId, resultBearing, { readMarked = false } = {}) {
+    if (!threadId) return null;
+    state.sessionRuntimeResultBearing ||= {};
+    const current = turnResultLifecycle(threadId, turnId);
+    const lifecycle = {
+      turnId: turnId || current?.turnId || null,
+      resultBearing: Boolean(resultBearing),
+      readMarked: Boolean(readMarked || current?.readMarked),
+    };
+    state.sessionRuntimeResultBearing[threadId] = lifecycle;
+    return lifecycle;
+  }
+
+  function forgetTurnResultLifecycle(threadId, turnId = null) {
+    const lifecycle = turnResultLifecycle(threadId, turnId);
+    if (!lifecycle) return;
+    delete state.sessionRuntimeResultBearing[threadId];
+  }
+
+  function eventResultBearing(event, lifecycle = null) {
+    if (event?.resultBearing === false) return false;
+    if (event?.resultBearing === true) return true;
+    const items = Array.isArray(event?.params?.turn?.items) ? event.params.turn.items : [];
+    if (items.some((item) => ['userMessage', 'agentMessage'].includes(item?.type))) return true;
+    if (lifecycle) return lifecycle.resultBearing;
+    if (sessionEventActivityKind(event) === 'contextCompaction'
+      || items.some((item) => item?.type === 'contextCompaction')) return false;
+    return true;
+  }
+
+  function promoteTurnToResultBearing(threadId, turnId) {
+    const lifecycle = turnResultLifecycle(threadId, turnId);
+    if (lifecycle?.resultBearing) return lifecycle;
+    markSessionResultRead(threadId);
+    return rememberTurnResultLifecycle(threadId, turnId, true, { readMarked: true });
+  }
+
   function sessionHasRunningEvidence(session = selectedSession()) {
     if (!session?.threadId) return false;
     const summary = sessionSummary(session.threadId);
@@ -470,12 +514,14 @@ export function createSessionEventController({
       const { method, params = {} } = event;
       const turnId = sessionEventTurnId(event);
       const activityKind = sessionEventActivityKind(event);
-      const resultBearing = event.resultBearing !== false;
+      const knownResultLifecycle = turnResultLifecycle(session.threadId, turnId);
+      const resultBearing = eventResultBearing(event, knownResultLifecycle);
       if (['turn/started', 'turn/completed'].includes(method) && resultBearing) {
         touchSessionSummary(session.threadId);
       }
       if (method === 'turn/started') {
         if (resultBearing) markSessionResultRead(session.threadId);
+        rememberTurnResultLifecycle(session.threadId, turnId, resultBearing, { readMarked: resultBearing });
         session.activeTurnId = turnId || session.activeTurnId;
         session.activeActivityKind = activityKind;
         setSessionActivity(session.threadId, { turnId: session.activeTurnId, status: 'running', kind: activityKind });
@@ -493,6 +539,7 @@ export function createSessionEventController({
             state.sessionCompletedAt[session.threadId] = Date.now();
             markSessionResultUnread(session.threadId);
           }
+          forgetTurnResultLifecycle(session.threadId, turnId);
         }
         scheduleTask(async () => {
           await refreshSessionSnapshot(session).catch(() => {});
@@ -507,6 +554,11 @@ export function createSessionEventController({
         const item = params.item && params.item.status == null
           ? { ...params.item, status: method === 'item/started' ? 'inProgress' : 'completed' }
           : params.item;
+        if (turnId && ['userMessage', 'agentMessage'].includes(item?.type)) {
+          promoteTurnToResultBearing(session.threadId, turnId);
+        } else if (turnId && activityKind === 'contextCompaction' && !turnResultLifecycle(session.threadId, turnId)) {
+          rememberTurnResultLifecycle(session.threadId, turnId, false);
+        }
         upsertSessionItem(session, item, turnId);
         handleSessionItem({ event, item, session });
         if (method === 'item/started' && turnId) {
@@ -526,6 +578,7 @@ export function createSessionEventController({
         }
       }
       if (method === 'item/agentMessage/delta') {
+        if (turnId) promoteTurnToResultBearing(session.threadId, turnId);
         applyAgentMessageDelta(session, params);
         if (turnId) {
           session.activeTurnId = turnId;
@@ -546,9 +599,15 @@ export function createSessionEventController({
     state.sessionCompletedAt ||= {};
     const turnId = sessionEventTurnId(event);
     const activityKind = sessionEventActivityKind(event);
-    const resultBearing = event.resultBearing !== false;
+    const knownResultLifecycle = turnResultLifecycle(threadId, turnId);
+    const resultBearing = eventResultBearing(event, knownResultLifecycle);
     if (['turn/started', 'turn/completed'].includes(event.method) && resultBearing) touchSessionSummary(threadId);
     if (event.method === 'turn/started' || (event.method === 'item/started' && turnId)) {
+      if (event.method === 'turn/started') {
+        rememberTurnResultLifecycle(threadId, turnId, resultBearing, { readMarked: resultBearing });
+      } else if (activityKind === 'contextCompaction' && !knownResultLifecycle) {
+        rememberTurnResultLifecycle(threadId, turnId, false);
+      }
       setSessionActivity(threadId, { turnId, status: 'running', kind: activityKind });
     }
     if (event.method === 'turn/completed') {
@@ -560,6 +619,7 @@ export function createSessionEventController({
           state.sessionCompletedAt[threadId] = Date.now();
           markSessionResultUnread(threadId);
         }
+        forgetTurnResultLifecycle(threadId, turnId);
       }
       scheduleTask(() => refreshSessions({ force: true }).catch(() => {}), completionRefreshDelayMs);
     } else if (event.method === 'item/completed' && activityKind === 'contextCompaction') {

@@ -268,6 +268,28 @@ test('Context compaction is running activity but does not create a user result',
   assert.equal(context.state.sessionList[0].updatedAt, 1);
 });
 
+test('Context compaction keeps its non-result classification when lifecycle metadata is incomplete', () => {
+  const context = eventHarness();
+  context.session.hasUnreadResult = true;
+  context.state.sessionList[0].hasUnreadResult = true;
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'turn/started',
+    activityKind: 'contextCompaction', params: { threadId: 'session-1', turn: { id: 'turn-context' } },
+  });
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'item/started',
+    params: { threadId: 'session-1', turnId: 'turn-context', item: { id: 'compact-1', type: 'contextCompaction' } },
+  });
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'turn/completed',
+    params: { threadId: 'session-1', turn: { id: 'turn-context' } },
+  });
+  assert.equal(context.session.activeTurnId, null);
+  assert.equal(context.calls.some(([name]) => name === 'read'), false);
+  assert.equal(context.calls.some(([name]) => name === 'unread'), false);
+  assert.equal(context.state.sessionList[0].updatedAt, 1);
+});
+
 test('A late completion cannot clear a newer active Turn', () => {
   const context = eventHarness();
   context.controller.handleSessionEvent(context.session, {
@@ -299,6 +321,14 @@ test('Inline context compaction returns to ordinary running without completing t
   assert.equal(context.session.activeTurnId, 'turn-user');
   assert.equal(context.session.activeActivityKind, null);
   assert.equal(context.state.sessionRuntimeStatuses['session-1'], 'running');
+  context.controller.handleSessionEvent(context.session, {
+    type: 'notification', method: 'turn/completed',
+    params: {
+      threadId: 'session-1',
+      turn: { id: 'turn-user', items: [{ id: 'answer', type: 'agentMessage', text: 'done' }] },
+    },
+  });
+  assert.equal(context.calls.some(([name]) => name === 'unread'), true);
   context.controller.stopActiveSessionSnapshotReconciliation(context.session);
 });
 

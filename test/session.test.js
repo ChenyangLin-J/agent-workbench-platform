@@ -109,6 +109,16 @@ test('Agent and Personal share message roles and running composer actions', () =
     secondaryLabel: '下一轮',
     showSecondary: true,
   });
+  assert.deepEqual(sessionComposerPresentation({
+    running: true,
+    activityKind: 'contextCompaction',
+  }), {
+    primaryMode: 'queue',
+    primaryLabel: '下一轮',
+    secondaryMode: 'queue',
+    secondaryLabel: '下一轮',
+    showSecondary: false,
+  });
   assert.deepEqual(sessionComposerPresentation({ previewOnly: true, sessionId: 'saved-session' }).primaryLabel, '发送并恢复');
   assert.deepEqual(sessionComposerPresentation({ running: true, canSteer: false, canQueue: false }), {
     primaryMode: null,

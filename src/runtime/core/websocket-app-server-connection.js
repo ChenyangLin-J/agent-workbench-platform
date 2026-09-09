@@ -64,7 +64,7 @@ export class WebSocketAppServerConnection extends EventEmitter {
       this.emit('ready', result);
       return result;
     } catch (error) {
-      this.close();
+      this.#recoverFromStartFailure(error);
       throw error;
     }
   }
@@ -74,17 +74,38 @@ export class WebSocketAppServerConnection extends EventEmitter {
       const socket = new this.WebSocketImpl(this.url);
       this.socket = socket;
       this.closing = false;
+      let settled = false;
+      const rejectConnection = (error) => {
+        if (settled) return;
+        settled = true;
+        socket.removeEventListener('open', onOpen);
+        socket.removeEventListener('error', onInitialError);
+        reject(error);
+      };
       const onOpen = () => {
+        if (settled) return;
+        if (socket !== this.socket) {
+          rejectConnection(coreError('APP_SERVER_CONNECTION_ABORTED', `Connection to ${this.url} was replaced.`));
+          return;
+        }
+        settled = true;
         socket.removeEventListener('error', onInitialError);
         resolve();
       };
-      const onInitialError = () => reject(coreError('APP_SERVER_CONNECTION_FAILED', `Could not connect to ${this.url}.`));
+      const onInitialError = () => rejectConnection(
+        coreError('APP_SERVER_CONNECTION_FAILED', `Could not connect to ${this.url}.`),
+      );
       socket.addEventListener('open', onOpen, { once: true });
       socket.addEventListener('error', onInitialError, { once: true });
-      socket.addEventListener('message', (event) => this.#handleMessage(event.data));
-      socket.addEventListener('close', (event) => this.#handleClose(event));
+      socket.addEventListener('message', (event) => this.#handleMessage(socket, event.data));
+      socket.addEventListener('close', (event) => {
+        rejectConnection(coreError('APP_SERVER_CONNECTION_FAILED', `Could not connect to ${this.url}.`));
+        this.#handleClose(socket, event);
+      });
       socket.addEventListener('error', () => {
-        if (this.state === 'ready') this.emit('protocol-error', coreError('APP_SERVER_CONNECTION_ERROR', 'WebSocket connection error.'), '');
+        if (socket === this.socket && this.state === 'ready') {
+          this.emit('protocol-error', coreError('APP_SERVER_CONNECTION_ERROR', 'WebSocket connection error.'), '');
+        }
       });
     });
   }
@@ -165,7 +186,24 @@ export class WebSocketAppServerConnection extends EventEmitter {
     this.emit('disconnect');
   }
 
-  #handleMessage(data) {
+  #recoverFromStartFailure(error) {
+    if (this.state === 'closed') return;
+    this.closing = true;
+    this.state = 'stopped';
+    this.initializeResult = null;
+    this.#rejectPending(error);
+    const socket = this.socket;
+    this.socket = null;
+    try {
+      socket?.close?.();
+    } catch {
+      // A failed connection may still be in CONNECTING state and cannot be closed cleanly.
+    }
+    this.closing = false;
+  }
+
+  #handleMessage(socket, data) {
+    if (socket !== this.socket) return;
     this.emit('activity', { direction: 'inbound' });
     let message;
     try {
@@ -192,11 +230,13 @@ export class WebSocketAppServerConnection extends EventEmitter {
         get handled() { return handled; },
         respond: (result) => {
           if (handled) return Promise.reject(coreError('APP_SERVER_REQUEST_HANDLED', 'Request already handled.'));
+          if (socket !== this.socket) return Promise.reject(coreError('APP_SERVER_NOT_RUNNING', 'App Server is not connected.'));
           handled = true;
           return this.respond(message.id, result);
         },
         reject: (error) => {
           if (handled) return Promise.reject(coreError('APP_SERVER_REQUEST_HANDLED', 'Request already handled.'));
+          if (socket !== this.socket) return Promise.reject(coreError('APP_SERVER_NOT_RUNNING', 'App Server is not connected.'));
           handled = true;
           return this.respondError(message.id, error);
         },
@@ -208,7 +248,8 @@ export class WebSocketAppServerConnection extends EventEmitter {
     this.emit('protocol-error', coreError('APP_SERVER_PROTOCOL_ERROR', 'Unrecognized JSON-RPC message.'), '');
   }
 
-  #handleClose(event) {
+  #handleClose(socket, event) {
+    if (socket !== this.socket) return;
     this.socket = null;
     if (this.closing) return;
     this.state = 'stopped';
