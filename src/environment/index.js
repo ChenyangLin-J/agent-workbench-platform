@@ -43,6 +43,7 @@ export { buildMinimalHostAssets } from './assets.js';
 export { createMinimalCodexRuntime, runtimeEnvironment } from './codex-runtime.js';
 export { prepareMinimalRuntimeConfiguration } from './runtime-config.js';
 export { createDockerIsolationProvider, dockerProfileFacts } from './docker-provider.js';
+export { inspectDockerRunInventory } from './docker-inventory.js';
 export {
   CHATGPT_CODEX_BASE_URL,
   CODEX_NATIVE_CREDENTIAL_REFERENCE,
