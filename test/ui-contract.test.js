@@ -337,9 +337,10 @@ test('Session UI exposes product extension content without owning product naviga
   assert.match(source, /clipboardAttachmentFiles\(event\.clipboardData\)/);
   assert.match(source, /richClipboardText\(richHtml, plainText\)/);
   assert.match(source, /const structured = richClipboardHasComplexStructure\(markdown, richHtml\)/);
-  assert.match(source, /const attachPaste = structured \|\| shouldConvertPastedTextToAttachment/);
+  assert.match(source, /structured && uploadPolicy\.structuredTextPaste === 'attachment'/);
+  assert.match(source, /const attachPaste = structuredAttachment \|\| shouldConvertPastedTextToAttachment/);
   assert.match(source, /shouldConvertPastedTextToAttachment\(draft, text/);
-  assert.match(source, /structured \? 'md' : 'txt'/);
+  assert.match(source, /structuredAttachment \? 'md' : 'txt'/);
   assert.doesNotMatch(source, /composerPreview|editFormattedComposer|格式化内容，点击编辑/);
   assert.match(source, /onOpenAttachment=\{actions\.onOpenAttachment\}/);
   assert.match(source, /className="cwu-message-attachment"/);

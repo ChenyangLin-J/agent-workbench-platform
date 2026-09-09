@@ -48,6 +48,7 @@ export function normalizeAttachmentPolicy(value = {}) {
     maxCount: positiveInteger(value.maxCount, MAX_SESSION_ATTACHMENTS),
     maxBytes: positiveInteger(value.maxBytes, MAX_SESSION_ATTACHMENT_BYTES),
     accept: String(value.accept || ''),
+    structuredTextPaste: value.structuredTextPaste === 'inline' ? 'inline' : 'attachment',
   };
 }
 

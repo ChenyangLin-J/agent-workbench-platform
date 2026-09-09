@@ -59,8 +59,10 @@ test('attachment contract normalizes UI metadata without taking over product sto
     kind: 'image', inputType: 'localImage', status: 'ready',
   });
   assert.deepEqual(normalizeAttachmentPolicy({ maxCount: 3 }), {
-    maxCount: 3, maxBytes: MAX_SESSION_ATTACHMENT_BYTES, accept: '',
+    maxCount: 3, maxBytes: MAX_SESSION_ATTACHMENT_BYTES, accept: '', structuredTextPaste: 'attachment',
   });
+  assert.equal(normalizeAttachmentPolicy({ structuredTextPaste: 'inline' }).structuredTextPaste, 'inline');
+  assert.equal(normalizeAttachmentPolicy({ structuredTextPaste: 'unexpected' }).structuredTextPaste, 'attachment');
   assert.deepEqual(validateSessionAttachment({ name: 'large.pdf', size: 101 }, { maxBytes: 100 }), {
     ok: false,
     attachment: {

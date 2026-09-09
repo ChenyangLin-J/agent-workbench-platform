@@ -1336,8 +1336,9 @@ export function SessionWorkspace({
     const richHtml = event.clipboardData?.getData('text/html') || '';
     const markdown = richClipboardText(richHtml, plainText);
     const structured = richClipboardHasComplexStructure(markdown, richHtml);
-    const text = structured ? markdown : plainText || markdown;
-    const attachPaste = structured || shouldConvertPastedTextToAttachment(draft, text, {
+    const structuredAttachment = structured && uploadPolicy.structuredTextPaste === 'attachment';
+    const text = structuredAttachment ? markdown : plainText || markdown;
+    const attachPaste = structuredAttachment || shouldConvertPastedTextToAttachment(draft, text, {
       textLimit: SESSION_COMPOSER_TEXT_LIMIT,
     });
     if (!attachPaste) {
@@ -1359,8 +1360,8 @@ export function SessionWorkspace({
     event.preventDefault();
     await uploadFiles([new File(
       [text],
-      `粘贴${structured ? '内容' : '文本'}-${compactLocalTimestamp(new Date())}.${structured ? 'md' : 'txt'}`,
-      { type: structured ? 'text/markdown' : 'text/plain' },
+      `粘贴${structuredAttachment ? '内容' : '文本'}-${compactLocalTimestamp(new Date())}.${structuredAttachment ? 'md' : 'txt'}`,
+      { type: structuredAttachment ? 'text/markdown' : 'text/plain' },
     )]);
   }
 
