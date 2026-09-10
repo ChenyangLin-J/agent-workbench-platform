@@ -76,7 +76,7 @@ export class MinimalHostResultFileProjector {
     const artifacts = [];
     const errors = [];
     for (const candidate of candidates) {
-      if (!candidateReferenced(candidate.path, text)) continue;
+      if (!candidateReferenced(candidate.path, text, this.workspaceRoot)) continue;
       try {
         artifacts.push(resourceDescriptorAttachment(await this.#capture(candidate.path, { sessionId, turnId })));
       } catch (error) {
@@ -161,9 +161,22 @@ function normalizedCandidatePath(value) {
   return path.replace(/#L\d+(?:C\d+)?$/i, '');
 }
 
-function candidateReferenced(path, text) {
+function candidateReferenced(path, text, workspaceRoot) {
   const source = String(text || '');
-  const variants = new Set([path, encodeURI(path), path.replace(/ /g, '%20')]);
+  const references = new Set([path]);
+  const resolvedPath = resolve(workspaceRoot, path);
+  if (isContained(workspaceRoot, resolvedPath)) {
+    const workspaceRelativePath = relative(workspaceRoot, resolvedPath);
+    if (workspaceRelativePath) {
+      references.add(workspaceRelativePath);
+      references.add(`.${sep}${workspaceRelativePath}`);
+    }
+  }
+  const variants = new Set([...references].flatMap((reference) => [
+    reference,
+    encodeURI(reference),
+    reference.replace(/ /g, '%20'),
+  ]));
   return [...variants].some((candidate) => candidate && exactReference(source, candidate));
 }
 

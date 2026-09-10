@@ -24,7 +24,10 @@ test('result file projector publishes only file-change candidates explicitly ref
   await projector.projectEvent({ ...common, payload: { item: {
     id: 'files-a',
     type: 'fileChange',
-    changes: [{ path: 'report.sql', kind: 'update' }, { path: 'notes.txt', kind: 'add' }],
+    changes: [
+      { path: join(workspace, 'report.sql'), kind: { type: 'update' } },
+      { path: join(workspace, 'notes.txt'), kind: { type: 'add' } },
+    ],
   } } });
   const projected = await projector.projectEvent({ ...common, payload: { item: {
     id: 'answer-a',
