@@ -79,6 +79,8 @@ export function createMinimalHost({
     return resultImageProjector ? resultImageProjector.projectEvent(withFile) : withFile;
   };
   const clients = new Set();
+  const portableRuntimePreparations = new Map();
+  const turnSubmissionQueues = new Map();
   const server = createServer((request, response) => {
     void route(request, response).catch((error) => sendError(response, error));
   });
@@ -202,15 +204,66 @@ export function createMinimalHost({
           ? session.runtimeBinding
           : await sessionRuntimeStore.load(session.sessionId || session.id))
       : knownRuntimeBinding;
-    const detachedFromCurrentRun = !runtimeBinding
-      && session.createdRunId !== manifest.id;
+    const detachedFromCurrentRun = portableSessionNeedsCurrentRuntime(session, runtimeBinding);
     return {
       ...session,
       runtimeBinding: publicRuntimeBinding(runtimeBinding),
-      composerDisabled: detachedFromCurrentRun,
-      runtimeContinuationRequired: detachedFromCurrentRun,
-      ...(detachedFromCurrentRun ? { status: 'idle', statusLabel: '历史记录' } : {}),
+      composerDisabled: false,
+      runtimeContinuationRequired: false,
+      ...(detachedFromCurrentRun ? { status: 'idle', statusLabel: '空闲' } : {}),
     };
+  }
+
+  function portableSessionNeedsCurrentRuntime(session, runtimeBinding = session?.runtimeBinding) {
+    return !runtimeBinding && session?.createdRunId !== manifest.id;
+  }
+
+  async function prepareOwnedSessionRuntime(session) {
+    const sessionId = session.sessionId || session.id;
+    if (!portableSessionNeedsCurrentRuntime(session)) {
+      return kernel.attach(sessionId, runtimeAttachOptions(manifest));
+    }
+    const inFlight = portableRuntimePreparations.get(sessionId);
+    if (inFlight) return inFlight;
+    const preparation = (async () => {
+      const existing = await sessionRuntimeStore.load(sessionId);
+      if (existing?.runtimeSessionId) {
+        return kernel.attach(sessionId, runtimeAttachOptions(manifest));
+      }
+      let attached = false;
+      try {
+        const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest));
+        attached = true;
+        await sessionRuntimeStore.save(sessionId, {
+          continuationContext: portableBranchContext(session),
+          portableHistory: true,
+        });
+        return binding;
+      } catch (error) {
+        if (attached && typeof kernel.detach === 'function') await kernel.detach(sessionId).catch(() => {});
+        if (sessionRuntimeStore !== sessionStore) await sessionRuntimeStore.remove?.(sessionId).catch(() => {});
+        throw error;
+      }
+    })();
+    portableRuntimePreparations.set(sessionId, preparation);
+    try {
+      return await preparation;
+    } finally {
+      if (portableRuntimePreparations.get(sessionId) === preparation) {
+        portableRuntimePreparations.delete(sessionId);
+      }
+    }
+  }
+
+  async function serializeTurnSubmission(sessionId, operation) {
+    const previous = turnSubmissionQueues.get(sessionId) || Promise.resolve();
+    const current = previous.catch(() => {}).then(operation);
+    turnSubmissionQueues.set(sessionId, current);
+    try {
+      return await current;
+    } finally {
+      if (turnSubmissionQueues.get(sessionId) === current) turnSubmissionQueues.delete(sessionId);
+    }
   }
 
   async function route(request, response) {
@@ -377,7 +430,7 @@ export function createMinimalHost({
         throw hostError('HOST_SESSION_ACTIVE', 'An active Session cannot be branched.', 409);
       }
       const sourceRuntimeState = await sessionRuntimeStore.load(sourceSessionId);
-      const portableHistory = source.runtimeContinuationRequired
+      const portableHistory = portableSessionNeedsCurrentRuntime(source)
         || sourceRuntimeState?.portableHistory === true;
       const sourceMessage = (source.messages || []).find((message) => (
         message.role === 'user' && message.turnId === body.replaceTurnId
@@ -408,7 +461,6 @@ export function createMinimalHost({
       const session = await requireOwnedSessionAccess(sessionId, sessionAccess);
       requireAttachmentsEnabled(attachmentsEnabled);
       if (request.method === 'POST') {
-        requireCurrentRunSession(session);
         const body = await readJsonBody(request);
         const resources = await registerEnvironmentSessionDirectories({
           directories: body.directories,
@@ -431,7 +483,6 @@ export function createMinimalHost({
       requireAttachmentsEnabled(attachmentsEnabled);
       if (request.method === 'POST' && !attachmentId) {
         if (accessed.kind === 'shared') throw hostError('SESSION_ACCESS_READ_ONLY', 'This shared Session is read-only.', 403);
-        requireCurrentRunSession(session);
         const body = await readJsonBody(request, { maxBytes: MAX_ATTACHMENT_BODY_BYTES });
         const attachment = await saveEnvironmentSessionAttachment({
           attachment: body.attachment,
@@ -461,8 +512,7 @@ export function createMinimalHost({
     if (queuedTurnRoute && request.method === 'DELETE') {
       const sessionId = decodeURIComponent(queuedTurnRoute[1]);
       const queuedTurnId = decodeURIComponent(queuedTurnRoute[2]);
-      const session = await requireOwnedSessionAccess(sessionId, sessionAccess);
-      requireCurrentRunSession(session);
+      await requireOwnedSessionAccess(sessionId, sessionAccess);
       requireQueuedTurnsEnabled(queuedTurnsEnabled);
       const queue = await turnQueueReady;
       const removed = await queue.remove(sessionId, queuedTurnId);
@@ -495,7 +545,6 @@ export function createMinimalHost({
         throw hostError('SESSION_ACCESS_READ_ONLY', 'This shared Session is read-only.', 403);
       }
       if (request.method === 'POST' && action === 'turns') {
-        requireCurrentRunSession(session);
         const body = await readJsonBody(request);
         const turn = normalizeTurnRequest(body);
         const requestedMode = String(body.mode || 'auto');
@@ -526,110 +575,112 @@ export function createMinimalHost({
             return sendJson(response, 202, { idempotent: true, pending: true });
           }
         }
-        let turnAccepted = false;
-        try {
-          if (turn.attachments.length) requireAttachmentsEnabled(attachmentsEnabled);
-          const attachmentInputs = attachmentsEnabled
-            ? await resolveEnvironmentSessionAttachmentInputs({
-                attachments: turn.attachments,
-                sessionId,
-                authorizedRoots: authorizedResourceRoots(manifest),
-                store: sessionResourceStore,
-              })
-            : [];
-          const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest));
-          const runtimeState = await sessionRuntimeStore.load(sessionId);
-          const continuationContext = runtimeState?.continuationContext;
-          const continuationAttachments = Array.isArray(runtimeState?.continuationAttachments)
-            ? runtimeState.continuationAttachments
-            : [];
-          const continuationAttachmentInputs = attachmentsEnabled && continuationAttachments.length
-            ? await resolveEnvironmentSessionAttachmentInputs({
-                attachments: continuationAttachments,
-                sessionId,
-                authorizedRoots: authorizedResourceRoots(manifest),
-                store: sessionResourceStore,
-              })
-            : [];
-          const input = runtimeTurnInputWithContinuation(
-            runtimeTurnInput(turn, [...continuationAttachmentInputs, ...attachmentInputs]),
-            continuationContext,
-          );
-          const queue = await turnQueueReady;
-          const canSteerActiveTurn = steerEnabled && kernel.capabilities().steer === true;
-          if (requestedMode === 'steer' && !canSteerActiveTurn) {
-            throw hostError('HOST_STEER_DISABLED', 'Steering is disabled for this Environment.', 403);
-          }
-          const shouldQueue = requestedMode === 'queue'
-            || queue.list(sessionId).length > 0
-            || (Boolean(binding.activeTurnId) && !canSteerActiveTurn);
-          let payload;
-          if (shouldQueue) {
-            requireQueuedTurnsEnabled(queuedTurnsEnabled);
-            const queuedTurn = await queue.enqueue(sessionId, {
-              input,
-              prompt: turn.displayText,
-              attachments: turn.attachments,
-              afterTurnId: binding.activeTurnId || latestTurnId(await sessionStore.get(sessionId, { ownerId })),
-              context: { ownerId },
-            });
-            turnAccepted = true;
-            if (!binding.activeTurnId) {
-              queueMicrotask(() => void dispatcherReady.then((dispatcher) => dispatcher.startNext(sessionId)).catch(() => {}));
-            }
-            payload = { queued: true, queuedTurn, queueLength: queue.list(sessionId).length };
-          } else {
-            const result = await kernel.submit(sessionId, input, {
-              mode: requestedMode,
-              ...runtimeAttachOptions(manifest),
-            });
-            turnAccepted = true;
-            const committedAttachments = turn.attachments.length
-              ? await commitEnvironmentSessionAttachments({
+        return serializeTurnSubmission(sessionId, async () => {
+          let turnAccepted = false;
+          try {
+            if (turn.attachments.length) requireAttachmentsEnabled(attachmentsEnabled);
+            const attachmentInputs = attachmentsEnabled
+              ? await resolveEnvironmentSessionAttachmentInputs({
                   attachments: turn.attachments,
                   sessionId,
-                  turnId: result.runtimeTurnId,
+                  authorizedRoots: authorizedResourceRoots(manifest),
                   store: sessionResourceStore,
                 })
               : [];
-            await sessionStore.recordUserInput(sessionId, turn.displayText, {
-              attachments: committedAttachments,
-              ownerId,
-              turnId: result.runtimeTurnId,
-            });
-            payload = { result };
+            const binding = await prepareOwnedSessionRuntime(session);
+            const runtimeState = await sessionRuntimeStore.load(sessionId);
+            const continuationContext = runtimeState?.continuationContext;
+            const continuationAttachments = Array.isArray(runtimeState?.continuationAttachments)
+              ? runtimeState.continuationAttachments
+              : [];
+            const continuationAttachmentInputs = attachmentsEnabled && continuationAttachments.length
+              ? await resolveEnvironmentSessionAttachmentInputs({
+                  attachments: continuationAttachments,
+                  sessionId,
+                  authorizedRoots: authorizedResourceRoots(manifest),
+                  store: sessionResourceStore,
+                })
+              : [];
+            const input = runtimeTurnInputWithContinuation(
+              runtimeTurnInput(turn, [...continuationAttachmentInputs, ...attachmentInputs]),
+              continuationContext,
+            );
+            const queue = await turnQueueReady;
+            const canSteerActiveTurn = steerEnabled && kernel.capabilities().steer === true;
+            if (requestedMode === 'steer' && !canSteerActiveTurn) {
+              throw hostError('HOST_STEER_DISABLED', 'Steering is disabled for this Environment.', 403);
+            }
+            const shouldQueue = requestedMode === 'queue'
+              || queue.list(sessionId).length > 0
+              || (Boolean(binding.activeTurnId) && !canSteerActiveTurn);
+            let payload;
+            if (shouldQueue) {
+              requireQueuedTurnsEnabled(queuedTurnsEnabled);
+              const queuedTurn = await queue.enqueue(sessionId, {
+                input,
+                prompt: turn.displayText,
+                attachments: turn.attachments,
+                afterTurnId: binding.activeTurnId || latestTurnId(await sessionStore.get(sessionId, { ownerId })),
+                context: { ownerId },
+              });
+              turnAccepted = true;
+              if (!binding.activeTurnId) {
+                queueMicrotask(() => void dispatcherReady.then((dispatcher) => dispatcher.startNext(sessionId)).catch(() => {}));
+              }
+              payload = { queued: true, queuedTurn, queueLength: queue.list(sessionId).length };
+            } else {
+              const result = await kernel.submit(sessionId, input, {
+                mode: requestedMode,
+                ...runtimeAttachOptions(manifest),
+              });
+              turnAccepted = true;
+              const committedAttachments = turn.attachments.length
+                ? await commitEnvironmentSessionAttachments({
+                    attachments: turn.attachments,
+                    sessionId,
+                    turnId: result.runtimeTurnId,
+                    store: sessionResourceStore,
+                  })
+                : [];
+              await sessionStore.recordUserInput(sessionId, turn.displayText, {
+                attachments: committedAttachments,
+                ownerId,
+                turnId: result.runtimeTurnId,
+              });
+              payload = { result };
+            }
+            if (continuationContext || continuationAttachments.length) {
+              await sessionRuntimeStore.save(sessionId, {
+                continuationAttachments: null,
+                continuationContext: null,
+              });
+            }
+            if (idempotencyKey) {
+              await sessionStore.completeTurnSubmission(sessionId, {
+                ownerId,
+                idempotencyKey,
+                responseStatus: 202,
+                response: payload,
+              });
+            }
+            return sendJson(response, 202, payload);
+          } catch (error) {
+            if (idempotencyKey && !turnAccepted) {
+              await sessionStore.releaseTurnSubmission(sessionId, { ownerId, idempotencyKey });
+            }
+            throw error;
           }
-          if (continuationContext || continuationAttachments.length) {
-            await sessionRuntimeStore.save(sessionId, {
-              continuationAttachments: null,
-              continuationContext: null,
-            });
-          }
-          if (idempotencyKey) {
-            await sessionStore.completeTurnSubmission(sessionId, {
-              ownerId,
-              idempotencyKey,
-              responseStatus: 202,
-              response: payload,
-            });
-          }
-          return sendJson(response, 202, payload);
-        } catch (error) {
-          if (idempotencyKey && !turnAccepted) {
-            await sessionStore.releaseTurnSubmission(sessionId, { ownerId, idempotencyKey });
-          }
-          throw error;
-        }
+        });
       }
       if (request.method === 'POST' && action === 'interrupt') {
-        requireCurrentRunSession(session);
+        requireCurrentRunRuntime(session);
         const body = await readJsonBody(request);
         return sendJson(response, 202, {
           result: await kernel.interrupt(sessionId, body.expectedTurnId),
         });
       }
       if (request.method === 'POST' && action.startsWith('requests/')) {
-        requireCurrentRunSession(session);
+        requireCurrentRunRuntime(session);
         const body = await readJsonBody(request);
         return sendJson(response, 200, {
           result: await kernel.respondToRequest(sessionId, decodeURIComponent(sessionRoute[3]), body.response),
@@ -1210,11 +1261,11 @@ function requireAttachmentsEnabled(enabled) {
   if (!enabled) throw hostError('HOST_ATTACHMENTS_DISABLED', 'Attachments are disabled for this Environment.', 403);
 }
 
-function requireCurrentRunSession(session) {
-  if (!session?.runtimeContinuationRequired) return;
+function requireCurrentRunRuntime(session) {
+  if (session?.runtimeBinding) return;
   throw hostError(
-    'HOST_SESSION_CONTINUATION_REQUIRED',
-    'This Session belongs to an earlier execution Run and is read-only until it is continued in the current Run.',
+    'HOST_SESSION_RUNTIME_INACTIVE',
+    'This Session has no active Runtime in the current Run.',
     409,
   );
 }

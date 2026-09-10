@@ -379,6 +379,8 @@ Platform therefore handles files as a shared capability, but does not centralize
 - Copying a path is available only for authorized local workspace references. Managed uploads expose a resource action, not their private storage path.
 - Missing, quarantined, or unauthorized content renders an explicit state; it never disappears from transcript history.
 - Archive does not change resource presentation. Deleted Sessions are not recoverable through an attachment URL after authorization is revoked.
+- Managed Resources remain Session-durable across execution Runs. A new Runtime resolves a referenced Resource again through the current Host authorization boundary; it never receives a stale Run path or implicit access from the prior Runtime.
+- The file-preview drawer uses a blurred backdrop and a translucent blurred panel for Markdown, SQL, CSV and plain text, with a solid fallback when reduced transparency is requested.
 - Browser/tool observation galleries and diagnostics are not mixed into the default transcript or Session attachment list. Only provider-native published results or resources explicitly linked by the final Agent message may appear as final message media after authorization and promotion.
 
 ## Security requirements

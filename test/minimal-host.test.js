@@ -493,19 +493,12 @@ test('Minimal Host reads portable Sessions across Runs without reusing stale Run
 
   const listed = await fetch(`${listeningB.url}/api/sessions`, { headers: ownerHeaders }).then((response) => response.json());
   assert.equal(listed.sessions[0].id, created.sessionId);
-  assert.equal(listed.sessions[0].runtimeContinuationRequired, true);
+  assert.equal(listed.sessions[0].runtimeContinuationRequired, false);
+  assert.equal(listed.sessions[0].statusLabel, '空闲');
   const detail = await fetch(`${listeningB.url}/api/sessions/${created.sessionId}`, { headers: ownerHeaders }).then((response) => response.json());
   assert.deepEqual(detail.session.messages.map((message) => message.content), ['保留这条消息', '准备跨 Run 编辑']);
-  assert.equal(detail.session.composerDisabled, true);
+  assert.equal(detail.session.composerDisabled, false);
   assert.equal(providerB.createdSessions.length, 0);
-
-  const rejected = await fetch(`${listeningB.url}/api/sessions/${created.sessionId}/turns`, {
-    method: 'POST',
-    headers: ownerHeaders,
-    body: JSON.stringify({ prompt: '不能静默接到空白 Runtime' }),
-  });
-  assert.equal(rejected.status, 409);
-  assert.equal((await rejected.json()).error.code, 'HOST_SESSION_CONTINUATION_REQUIRED');
   assert.equal(await runtimeStoreB.load(created.sessionId), null);
 
   const forkedResponse = await fetch(`${listeningB.url}/api/sessions/${created.sessionId}/branches`, {
@@ -587,6 +580,130 @@ test('Minimal Host reads portable Sessions across Runs without reusing stale Run
   assert.equal(createdInRunB.createdRunId, 'run-b');
   assert.equal((await sessionStoreA.list()).length, 3);
   assert.equal(await runtimeStoreB.load(createdInRunB.sessionId), null);
+});
+
+test('Minimal Host transparently continues an owned portable Session on its first new Turn', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-portable-continuation-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sharedState = join(root, 'shared-state');
+  const sharedResources = new FilesystemResourceStore({ root: join(root, 'shared-resources') });
+  const sourceStore = new EnvironmentSessionStore({ stateRoot: sharedState, runId: 'run-a' });
+  const source = await sourceStore.create({ ownerId: 'user-a', runId: 'run-a', title: '可续接 Session' });
+  await sourceStore.recordUserInput(source.sessionId, '上一轮保留的上下文', {
+    ownerId: 'user-a',
+    turnId: 'run-a-turn-1',
+  });
+
+  const runtimeStore = new EnvironmentSessionRuntimeStore({ stateRoot: join(root, 'run-b', 'state') });
+  const provider = new FakeRuntimeProvider();
+  const originalCreateSession = provider.createSession.bind(provider);
+  let runtimeCreationAttempt = 0;
+  provider.createSession = (options) => {
+    const runtime = originalCreateSession(options);
+    runtimeCreationAttempt += 1;
+    const originalCreate = runtime.create.bind(runtime);
+    if (runtimeCreationAttempt === 1) {
+      runtime.create = async () => {
+        throw Object.assign(new Error('Synthetic portable Runtime startup failure'), {
+          code: 'SYNTHETIC_RUNTIME_START_FAILED',
+          status: 503,
+        });
+      };
+    } else {
+      runtime.create = async (params) => {
+        await delay(30);
+        return originalCreate(params);
+      };
+    }
+    return runtime;
+  };
+  const host = createMinimalHost({
+    manifest: runManifest(join(root, 'run-b'), 'run-b'),
+    kernel: new AgentSessionKernel({ provider, bindingStore: runtimeStore, validateRequest: () => {} }),
+    sessionStore: new EnvironmentSessionStore({ stateRoot: sharedState, runId: 'run-b' }),
+    runtimeStateStore: runtimeStore,
+    resourceStore: sharedResources,
+    sessionOwnerHeader: 'x-session-owner',
+  });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = {
+    'content-type': 'application/json',
+    'x-session-owner': 'user-a',
+    'idempotency-key': 'portable-turn-1',
+  };
+
+  const detailBefore = await fetch(`${listening.url}/api/sessions/${source.sessionId}`, { headers })
+    .then((response) => response.json()).then((body) => body.session);
+  assert.equal(detailBefore.composerDisabled, false);
+  assert.equal(detailBefore.runtimeContinuationRequired, false);
+  assert.equal(provider.createdSessions.length, 0);
+
+  const attachment = await fetch(`${listening.url}/api/sessions/${source.sessionId}/attachments`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ attachment: {
+      name: 'continued.sql',
+      type: 'application/sql',
+      size: 9,
+      data: `data:application/sql;base64,${Buffer.from('select 1;').toString('base64')}`,
+    } }),
+  }).then((response) => response.json()).then((body) => body.attachment);
+  assert.equal(provider.createdSessions.length, 0);
+
+  const submit = () => fetch(`${listening.url}/api/sessions/${source.sessionId}/turns`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ prompt: '继续处理', attachments: [attachment] }),
+  });
+  const failed = await submit();
+  assert.equal(failed.status, 503);
+  assert.equal((await failed.json()).error.code, 'SYNTHETIC_RUNTIME_START_FAILED');
+  assert.equal(provider.createdSessions[0].closed, true);
+  assert.equal(await runtimeStore.load(source.sessionId), null);
+  assert.equal((await sharedResources.get(attachment.id, { sessionId: source.sessionId })).lifecycle.state, 'staged');
+
+  const responses = await Promise.all([submit(), submit()]);
+  assert.deepEqual(responses.map((response) => response.status), [202, 202]);
+  const payloads = await Promise.all(responses.map((response) => response.json()));
+  assert.equal(payloads.filter((payload) => payload.result).length, 1);
+  assert.equal(payloads.filter((payload) => payload.idempotent && payload.pending).length, 1);
+  assert.equal(provider.createdSessions.length, 2);
+  const continuedRuntime = provider.createdSessions[1];
+  assert.equal(continuedRuntime.startedTurns.length, 1);
+  assert.match(continuedRuntime.startedTurns[0].input[0].text, /上一轮保留的上下文/);
+  assert.equal(continuedRuntime.startedTurns[0].input[1].text, '继续处理');
+  assert.match(JSON.stringify(continuedRuntime.startedTurns[0].input), /continued\.sql/);
+  const persisted = await sourceStore.get(source.sessionId, { ownerId: 'user-a' });
+  assert.deepEqual(persisted.messages.map((message) => message.content), ['上一轮保留的上下文', '继续处理']);
+  assert.equal((await sharedResources.get(attachment.id, { sessionId: source.sessionId })).lifecycle.state, 'ready');
+  const runtimeState = await runtimeStore.load(source.sessionId);
+  assert.equal(runtimeState.portableHistory, true);
+  assert.equal(runtimeState.continuationContext, null);
+
+  const concurrent = await sourceStore.create({ ownerId: 'user-a', runId: 'run-a', title: '并发续接 Session' });
+  await sourceStore.recordUserInput(concurrent.sessionId, '并发时只注入一次的历史', {
+    ownerId: 'user-a',
+    turnId: 'run-a-turn-2',
+  });
+  const concurrentSubmit = (key, prompt) => fetch(`${listening.url}/api/sessions/${concurrent.sessionId}/turns`, {
+    method: 'POST',
+    headers: { ...headers, 'idempotency-key': key },
+    body: JSON.stringify({ prompt }),
+  });
+  const concurrentResponses = await Promise.all([
+    concurrentSubmit('portable-concurrent-1', '并发问题一'),
+    concurrentSubmit('portable-concurrent-2', '并发问题二'),
+  ]);
+  assert.deepEqual(concurrentResponses.map((response) => response.status), [202, 202]);
+  const concurrentPayloads = await Promise.all(concurrentResponses.map((response) => response.json()));
+  assert.equal(concurrentPayloads.filter((payload) => payload.result).length, 1);
+  assert.equal(concurrentPayloads.filter((payload) => payload.queued).length, 1);
+  assert.equal(provider.createdSessions.length, 3);
+  assert.match(JSON.stringify(provider.createdSessions[2].startedTurns[0].input), /并发时只注入一次的历史/);
+  const queued = await runtimeStore.loadQueuedTurns();
+  assert.match(JSON.stringify(queued[concurrent.sessionId]), /并发问题/);
+  assert.doesNotMatch(JSON.stringify(queued[concurrent.sessionId]), /并发时只注入一次的历史/);
 });
 
 test('Minimal Host assets build without consumer source', async (t) => {

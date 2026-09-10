@@ -181,7 +181,7 @@ same Run owner label; unresolved resources require manual read-only diagnosis.
 Do not use generic `docker rm` or `docker system prune` as an Environment
 lifecycle substitute.
 
-To adopt portable persistence for existing filesystem state, stop the source Run and call `env migrate-sessions` before starting the first Run that uses the new root. The destination declared by the bindings must not exist. The command copies transcripts and Resources, verifies committed references and managed digests, excludes Runtime bindings and queued Turns, and retains the source. A Session created by the old Run remains read-only for direct continuation in the new Run; reading it never creates a replacement Runtime thread. When Edit or Fork is enabled, an owner can explicitly branch an eligible retained user message into a fresh current-Run Runtime with bounded transcript context. The old Runtime binding is never resumed or copied.
+To adopt portable persistence for existing filesystem state, stop the source Run and call `env migrate-sessions` before starting the first Run that uses the new root. The destination declared by the bindings must not exist. The command copies transcripts and Resources, verifies committed references and managed digests, excludes Runtime bindings and queued Turns, and retains the source. Reading an owned Session created by the old Run never creates a replacement Runtime thread and does not disable its Composer. Its first new Turn creates one fresh current-Run binding and receives bounded retained transcript context; the old Runtime binding, credentials, technical state and workspace-private paths are never resumed or copied. Shared Sessions owned by another principal remain read-only.
 
 The generated layout is:
 

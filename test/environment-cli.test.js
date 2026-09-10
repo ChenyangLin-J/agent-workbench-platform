@@ -109,7 +109,8 @@ test('CLI migrates a stopped Run into consumer-owned Session persistence used by
     headers: { 'x-agent-workbench-token': accessToken },
   }).then((response) => response.json());
   assert.equal(sessions.sessions[0].id, sourceSession.sessionId);
-  assert.equal(sessions.sessions[0].runtimeContinuationRequired, true);
+  assert.equal(sessions.sessions[0].runtimeContinuationRequired, false);
+  assert.equal(sessions.sessions[0].composerDisabled, false);
 });
 
 async function cli(args) {

@@ -56,6 +56,9 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(source, /file\.format === 'spreadsheet'/);
   assert.match(source, /function SpreadsheetPreview/);
   assert.match(styles, /\.cwu-document-preview/);
+  assert.match(styles, /\.cwu-document-backdrop \{[^}]*backdrop-filter: blur\(10px\)/);
+  assert.match(styles, /\.cwu-document-preview \{[^}]*background: color-mix\([^}]*backdrop-filter: blur\(18px\)/);
+  assert.match(styles, /@media \(prefers-reduced-transparency: reduce\)/);
   assert.match(styles, /\.cwu-document-tabs/);
   assert.match(styles, /\.cwu-document-html/);
   assert.match(styles, /\.cwu-document-editor/);
@@ -65,6 +68,8 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(styles, /\.cwu-local-file-link \{ position: relative; display: inline-block/);
   assert.match(styles, /\.cwu-local-file-reveal \{ position: absolute;/);
   assert.match(styles, /@media \(hover: none\)/);
+  assert.match(styles, /\.cwu-browser\.is-list-collapsed \{ grid-template-columns: 0 0 minmax\(0, 1fr\); \}/);
+  assert.match(styles, /\.cwu-browser\.is-list-collapsed \.cwu-browser-list-toggle \{[^}]*position: absolute/);
 });
 
 test('Minimal Host browser mutations use reusable idempotency operations', async () => {
