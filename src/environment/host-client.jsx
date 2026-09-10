@@ -6,6 +6,11 @@ import { SessionBrowser } from '../ui/index.jsx';
 import { sessionMessageBranchEligibility } from '../features/session-branch.js';
 import { maintainMinimalHostEventStream } from './host-event-stream.js';
 import {
+  applyMinimalHostSessionEvent,
+  parseMinimalHostSessionEvent,
+  patchMinimalHostSessionSummary,
+} from './host-session-events.js';
+import {
   minimalHostSessionPresentation,
   selectMinimalHostSession,
   shouldAutoCreateMinimalHostSession,
@@ -24,8 +29,8 @@ const queuedTurnsEnabled = featureEnabled('queuedTurns');
 const sessionSharing = bootstrap.sessionSharing?.enabled === true ? bootstrap.sessionSharing : null;
 const startsWithNewSession = bootstrap.sessionStart === 'new';
 const initialSessionId = new URLSearchParams(globalThis.location?.search || '').get('session');
-const RUNNING_SESSION_POLL_MS = 2_000;
 const SHARED_SESSION_POLL_MS = 5_000;
+const SESSION_LIST_PAGE_SIZE = 100;
 
 function hostUrl(path) {
   return resolveMinimalHostUrl(path, { baseUrl: hostBaseUrl });
@@ -46,9 +51,8 @@ function MinimalHostApp() {
   const documentPreviewUrl = useRef(null);
   const sessionMediaUrls = useRef({ sessionId: null, entries: new Map() });
   const openedShares = useRef(new Set());
-  const refreshTimer = useRef(null);
-  const refreshRunning = useRef(false);
-  const refreshQueued = useRef(false);
+  const detailRequest = useRef({ controller: null, generation: 0 });
+  const listRequestGeneration = useRef(0);
   const operationController = useRef(null);
   const automaticSessionCreationAttempted = useRef(false);
   operationController.current ||= new SessionClientOperationController();
@@ -154,16 +158,12 @@ function MinimalHostApp() {
   }, []);
 
   const selectSessionId = useCallback((nextValue) => {
-    if (typeof nextValue !== 'function') {
-      selectedIdRef.current = nextValue;
-      setSelectedId(nextValue);
-      return;
-    }
-    setSelectedId((current) => {
-      const next = nextValue(current);
-      selectedIdRef.current = next;
-      return next;
-    });
+    const next = typeof nextValue === 'function'
+      ? nextValue(selectedIdRef.current)
+      : nextValue;
+    selectedIdRef.current = next;
+    setSession((current) => (current?.sessionId === next ? current : null));
+    setSelectedId(next);
   }, []);
 
   const productRequest = useCallback(async (path, options = {}) => {
@@ -181,25 +181,40 @@ function MinimalHostApp() {
   }, []);
 
   const refreshSessions = useCallback(async () => {
+    const generation = ++listRequestGeneration.current;
     const merged = new Map();
-    let sharedOffset = null;
-    let sharedPagesComplete = false;
-    for (let page = 0; page < 100; page += 1) {
-      const body = await request(sharedOffset == null
-        ? 'api/sessions'
-        : `api/sessions?sharedOffset=${encodeURIComponent(sharedOffset)}`);
+    const first = await request(`api/sessions?limit=${SESSION_LIST_PAGE_SIZE}`);
+    for (const candidate of first.sessions || []) {
+      const presented = minimalHostSessionPresentation(candidate);
+      merged.set(presented.id || presented.sessionId, presented);
+    }
+    let cursor = first.nextCursor || null;
+    for (let page = 0; cursor && page < 100; page += 1) {
+      const body = await request(
+        `api/sessions?shared=0&limit=${SESSION_LIST_PAGE_SIZE}&cursor=${encodeURIComponent(cursor)}`,
+      );
       for (const candidate of body.sessions || []) {
         const presented = minimalHostSessionPresentation(candidate);
         merged.set(presented.id || presented.sessionId, presented);
       }
-      if (body.sharedNextOffset == null) {
-        sharedPagesComplete = true;
-        break;
+      if (body.nextCursor === cursor) throw new Error('对话分页游标未前进。');
+      cursor = body.nextCursor || null;
+    }
+    if (cursor) throw new Error('对话数量超出客户端分页上限。');
+    let sharedOffset = first.sharedNextOffset ?? null;
+    for (let page = 0; sharedOffset != null && page < 100; page += 1) {
+      const body = await request(
+        `api/sessions?owned=0&sharedOffset=${encodeURIComponent(sharedOffset)}`,
+      );
+      for (const candidate of body.sessions || []) {
+        const presented = minimalHostSessionPresentation(candidate);
+        merged.set(presented.id || presented.sessionId, presented);
       }
       if (body.sharedNextOffset === sharedOffset) throw new Error('共享对话分页未前进。');
-      sharedOffset = body.sharedNextOffset;
+      sharedOffset = body.sharedNextOffset ?? null;
     }
-    if (!sharedPagesComplete) throw new Error('共享对话数量超出客户端分页上限。');
+    if (sharedOffset != null) throw new Error('共享对话数量超出客户端分页上限。');
+    if (generation !== listRequestGeneration.current) return null;
     const nextSessions = [...merged.values()].sort(
       (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
     );
@@ -211,10 +226,15 @@ function MinimalHostApp() {
 
   const refreshSession = useCallback(async (sessionId = selectedIdRef.current) => {
     if (!sessionId) return null;
-    const body = await request(`api/sessions/${encodeURIComponent(sessionId)}`);
+    detailRequest.current.controller?.abort();
+    const controller = new AbortController();
+    const generation = detailRequest.current.generation + 1;
+    detailRequest.current = { controller, generation };
+    const body = await request(`api/sessions/${encodeURIComponent(sessionId)}`, { signal: controller.signal });
+    if (detailRequest.current.generation !== generation) return null;
     if (selectedIdRef.current !== sessionId) return null;
     const nextSession = messageActionPresentation(await presentSession(body.session));
-    if (selectedIdRef.current !== sessionId) {
+    if (detailRequest.current.generation !== generation || selectedIdRef.current !== sessionId) {
       clearSessionMediaUrls(sessionId);
       return null;
     }
@@ -231,26 +251,6 @@ function MinimalHostApp() {
     };
   }, [clearSessionMediaUrls, closeDocumentPreview, selectedId]);
 
-  const scheduleRefresh = useCallback(() => {
-    refreshQueued.current = true;
-    if (refreshTimer.current || refreshRunning.current) return;
-    refreshTimer.current = setTimeout(async () => {
-      refreshTimer.current = null;
-      refreshQueued.current = false;
-      refreshRunning.current = true;
-      try {
-        await refreshSessions();
-        await refreshSession();
-        setError('');
-      } catch (nextError) {
-        setError(nextError.message);
-      } finally {
-        refreshRunning.current = false;
-        if (refreshQueued.current) scheduleRefresh();
-      }
-    }, 180);
-  }, [refreshSession, refreshSessions]);
-
   const selectedSessionLoaded = session?.sessionId === selectedId;
   const selectedShared = selectedSessionLoaded
     ? session?.access?.kind === 'shared'
@@ -258,11 +258,6 @@ function MinimalHostApp() {
 
   useEffect(() => {
     refreshSessions().catch((nextError) => setError(nextError.message));
-    return () => {
-      clearTimeout(refreshTimer.current);
-      refreshTimer.current = null;
-      refreshQueued.current = false;
-    };
   }, [refreshSessions]);
 
   useEffect(() => {
@@ -270,11 +265,22 @@ function MinimalHostApp() {
       setSession(null);
       return undefined;
     }
-    refreshSession(selectedId).catch((nextError) => setError(nextError.message));
-    if (!selectedSessionLoaded) return undefined;
+    if (!selectedSessionLoaded) {
+      refreshSession(selectedId).catch((nextError) => {
+        if (nextError.name !== 'AbortError') setError(nextError.message);
+      });
+      return () => detailRequest.current.controller?.abort();
+    }
     if (selectedShared) {
-      const timer = setInterval(scheduleRefresh, SHARED_SESSION_POLL_MS);
-      return () => clearInterval(timer);
+      const timer = setInterval(() => {
+        refreshSession(selectedId).catch((nextError) => {
+          if (nextError.name !== 'AbortError') setError(nextError.message);
+        });
+      }, SHARED_SESSION_POLL_MS);
+      return () => {
+        clearInterval(timer);
+        detailRequest.current.controller?.abort();
+      };
     }
     const controller = new AbortController();
     void maintainMinimalHostEventStream({
@@ -284,21 +290,62 @@ function MinimalHostApp() {
         headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
         signal,
       }),
-      onEvent: scheduleRefresh,
+      onEvent: (envelope) => {
+        const event = parseMinimalHostSessionEvent(envelope);
+        if (!event || event.sessionId !== selectedIdRef.current) return;
+        if (event.type === 'replay_gap' || event.payload?.snapshotRequired === true) {
+          refreshSession(event.sessionId).catch((nextError) => {
+            if (nextError.name !== 'AbortError') setError(nextError.message);
+          });
+          return;
+        }
+        const applyEvent = (projectedEvent) => {
+          setSession((current) => {
+            const applied = applyMinimalHostSessionEvent(current, projectedEvent);
+            return !applied.session || applied.session === current
+              ? current
+              : messageActionPresentation(applied.session);
+          });
+          setSessions((currentSessions) => {
+            const currentSummary = currentSessions.find((candidate) => (
+              (candidate.id || candidate.sessionId) === projectedEvent.sessionId
+            ));
+            if (!currentSummary) return currentSessions;
+            const applied = applyMinimalHostSessionEvent(currentSummary, projectedEvent);
+            return applied.session
+              ? patchMinimalHostSessionSummary(currentSessions, applied.session)
+              : currentSessions;
+          });
+        };
+        const media = event.payload?.item?.publishedMedia;
+        if (media?.resourceId) {
+          void loadSessionMediaUrl(event.sessionId, media).then((src) => applyEvent({
+            ...event,
+            payload: { ...event.payload, item: {
+              ...event.payload.item,
+              publishedMedia: {
+                ...media,
+                id: media.resourceId,
+                kind: 'image',
+                src,
+                alt: media.name || '图片',
+                attachmentId: media.resourceId,
+              },
+            } },
+          })).catch(() => applyEvent(event));
+        } else {
+          applyEvent(event);
+        }
+      },
       signal: controller.signal,
     }).catch((nextError) => {
       if (nextError.name !== 'AbortError') setError(nextError.message);
     });
-    return () => controller.abort();
-  }, [refreshSession, scheduleRefresh, selectedId, selectedSessionLoaded, selectedShared]);
-
-  const sessionRunning = session?.status === 'running' || session?.status === 'waiting';
-  useEffect(() => {
-    if (!selectedId || !sessionRunning) return undefined;
-    scheduleRefresh();
-    const timer = setInterval(scheduleRefresh, RUNNING_SESSION_POLL_MS);
-    return () => clearInterval(timer);
-  }, [scheduleRefresh, selectedId, sessionRunning]);
+    return () => {
+      controller.abort();
+      detailRequest.current.controller?.abort();
+    };
+  }, [loadSessionMediaUrl, refreshSession, selectedId, selectedSessionLoaded, selectedShared]);
 
   useEffect(() => {
     const shareId = session?.access?.kind === 'shared' ? session.access.shareId : null;
@@ -392,8 +439,15 @@ function MinimalHostApp() {
         throw new Error('这条消息仍在确认中，请稍后重试。');
       }
       operationController.current.complete(operation);
+      if (result.queued && result.queuedTurn) {
+        setSession((current) => current ? {
+          ...current,
+          queuedTurns: [...(current.queuedTurns || []), result.queuedTurn],
+        } : current);
+      } else {
+        await refreshSession(selectedId);
+      }
       setSession((current) => current ? { ...current, status: 'running', statusLabel: '正在处理' } : current);
-      scheduleRefresh();
     } catch (nextError) {
       setError(nextError.message);
       throw nextError;
@@ -490,7 +544,6 @@ function MinimalHostApp() {
       setSession(nextSession);
       await refreshSessions();
       await refreshSession(nextSession.sessionId);
-      scheduleRefresh();
       return nextSession;
     } catch (nextError) {
       setError(nextError.message);
@@ -510,7 +563,6 @@ function MinimalHostApp() {
       method: 'POST',
       body: JSON.stringify({ response: answers ? { answers } : { decision } }),
     });
-    scheduleRefresh();
   }
 
   const sharedReadOnly = session?.access?.kind === 'shared';

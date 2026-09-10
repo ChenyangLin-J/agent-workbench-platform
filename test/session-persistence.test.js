@@ -57,13 +57,16 @@ test('Session persistence migration copies durable transcripts and resources but
     sourceRetained: true,
     runtimeBindingsMigrated: false,
   });
-  const migratedDocument = JSON.parse(await readFile(join(destinationRoot, 'state', 'sessions.json'), 'utf8'));
-  assert.deepEqual(migratedDocument.bindings, {});
-  assert.deepEqual(migratedDocument.queuedTurns, {});
-  assert.equal(migratedDocument.sessions[session.sessionId].createdRunId, 'source-run');
-  assert.equal(migratedDocument.sessions[session.sessionId].status, 'idle');
+  const migratedManifest = JSON.parse(await readFile(join(destinationRoot, 'state', 'manifest.json'), 'utf8'));
+  assert.equal(migratedManifest.schema, 'agent-workbench.session-store/v2');
+  const migratedRuntime = JSON.parse(await readFile(join(destinationRoot, 'state', 'session-runtime.json'), 'utf8'));
+  assert.deepEqual(migratedRuntime.bindings, {});
+  assert.deepEqual(migratedRuntime.queuedTurns, {});
   const migratedSessions = new EnvironmentSessionStore({ stateRoot: join(destinationRoot, 'state') });
-  assert.equal((await migratedSessions.get(session.sessionId)).messages[0].content, '保留附件');
+  const migratedSession = await migratedSessions.get(session.sessionId);
+  assert.equal(migratedSession.createdRunId, 'source-run');
+  assert.equal(migratedSession.status, 'idle');
+  assert.equal(migratedSession.messages[0].content, '保留附件');
   const migratedResources = new FilesystemResourceStore({ root: join(destinationRoot, 'resources') });
   const opened = await migratedResources.open(resource.id, { sessionId: session.sessionId });
   assert.equal(await readFile(opened.path, 'utf8'), content);

@@ -171,4 +171,11 @@ test('event replay is bounded and signals recovery gaps', async (t) => {
   const replay = kernel.replay('session-a', 0);
   assert.equal(replay.replayGap, true);
   assert.equal(replay.events.length, 2);
+  const subscribed = [];
+  const unsubscribe = kernel.subscribe('session-a', (event) => subscribed.push(event), { afterEventId: 0 });
+  unsubscribe();
+  assert.equal(subscribed.length, 1);
+  assert.equal(subscribed[0].type, 'replay_gap');
+  assert.equal(subscribed[0].payload.snapshotRequired, true);
+  assert.equal(subscribed[0].eventId, replay.latestEventId);
 });

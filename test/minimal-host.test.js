@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -142,7 +142,7 @@ test('Minimal Host persists native generated images and publishes authorized mes
   assert.equal(content.status, 200);
   assert.equal(content.headers.get('content-type'), 'image/png');
   assert.deepEqual(Buffer.from(await content.arrayBuffer()), Buffer.from(ONE_PIXEL_PNG, 'base64'));
-  const persisted = await readFile(join(root, 'state', 'sessions.json'), 'utf8');
+  const persisted = await readDurableState(join(root, 'state'));
   assert.equal(persisted.includes(ONE_PIXEL_PNG), false);
   assert.equal(persisted.includes('/private/runtime/generated.png'), false);
   const branch = await fetch(`${listening.url}/api/sessions/${created.sessionId}/branches`, {
@@ -1543,4 +1543,17 @@ function readWithTimeout(reader, milliseconds) {
       },
     );
   });
+}
+
+async function readDurableState(root) {
+  const chunks = [];
+  async function visit(path) {
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      const child = join(path, entry.name);
+      if (entry.isDirectory()) await visit(child);
+      else if (entry.isFile()) chunks.push(await readFile(child));
+    }
+  }
+  await visit(root);
+  return Buffer.concat(chunks).toString('utf8');
 }

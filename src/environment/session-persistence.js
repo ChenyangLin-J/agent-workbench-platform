@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 
 import { FilesystemResourceStore } from '../filesystem-resource-store.js';
 import { isPathContained } from './paths.js';
+import { EnvironmentSessionStore } from './session-store.js';
 import { readEnvironmentManifest } from './store.js';
 
 export async function migrateRunSessionPersistence(runTarget, {
@@ -34,7 +35,7 @@ export async function migrateRunSessionPersistence(runTarget, {
   const temporary = join(dirname(destination), `.${basename(destination)}.migrating-${uuid()}`);
   await mkdir(temporary, { mode: 0o700 });
   try {
-    const sourceDocument = await readLegacySessionDocument(join(manifest.paths.state, 'sessions.json'));
+    const sourceDocument = await readSessionDocument(manifest.paths.state);
     const sessions = structuredClone(sourceDocument.sessions);
     for (const session of Object.values(sessions)) {
       session.createdRunId ||= manifest.id;
@@ -44,11 +45,14 @@ export async function migrateRunSessionPersistence(runTarget, {
     const resourcesRoot = join(temporary, 'resources');
     await mkdir(stateRoot, { mode: 0o700 });
     await writeJsonExclusive(join(stateRoot, 'sessions.json'), {
-      version: sourceDocument.version,
+      version: 1,
       sessions,
       bindings: {},
       queuedTurns: {},
     });
+    const migratedStore = new EnvironmentSessionStore({ stateRoot });
+    await migratedStore.ready;
+    await migratedStore.close();
     if (await exists(manifest.paths.resources)) {
       await cp(manifest.paths.resources, resourcesRoot, {
         recursive: true,
@@ -74,6 +78,23 @@ export async function migrateRunSessionPersistence(runTarget, {
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
     throw error;
+  }
+}
+
+async function readSessionDocument(stateRoot) {
+  const manifestPath = join(stateRoot, 'manifest.json');
+  try {
+    const info = await lstat(manifestPath);
+    if (!info.isFile() || info.isSymbolicLink()) {
+      throw migrationError('SESSION_PERSISTENCE_SOURCE_INVALID', 'Source Run Session manifest must be a regular file.');
+    }
+    const store = new EnvironmentSessionStore({ stateRoot });
+    const sessions = await store.exportDurableSessions();
+    await store.close();
+    return { version: 2, sessions, bindings: {}, queuedTurns: {} };
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    return readLegacySessionDocument(join(stateRoot, 'sessions.json'));
   }
 }
 

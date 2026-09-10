@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import {
   assertRuntimeProvider,
   CoreEventReplayBuffer,
+  createCoreEvent,
 } from './contracts.js';
 
 export class AgentSessionKernel extends EventEmitter {
@@ -280,7 +281,23 @@ export class AgentSessionKernel extends EventEmitter {
 
   subscribe(sessionId, listener, { afterEventId = 0 } = {}) {
     if (typeof listener !== 'function') throw new TypeError('listener is required.');
-    for (const event of this.eventBuffer.replay(sessionId, afterEventId).events) listener(event);
+    const replay = this.eventBuffer.replay(sessionId, afterEventId);
+    if (replay.replayGap) {
+      listener(createCoreEvent({
+        eventId: replay.latestEventId,
+        type: 'replay_gap',
+        sessionId,
+        runtimeProvider: this.provider.id,
+        payload: {
+          afterEventId: Number(afterEventId) || 0,
+          earliestEventId: replay.earliestEventId,
+          latestEventId: replay.latestEventId,
+          snapshotRequired: true,
+        },
+      }));
+    } else {
+      for (const event of replay.events) listener(event);
+    }
     const eventName = `session:${sessionId}`;
     this.on(eventName, listener);
     return () => this.off(eventName, listener);

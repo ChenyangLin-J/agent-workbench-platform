@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -181,7 +181,7 @@ test('Session store publishes generated media only on the final Agent message an
   const answer = view.messages.find((message) => message.id === 'answer-image-turn');
   assert.equal(commentary.media, undefined);
   assert.deepEqual(answer.media, [media]);
-  const persisted = await readFile(join(stateRoot, 'sessions.json'), 'utf8');
+  const persisted = await readDurableState(stateRoot);
   assert.equal(persisted.includes('data:image/'), false);
   assert.equal(persisted.includes('savedPath'), false);
 });
@@ -205,7 +205,7 @@ test('Session store never persists raw generated-image bytes when publication is
   });
   const view = await store.get(session.sessionId);
   assert.match(view.technicalItems[0].detail, /Generated image was not published/);
-  const persisted = await readFile(join(stateRoot, 'sessions.json'), 'utf8');
+  const persisted = await readDurableState(stateRoot);
   assert.equal(persisted.includes('PRIVATE_BASE64_IMAGE_PAYLOAD'), false);
   assert.equal(persisted.includes('/private/runtime/unpublished.png'), false);
 });
@@ -416,9 +416,11 @@ test('portable Session state keeps execution bindings and queues in the Run-loca
   assert.equal((await sessionStore.get(session.sessionId)).runtimeBinding, null);
   assert.equal((await runtimeStore.load(session.sessionId)).runtimeSessionId, 'runtime-a');
   assert.deepEqual(await runtimeStore.loadQueuedTurns(), { [session.sessionId]: [{ id: 'queued-a' }] });
-  const durableDocument = JSON.parse(await readFile(join(root, 'shared', 'sessions.json'), 'utf8'));
-  assert.deepEqual(durableDocument.bindings, {});
-  assert.deepEqual(durableDocument.queuedTurns, {});
+  const durableRuntime = JSON.parse(await readFile(join(root, 'shared', 'session-runtime.json'), 'utf8'));
+  assert.deepEqual(durableRuntime.bindings, {});
+  assert.deepEqual(durableRuntime.queuedTurns, {});
+  const manifest = JSON.parse(await readFile(join(root, 'shared', 'manifest.json'), 'utf8'));
+  assert.equal(manifest.schema, 'agent-workbench.session-store/v2');
 });
 
 test('two Session store instances serialize shared persistence mutations', async (t) => {
@@ -434,3 +436,145 @@ test('two Session store instances serialize shared persistence mutations', async
   ]);
   assert.deepEqual((await first.list()).map((session) => session.title).sort(), ['First', 'Second']);
 });
+
+test('Session store migrates v1 atomically while retaining the exact source document', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-v1-migration-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const source = `${JSON.stringify({
+    version: 1,
+    sessions: {
+      'session-legacy': {
+        id: 'session-legacy',
+        ownerId: 'owner-a',
+        title: 'Legacy',
+        status: 'idle',
+        createdAt: '2026-09-10T00:00:00.000Z',
+        updatedAt: '2026-09-10T00:00:00.000Z',
+        completedAt: null,
+        messages: [],
+        technicalItems: [],
+        plan: [],
+      },
+    },
+    bindings: { 'session-legacy': { sessionId: 'session-legacy', runtimeSessionId: 'runtime-old' } },
+    queuedTurns: { 'session-legacy': [{ id: 'queued-old' }] },
+  }, null, 2)}\n`;
+  await writeFile(join(stateRoot, 'sessions.json'), source, { mode: 0o600 });
+
+  const store = new EnvironmentSessionStore({ stateRoot });
+  assert.equal((await store.get('session-legacy', { ownerId: 'owner-a' })).title, 'Legacy');
+  assert.equal((await store.load('session-legacy')).runtimeSessionId, 'runtime-old');
+  assert.deepEqual(await store.loadQueuedTurns(), { 'session-legacy': [{ id: 'queued-old' }] });
+  assert.equal(await readFile(join(stateRoot, 'sessions.json'), 'utf8'), source);
+  assert.equal(JSON.parse(await readFile(join(stateRoot, 'manifest.json'), 'utf8')).version, 2);
+  assert.equal(JSON.parse(await readFile(join(stateRoot, 'migration', 'report.json'), 'utf8')).sourceRetained, true);
+});
+
+test('Session list pages use only the summary index and authorize before opening a snapshot', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-index-page-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  let sequence = 0;
+  const store = new EnvironmentSessionStore({
+    stateRoot,
+    uuid: () => `page-${++sequence}`,
+    now: () => new Date(1_800_000_000_000 + sequence * 1_000),
+  });
+  const first = await store.create({ title: 'First', ownerId: 'owner-a' });
+  const second = await store.create({ title: 'Second', ownerId: 'owner-a' });
+  const privateSession = await store.create({ title: 'Private', ownerId: 'owner-b' });
+  const privateSnapshot = await findSnapshotPath(stateRoot, privateSession.sessionId);
+  await writeFile(privateSnapshot, '{broken', 'utf8');
+
+  const firstPage = await store.listPage({ ownerId: 'owner-a', limit: 1 });
+  const secondPage = await store.listPage({ ownerId: 'owner-a', limit: 1, cursor: firstPage.nextCursor });
+  assert.deepEqual(new Set([...firstPage.sessions, ...secondPage.sessions].map((session) => session.id)), new Set([
+    first.sessionId,
+    second.sessionId,
+  ]));
+  assert.equal(secondPage.nextCursor, null);
+  await assert.rejects(
+    store.get(privateSession.sessionId, { ownerId: 'owner-a' }),
+    (error) => error.code === 'SESSION_NOT_FOUND' && error.status === 404,
+  );
+  await assert.rejects(
+    store.get(privateSession.sessionId, { ownerId: 'owner-b' }),
+    (error) => error.code === 'SESSION_STORE_INVALID' && error.status === 500,
+  );
+});
+
+test('Session event batches update only the target snapshot and replay a committed post-snapshot event', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-event-log-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot });
+  const target = await store.create({ title: 'Target' });
+  const untouched = await store.create({ title: 'Untouched' });
+  const targetSnapshot = await findSnapshotPath(stateRoot, target.sessionId);
+  const untouchedSnapshot = await findSnapshotPath(stateRoot, untouched.sessionId);
+  const targetBefore = await stat(targetSnapshot);
+  const untouchedBefore = await stat(untouchedSnapshot);
+  await Promise.all(Array.from({ length: 20 }, (_, index) => store.applyEvent({
+    type: 'item_delta',
+    sessionId: target.sessionId,
+    runtimeTurnId: 'turn-stream',
+    providerEvent: 'item/agentMessage/delta',
+    createdAt: 1_800_000_000_000 + index,
+    payload: { itemId: 'answer-stream', delta: String(index % 10) },
+  })));
+  assert.equal((await store.get(target.sessionId)).messages.at(-1).content, '01234567890123456789');
+  assert.equal((await stat(targetSnapshot)).mtimeMs, targetBefore.mtimeMs);
+  assert.equal((await stat(untouchedSnapshot)).mtimeMs, untouchedBefore.mtimeMs);
+
+  await store.applyEvent({
+    type: 'turn_completed',
+    sessionId: target.sessionId,
+    runtimeTurnId: 'turn-stream',
+    createdAt: 1_800_000_000_050,
+    payload: { status: 'completed' },
+  });
+
+  const snapshot = JSON.parse(await readFile(targetSnapshot, 'utf8'));
+  const eventPath = join(targetSnapshot, '..', 'events-000001.ndjson');
+  await appendFile(eventPath, `${JSON.stringify({
+    sequence: snapshot.sequence + 1,
+    event: {
+      type: 'item_delta',
+      sessionId: target.sessionId,
+      runtimeTurnId: 'turn-stream',
+      providerEvent: 'item/agentMessage/delta',
+      createdAt: 1_800_000_000_100,
+      payload: { itemId: 'answer-stream', delta: 'R' },
+    },
+  })}\n`, 'utf8');
+  const reopened = new EnvironmentSessionStore({ stateRoot });
+  assert.equal((await reopened.get(target.sessionId)).messages.at(-1).content, '01234567890123456789R');
+});
+
+async function readDurableState(root) {
+  const chunks = [];
+  async function visit(path) {
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      const child = join(path, entry.name);
+      if (entry.isDirectory()) await visit(child);
+      else if (entry.isFile()) chunks.push(await readFile(child));
+    }
+  }
+  await visit(root);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+async function findSnapshotPath(root, sessionId) {
+  const matches = [];
+  async function visit(path) {
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      const child = join(path, entry.name);
+      if (entry.isDirectory()) await visit(child);
+      else if (entry.isFile() && entry.name === 'snapshot.json') {
+        const document = JSON.parse(await readFile(child, 'utf8'));
+        if (document.session?.id === sessionId) matches.push(child);
+      }
+    }
+  }
+  await visit(join(root, 'sessions'));
+  assert.equal(matches.length, 1);
+  return matches[0];
+}

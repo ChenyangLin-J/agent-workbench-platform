@@ -31,6 +31,8 @@ Implemented in the active Platform worktree:
 - stable Resource metadata in Session messages with no public storage path;
 - failed-Turn recovery and cross-Session rejection tests.
 
+Session transcript persistence now uses `agent-workbench.session-store/v2`: a SQLite summary index plus sharded per-Session snapshots and append-only NDJSON event segments. Session lists never open transcript snapshots, ordinary stream deltas are appended in 150 ms / 64 KiB batches, and non-delta boundaries compact one Session into its snapshot. Startup migrates an existing v1 `sessions.json` under an exclusive lock, retains the exact source file, records its SHA-256 digest and a migration report, and activates the new manifest last. Runtime bindings and queued Turns remain in the separate Runtime state store. A replay gap is explicit and requires a target-Session snapshot refresh; normal Minimal Host streaming projects events directly and no longer polls the full list every two seconds.
+
 Still unresolved or unimplemented: explicit reference-edge recording, quarantine/purge, consumer-specific compatibility adapters, and resumable migration journals. No cleanup is enabled by this slice.
 
 ## Why this belongs in Platform

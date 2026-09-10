@@ -136,9 +136,26 @@ export function createMinimalHost({
     }
   }
 
-  async function listSessions(access) {
-    const owned = await Promise.all((await sessionStore.list({ ownerId: access.ownerId })).map(async (session) => ({
-      ...await decorateSessionForCurrentRun(session),
+  async function listSessions(access, {
+    cursor = null,
+    limit = 50,
+    includeOwned = true,
+    includeShared = true,
+  } = {}) {
+    const ownedPage = includeOwned
+      ? (typeof sessionStore.listPage === 'function'
+          ? await sessionStore.listPage({ ownerId: access.ownerId, cursor, limit })
+          : { sessions: await sessionStore.list({ ownerId: access.ownerId }), nextCursor: null })
+      : { sessions: [], nextCursor: null };
+    const ownedIds = ownedPage.sessions.map((session) => session.id || session.sessionId);
+    const runtimeBindings = typeof sessionRuntimeStore.loadMany === 'function'
+      ? await sessionRuntimeStore.loadMany(ownedIds)
+      : Object.fromEntries(await Promise.all(ownedIds.map(async (sessionId) => [
+          sessionId,
+          await sessionRuntimeStore.load(sessionId),
+        ])));
+    const owned = await Promise.all(ownedPage.sessions.map(async (session) => ({
+      ...await decorateSessionForCurrentRun(session, runtimeBindings[session.id || session.sessionId] || null),
       ...(accessHeader ? {
         access: { kind: 'owned', permissions: ['session.read', 'session.write'] },
         contextId: 'owned',
@@ -146,10 +163,10 @@ export function createMinimalHost({
         groupSortOrder: 0,
       } : {}),
     })));
-    if (!accessHeader) return owned;
-    const ownedIds = new Set(owned.map((session) => session.id));
+    if (!accessHeader || !includeShared) return { sessions: owned, nextCursor: ownedPage.nextCursor };
+    const ownedIdSet = new Set(owned.map((session) => session.id));
     const shared = await Promise.all([...access.sharedSessions.values()]
-      .filter((grant) => !ownedIds.has(grant.sessionId))
+      .filter((grant) => !ownedIdSet.has(grant.sessionId))
       .map(async (grant) => {
         try {
           return sharedSessionProjection(await sessionStore.getShared(grant.sessionId), grant, { summary: true });
@@ -158,15 +175,20 @@ export function createMinimalHost({
           throw error;
         }
       }));
-    return [...owned, ...shared.filter(Boolean)].sort(
-      (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
-    );
+    return {
+      sessions: [...owned, ...shared.filter(Boolean)].sort(
+        (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+      ),
+      nextCursor: ownedPage.nextCursor,
+    };
   }
 
-  async function decorateSessionForCurrentRun(session) {
-    const runtimeBinding = sessionRuntimeStore === sessionStore
-      ? session.runtimeBinding
-      : await sessionRuntimeStore.load(session.sessionId || session.id);
+  async function decorateSessionForCurrentRun(session, knownRuntimeBinding = undefined) {
+    const runtimeBinding = knownRuntimeBinding === undefined
+      ? (sessionRuntimeStore === sessionStore
+          ? session.runtimeBinding
+          : await sessionRuntimeStore.load(session.sessionId || session.id))
+      : knownRuntimeBinding;
     const detachedFromCurrentRun = !runtimeBinding
       && session.createdRunId !== manifest.id;
     return {
@@ -234,8 +256,15 @@ export function createMinimalHost({
       return sendJson(response, 200, { session, observedAt: new Date().toISOString() });
     }
     if (request.method === 'GET' && url.pathname === '/api/sessions') {
+      const listed = await listSessions(sessionAccess, {
+        cursor: url.searchParams.get('cursor'),
+        limit: url.searchParams.get('limit'),
+        includeOwned: url.searchParams.get('owned') !== '0',
+        includeShared: url.searchParams.get('shared') !== '0',
+      });
       return sendJson(response, 200, {
-        sessions: await listSessions(sessionAccess),
+        sessions: listed.sessions,
+        ...(listed.nextCursor ? { nextCursor: listed.nextCursor } : {}),
         ...(accessHeader ? { sharedNextOffset: sessionAccess.sharedNextOffset } : {}),
       });
     }
@@ -613,9 +642,17 @@ export function createMinimalHost({
       connection: 'keep-alive',
       'x-content-type-options': 'nosniff',
     });
+    let writeQueue = Promise.resolve();
     const send = (event) => {
-      const payload = observer ? observerEventNotification(event) : event;
-      response.write(`id: ${event.eventId}\ndata: ${JSON.stringify(payload)}\n\n`);
+      writeQueue = writeQueue.then(async () => {
+        const projected = !observer && resultImageProjector
+          ? await resultImageProjector.projectEvent(event)
+          : event;
+        const payload = observer ? observerEventNotification(projected) : projected;
+        if (!response.destroyed) {
+          response.write(`id: ${projected.eventId}\ndata: ${JSON.stringify(payload)}\n\n`);
+        }
+      }).catch(() => {});
     };
     const unsubscribe = kernel.subscribe(sessionId, send, { afterEventId });
     const heartbeat = setInterval(() => response.write(': heartbeat\n\n'), EVENT_STREAM_HEARTBEAT_MS);
