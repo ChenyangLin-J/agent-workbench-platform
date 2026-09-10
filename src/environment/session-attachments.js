@@ -19,7 +19,6 @@ export async function saveEnvironmentSessionAttachment({ attachment, sessionId, 
   const name = normalizeAttachmentName(attachment?.name);
   const mimeType = normalizeMimeType(attachment?.type || attachment?.mimeType);
   const bytes = decodeAttachmentData(attachment?.data);
-  if (!bytes.length) throw attachmentError('ATTACHMENT_EMPTY', 'Attachment cannot be empty.', 400);
   if (bytes.length > MAX_SESSION_ATTACHMENT_BYTES) {
     throw attachmentError('ATTACHMENT_TOO_LARGE', 'Attachment cannot exceed 20 MB.', 413);
   }
@@ -32,9 +31,10 @@ export async function saveEnvironmentSessionAttachment({ attachment, sessionId, 
     owner: { sessionId: normalizedSessionId },
     display: { name, mimeType, size: bytes.length },
     bytes,
+    allowEmpty: true,
     originType: attachment?.originType === 'paste' ? 'paste' : 'upload',
     capabilities: {
-      preview: previewableMimeType(mimeType),
+      preview: previewableMimeType(mimeType, name),
       download: true,
       openInWorkspace: false,
     },
@@ -337,11 +337,12 @@ function normalizeMimeType(value) {
     : 'application/octet-stream';
 }
 
-function previewableMimeType(value) {
+function previewableMimeType(value, name = '') {
   return value.startsWith('image/')
     || value.startsWith('audio/')
     || value === 'application/pdf'
-    || ['text/plain', 'text/markdown', 'text/x-markdown'].includes(value);
+    || ['text/plain', 'text/markdown', 'text/x-markdown', 'text/csv', 'text/sql', 'text/x-sql', 'application/sql'].includes(value)
+    || /\.(?:csv|md|sql|txt)$/i.test(name);
 }
 
 function attachmentError(code, message, status) {

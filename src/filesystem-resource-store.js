@@ -56,6 +56,7 @@ export class FilesystemResourceStore {
     owner,
     display,
     bytes,
+    allowEmpty = false,
     originType = 'upload',
     capabilities = { preview: true, download: true, openInWorkspace: false },
   } = {}) {
@@ -64,6 +65,7 @@ export class FilesystemResourceStore {
       owner,
       display,
       bytes,
+      allowEmpty,
       originType,
       lifecycleClass: 'draft',
       lifecycleState: 'staged',
@@ -75,6 +77,7 @@ export class FilesystemResourceStore {
     owner,
     display,
     bytes,
+    allowEmpty = false,
     originType = 'tool',
     capabilities = TRANSIENT_CAPABILITIES,
   } = {}) {
@@ -86,6 +89,7 @@ export class FilesystemResourceStore {
       owner,
       display,
       bytes,
+      allowEmpty,
       originType,
       lifecycleClass: 'transient',
       lifecycleState: 'ready',
@@ -98,6 +102,7 @@ export class FilesystemResourceStore {
     owner,
     display,
     bytes,
+    allowEmpty = false,
     originType,
     lifecycleClass,
     lifecycleState,
@@ -105,7 +110,7 @@ export class FilesystemResourceStore {
   }) {
     await this.ready;
     const content = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
-    if (!content.length) throw resourceError('RESOURCE_EMPTY', 'Resource cannot be empty.', 400);
+    if (!content.length && !allowEmpty) throw resourceError('RESOURCE_EMPTY', 'Resource cannot be empty.', 400);
     if (content.length > this.maxBytes) throw resourceError('RESOURCE_TOO_LARGE', 'Resource exceeds the configured size limit.', 413);
     if (Number(display?.size) !== content.length) {
       throw resourceError('RESOURCE_SIZE_MISMATCH', 'Resource size changed during upload.', 400);

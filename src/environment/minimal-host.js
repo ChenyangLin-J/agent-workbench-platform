@@ -7,7 +7,9 @@ import { MAX_SESSION_ATTACHMENT_BYTES } from '../attachments.js';
 import { SessionBranchController } from '../features/session-branch.js';
 import { SessionTurnQueue, createQueuedTurnDispatcher } from '../features/turn-queue.js';
 import { resolveContainedPath } from './paths.js';
+import { createSessionAttachmentPreview } from './session-attachment-preview.js';
 import { MinimalHostResultImageProjector } from './result-image-projector.js';
+import { MinimalHostResultFileProjector } from './result-file-projector.js';
 import {
   cloneEnvironmentSessionMessageAttachments,
   commitEnvironmentSessionAttachments,
@@ -65,6 +67,17 @@ export function createMinimalHost({
   const resultImageProjector = attachmentsEnabled
     ? new MinimalHostResultImageProjector({ resourceStore: sessionResourceStore, runId: manifest.id })
     : null;
+  const resultFileProjector = attachmentsEnabled && manifest.features?.agentArtifacts === true
+    ? new MinimalHostResultFileProjector({
+        resourceStore: sessionResourceStore,
+        runId: manifest.id,
+        workspaceRoot: manifest.paths.workspace,
+      })
+    : null;
+  const projectResultEvent = async (event) => {
+    const withFile = resultFileProjector ? await resultFileProjector.projectEvent(event) : event;
+    return resultImageProjector ? resultImageProjector.projectEvent(withFile) : withFile;
+  };
   const clients = new Set();
   const server = createServer((request, response) => {
     void route(request, response).catch((error) => sendError(response, error));
@@ -407,10 +420,11 @@ export function createMinimalHost({
         return sendJson(response, 201, { resources });
       }
     }
-    const attachmentRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/attachments(?:\/([^/]+)\/content)?$/);
+    const attachmentRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/attachments(?:\/([^/]+)\/(content|preview))?$/);
     if (attachmentRoute) {
       const sessionId = decodeURIComponent(attachmentRoute[1]);
       const attachmentId = attachmentRoute[2] ? decodeURIComponent(attachmentRoute[2]) : null;
+      const attachmentAction = attachmentRoute[3] || null;
       const accessed = await readSessionForAccess(sessionId, sessionAccess,
         request.method === 'GET' ? 'resource.read' : 'session.write');
       const session = accessed.session;
@@ -432,8 +446,12 @@ export function createMinimalHost({
           sessionId,
           store: sessionResourceStore,
         });
+        if (attachmentAction === 'preview') {
+          const preview = await createSessionAttachmentPreview(attachment);
+          return sendJson(response, 200, preview, preview.digest ? { etag: `"sha256-${preview.digest}"` } : {});
+        }
         const body = await readFile(attachment.storedPath);
-        if (!body.length || body.length > MAX_SESSION_ATTACHMENT_BYTES) {
+        if (body.length > MAX_SESSION_ATTACHMENT_BYTES) {
           throw hostError('HOST_ATTACHMENT_INVALID', 'Attachment content is unavailable.', 413);
         }
         return sendAttachment(response, attachment, body);
@@ -645,8 +663,8 @@ export function createMinimalHost({
     let writeQueue = Promise.resolve();
     const send = (event) => {
       writeQueue = writeQueue.then(async () => {
-        const projected = !observer && resultImageProjector
-          ? await resultImageProjector.projectEvent(event)
+        const projected = !observer && (resultImageProjector || resultFileProjector)
+          ? await projectResultEvent(event)
           : event;
         const payload = observer ? observerEventNotification(projected) : projected;
         if (!response.destroyed) {
@@ -672,7 +690,10 @@ export function createMinimalHost({
     async start() {
       const dispatcher = await dispatcherReady;
       if (!unsubscribeEvents) {
-        unsubscribeEvents = subscribeStore(kernel, sessionStore, dispatcher, { resultImageProjector });
+        unsubscribeEvents = subscribeStore(kernel, sessionStore, dispatcher, {
+          projectResultEvent,
+          serializeResults: Boolean(resultFileProjector),
+        });
       }
       if (queuedTurnsEnabled) await dispatcher.recover();
       if (socketPath) await rm(socketPath, { force: true });
@@ -694,8 +715,10 @@ export function createMinimalHost({
       };
     },
     async stop() {
-      unsubscribeEvents?.();
+      const subscription = unsubscribeEvents;
+      subscription?.();
       unsubscribeEvents = null;
+      if (resultFileProjector) await subscription?.drain?.();
       (await dispatcherReady).close();
       for (const client of clients) {
         clearInterval(client.heartbeat);
@@ -917,14 +940,40 @@ async function chmodSocketPrivate(socketPath) {
   }
 }
 
-function subscribeStore(kernel, sessionStore, dispatcher, { resultImageProjector = null } = {}) {
-  const listener = (event) => void Promise.resolve(
-    resultImageProjector ? resultImageProjector.projectEvent(event) : event,
-  ).then((projectedEvent) => sessionStore.applyEvent(projectedEvent))
-    .then(() => event.type === 'turn_completed' ? dispatcher.startNext(event.sessionId) : null)
-    .catch(() => {});
+function subscribeStore(kernel, sessionStore, dispatcher, {
+  projectResultEvent = null,
+  serializeResults = false,
+} = {}) {
+  if (!serializeResults) {
+    const listener = (event) => void Promise.resolve(
+      projectResultEvent ? projectResultEvent(event) : event,
+    ).then((projectedEvent) => sessionStore.applyEvent(projectedEvent))
+      .then(() => event.type === 'turn_completed' ? dispatcher.startNext(event.sessionId) : null)
+      .catch(() => {});
+    kernel.on?.('event', listener);
+    return () => kernel.off?.('event', listener);
+  }
+  const queues = new Map();
+  const pending = new Set();
+  const listener = (event) => {
+    const key = String(event?.sessionId || '');
+    const previous = queues.get(key) || Promise.resolve();
+    const operation = previous.then(async () => {
+      const projectedEvent = projectResultEvent ? await projectResultEvent(event) : event;
+      await sessionStore.applyEvent(projectedEvent);
+      if (event.type === 'turn_completed') await dispatcher.startNext(event.sessionId);
+    }).catch(() => {});
+    queues.set(key, operation);
+    pending.add(operation);
+    void operation.finally(() => {
+      pending.delete(operation);
+      if (queues.get(key) === operation) queues.delete(key);
+    });
+  };
   kernel.on?.('event', listener);
-  return () => kernel.off?.('event', listener);
+  const unsubscribe = () => kernel.off?.('event', listener);
+  unsubscribe.drain = () => Promise.allSettled([...pending]);
+  return unsubscribe;
 }
 
 function initializeTurnQueue(sessionStore) {
@@ -1340,8 +1389,15 @@ function sendAttachment(response, attachment, body) {
     'content-length': String(body.length),
     'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
+    'content-disposition': contentDisposition(attachment.name),
   });
   response.end(body);
+}
+
+function contentDisposition(name) {
+  const fallback = String(name || 'download').replace(/[^\x20-\x7e]|["\\]/g, '_').slice(0, 120) || 'download';
+  const encoded = encodeURIComponent(String(name || 'download')).replace(/['()]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
 function inlineAttachmentContentType(value) {
@@ -1379,11 +1435,12 @@ async function serveAsset(response, assetsRoot, pathname) {
   response.end(body);
 }
 
-function sendJson(response, status, value) {
+function sendJson(response, status, value, headers = {}) {
   response.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
+    ...headers,
   });
   response.end(`${JSON.stringify(value)}\n`);
 }

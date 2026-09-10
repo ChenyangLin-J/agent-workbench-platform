@@ -50,6 +50,7 @@ function MinimalHostApp() {
   const [documentPreview, setDocumentPreview] = useState(null);
   const continuationKey = useRef(null);
   const documentPreviewUrl = useRef(null);
+  const documentPreviewRequest = useRef(null);
   const sessionMediaUrls = useRef({ sessionId: null, entries: new Map() });
   const openedShares = useRef(new Set());
   const detailRequest = useRef({ controller: null, generation: 0 });
@@ -59,6 +60,8 @@ function MinimalHostApp() {
   operationController.current ||= new SessionClientOperationController();
 
   const closeDocumentPreview = useCallback(() => {
+    documentPreviewRequest.current?.abort();
+    documentPreviewRequest.current = null;
     setDocumentPreview(null);
     if (documentPreviewUrl.current) URL.revokeObjectURL(documentPreviewUrl.current);
     documentPreviewUrl.current = null;
@@ -500,37 +503,67 @@ function MinimalHostApp() {
     }
     if (!attachment.id) return;
     const openingSessionId = selectedId;
-    const response = await fetch(hostUrl(
-      `api/sessions/${encodeURIComponent(openingSessionId)}/attachments/${encodeURIComponent(attachment.id)}/content`,
-    ), {
-      headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
+    documentPreviewRequest.current?.abort();
+    const controller = new AbortController();
+    documentPreviewRequest.current = controller;
+    const sourceLabel = attachment.resource?.kind === 'session-artifact' ? 'Agent 产物' : 'Session 附件';
+    setDocumentPreview({
+      name: attachment.name || '附件',
+      format: 'text',
+      mimeType: attachment.mimeType || 'application/octet-stream',
+      size: attachment.size || 0,
+      attachmentId: attachment.id,
+      resource: attachment.resource || null,
+      sourceLabel,
+      loading: true,
     });
+    try {
+      const response = await fetch(hostUrl(
+        `api/sessions/${encodeURIComponent(openingSessionId)}/attachments/${encodeURIComponent(attachment.id)}/preview`,
+      ), {
+        headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
+        signal: controller.signal,
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error?.message || `附件读取失败 (${response.status})`);
+      if (selectedIdRef.current !== openingSessionId || documentPreviewRequest.current !== controller) return;
+      setDocumentPreview({
+        ...body,
+        attachmentId: attachment.id,
+        resource: attachment.resource || null,
+        sourceLabel,
+        loading: false,
+      });
+    } catch (nextError) {
+      if (nextError?.name === 'AbortError') return;
+      if (selectedIdRef.current !== openingSessionId || documentPreviewRequest.current !== controller) return;
+      setDocumentPreview((current) => ({
+        ...(current || {}),
+        loading: false,
+        previewError: { message: nextError?.message || '附件预览失败。' },
+      }));
+    } finally {
+      if (documentPreviewRequest.current === controller) documentPreviewRequest.current = null;
+    }
+  }
+
+  async function downloadAttachment(file) {
+    if (!selectedId || !file?.attachmentId) return;
+    const response = await fetch(hostUrl(
+      `api/sessions/${encodeURIComponent(selectedId)}/attachments/${encodeURIComponent(file.attachmentId)}/content`,
+    ), { headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' } });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      throw new Error(body.error?.message || `附件读取失败 (${response.status})`);
+      throw new Error(body.error?.message || `附件下载失败 (${response.status})`);
     }
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    if (selectedIdRef.current !== openingSessionId) {
-      URL.revokeObjectURL(objectUrl);
-      return;
-    }
-    if (attachment.kind === 'image' || String(blob.type || attachment.mimeType || '').toLowerCase().startsWith('image/')) {
-      closeDocumentPreview();
-      documentPreviewUrl.current = objectUrl;
-      setDocumentPreview({
-        name: attachment.name || '图片',
-        format: 'image',
-        mimeType: blob.type || attachment.mimeType || 'image/*',
-        size: blob.size || attachment.size || 0,
-        src: objectUrl,
-        downloadUrl: objectUrl,
-        attachmentId: attachment.id,
-      });
-      return;
-    }
-    globalThis.open(objectUrl, '_blank', 'noopener');
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = file.name || 'download';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
   }
 
   async function interrupt() {
@@ -604,6 +637,7 @@ function MinimalHostApp() {
       onResolveDroppedDirectories: attachmentsEnabled && sessionMutable ? resolveDroppedDirectories : null,
       onOpenAttachment: attachmentsEnabled ? openAttachment : null,
       onCloseDocument: closeDocumentPreview,
+      onDownloadDocument: attachmentsEnabled ? downloadAttachment : null,
       onInterrupt: sessionMutable && session.status === 'running' ? interrupt : null,
       onEditMessage: messageEditEnabled && sessionBranchable ? (input) => branchMessage(input, 'edit') : null,
       onForkMessage: messageForkEnabled && sessionBranchable ? (input) => branchMessage(input, 'fork') : null,

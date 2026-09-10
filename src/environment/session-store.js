@@ -922,6 +922,15 @@ function persistentSessionEvent(event) {
         phase: item.phase == null ? null : String(item.phase),
         status: item.status == null ? null : String(item.status),
         text: runtimeItemText(item),
+        ...(Array.isArray(item.publishedArtifacts) ? {
+          publishedArtifacts: structuredClone(item.publishedArtifacts),
+        } : {}),
+        ...(Array.isArray(item.artifactPublicationErrors) ? {
+          artifactPublicationErrors: item.artifactPublicationErrors.slice(0, 20).map((failure) => ({
+            name: String(failure?.name || 'artifact').slice(0, 255),
+            code: String(failure?.code || 'RESULT_FILE_CAPTURE_FAILED').slice(0, 120),
+          })),
+        } : {}),
       } } };
     }
     if (item?.type === 'imageGeneration') {
@@ -1283,6 +1292,10 @@ function applyRuntimeItem(session, event) {
       turnId: event.runtimeTurnId,
       turnStatus: item.status || 'inProgress',
       createdAt: timestamp,
+      ...(Array.isArray(item.publishedArtifacts) ? { attachments: structuredClone(item.publishedArtifacts) } : {}),
+      ...(Array.isArray(item.artifactPublicationErrors) ? {
+        artifactErrors: structuredClone(item.artifactPublicationErrors),
+      } : {}),
     };
     if (existing) Object.assign(existing, message);
     else if (existingUserTurn) return;

@@ -180,6 +180,12 @@ export function normalizeSessionViewModel(value = {}) {
                 sourceKind: String(attachment?.sourceKind || ''),
               }))
             : [],
+          artifactErrors: Array.isArray(message?.artifactErrors)
+            ? message.artifactErrors.slice(0, 20).map((failure) => ({
+                name: String(failure?.name || 'artifact'),
+                code: String(failure?.code || 'RESULT_FILE_CAPTURE_FAILED'),
+              }))
+            : [],
           media: normalizeMedia(message?.media, `message-${index}`),
         }))
       : [],

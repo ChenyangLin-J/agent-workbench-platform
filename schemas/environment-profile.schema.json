@@ -24,6 +24,7 @@
       "properties": {
         "sessionWorkspace": { "const": true },
         "attachments": { "type": "boolean" },
+        "agentArtifacts": { "type": "boolean" },
         "sideChat": { "type": "boolean" },
         "subagents": { "type": "boolean" },
         "browser": { "type": "boolean" },

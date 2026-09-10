@@ -534,7 +534,12 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
     false,
   );
   assert.match(styles, /\.cwu-stop \{[^}]*color: var\(--cwu-error\);/);
-  assert.match(source, /file\.resource \? 'Session 产物 · 只读'/);
+  assert.match(source, /'Agent 产物'/);
+  assert.match(source, /file\.format === 'markdown'.*label: '预览'/);
+  assert.match(source, /file\.format === 'sql'.*label: '格式化'/);
+  assert.match(source, /file\.format === 'csv'.*label: '表格'/);
+  assert.match(source, /cwu-sql-\$\{token\.type\}/);
+  assert.match(styles, /\.cwu-sql-keyword/);
   assert.match(source, /const submittedDraft = draft/);
   assert.match(source, /setDraft\(submittedDraft\)/);
   assert.match(source, /useState\(view\.draft\)/);

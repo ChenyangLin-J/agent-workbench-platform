@@ -151,6 +151,7 @@ function normalizeFeatures(features = {}) {
   const defaults = {
     sessionWorkspace: true,
     attachments: true,
+    agentArtifacts: false,
     steer: true,
     messageEdit: true,
     messageFork: true,

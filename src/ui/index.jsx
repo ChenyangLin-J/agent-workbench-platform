@@ -40,6 +40,7 @@ import {
 import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
 import { normalizeSessionFeatures } from '../capabilities.js';
 import { normalizeAttachmentPolicy, normalizeSessionAttachment } from '../attachments.js';
+import { tokenizeSqlPreview } from '../file-preview.js';
 import { useSessionUserInput } from '../ui-hooks.js';
 
 export { useSessionUserInput } from '../ui-hooks.js';
@@ -1418,6 +1419,7 @@ export function SessionWorkspace({
           documentResourceUrl={actions.documentResourceUrl}
           file={documentPreview}
           onClose={actions.onCloseDocument}
+          onDownload={actions.onDownloadDocument}
           onEdit={actions.onEditDocument}
           onOpenExternal={actions.onOpenDocumentExternal}
           onOpenLink={actions.onOpenLink}
@@ -2070,6 +2072,7 @@ function DocumentPreview({
   documentResourceUrl,
   file,
   onClose,
+  onDownload,
   onEdit,
   onOpenExternal,
   onOpenLink,
@@ -2079,23 +2082,30 @@ function DocumentPreview({
   revealLabel,
 }) {
   const preview = useMemo(() => documentPreviewPresentation(file), [file]);
-  const hasRenderedPreview = ['html', 'markdown'].includes(file.format);
-  const hasSource = hasRenderedPreview || preview.code || ['text', 'sql'].includes(file.format);
+  const tabs = documentPreviewTabs(file);
   const canEditInline = Boolean(onSave && file.path && !file.attachmentId && file.format === 'markdown');
-  const [activeTab, setActiveTab] = useState(hasRenderedPreview ? 'preview' : 'source');
+  const [activeTab, setActiveTab] = useState(tabs[0]?.id || 'content');
   const [editing, setEditing] = useState(false);
   const [editorContent, setEditorContent] = useState(String(file.content || ''));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const openerRef = useRef(null);
+  const dialogRef = useRef(null);
   const dirty = editing && editorContent !== String(file.content || '');
 
   useEffect(() => {
-    setActiveTab(hasRenderedPreview ? 'preview' : 'source');
+    setActiveTab(tabs[0]?.id || 'content');
     setEditing(false);
     setEditorContent(String(file.content || ''));
     setSaving(false);
     setSaveError('');
-  }, [file.attachmentId, file.name, file.path, file.version, hasRenderedPreview]);
+  }, [file.attachmentId, file.name, file.path, file.version, file.format]);
+
+  useEffect(() => {
+    openerRef.current = document.activeElement;
+    dialogRef.current?.querySelector('.cwu-document-close')?.focus();
+    return () => openerRef.current?.focus?.();
+  }, []);
 
   function confirmDiscard() {
     return !dirty || globalThis.confirm?.('文件还有未保存的修改，确定放弃吗？') !== false;
@@ -2129,11 +2139,30 @@ function DocumentPreview({
     }
   }
 
+  async function copyDocumentView() {
+    const text = documentPreviewCopyText(file, activeTab);
+    if (text != null) await navigator.clipboard?.writeText?.(text);
+  }
+
   useEffect(() => {
     function handleKeyDown(event) {
-      if (event.key !== 'Escape') return;
-      if (editing) cancelEditing();
-      else closePreview();
+      if (event.key === 'Escape') {
+        if (editing) cancelEditing();
+        else closePreview();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = [...(dialogRef.current?.querySelectorAll('a[href], button:not([disabled]), textarea, [tabindex]:not([tabindex="-1"])') || [])];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -2147,9 +2176,9 @@ function DocumentPreview({
       onMouseDown={(event) => { if (event.target === event.currentTarget) closePreview(); }}
       role="dialog"
     >
-      <section className="cwu-document-preview">
+      <section className="cwu-document-preview" ref={dialogRef}>
         <header>
-          <div><span>{editing ? '本地 Markdown · 编辑中' : file.attachmentId ? 'Session 附件 · 只读' : file.resource ? 'Session 产物 · 只读' : '本地文件 · 只读'}</span><h2>{file.name}</h2></div>
+          <div><span>{editing ? '本地 Markdown · 编辑中' : `${file.sourceLabel || (file.attachmentId ? 'Session 附件' : file.resource ? 'Session 产物' : '本地文件')} · ${file.mimeType || '未知类型'} · ${formatAttachmentSize(file.size)}`}</span><h2>{file.name}</h2></div>
           <div>
             {editing ? (
               <>
@@ -2158,7 +2187,8 @@ function DocumentPreview({
               </>
             ) : (
               <>
-                {file.downloadUrl ? <a className="cwu-button" download={file.name} href={file.downloadUrl}>下载</a> : null}
+                {file.downloadUrl ? <a className="cwu-button" download={file.name} href={file.downloadUrl}>下载</a> : onDownload ? <button className="cwu-button" onClick={() => onDownload(file)} type="button">下载</button> : null}
+                {!file.loading && documentPreviewCopyText(file, activeTab) != null ? <button className="cwu-button" onClick={copyDocumentView} type="button">复制</button> : null}
                 {onReveal && (file.path || file.attachmentId) ? <button className="cwu-button" onClick={() => onReveal(file)} type="button">文件夹</button> : null}
                 {canEditInline ? <button className="cwu-button" onClick={() => setEditing(true)} type="button">编辑</button> : onEdit && file.path && !file.attachmentId ? <button className="cwu-button" onClick={() => onEdit(file)} type="button">编辑</button> : null}
                 {onOpenExternal ? <button className="cwu-button" onClick={() => onOpenExternal(file)} type="button">外部打开</button> : null}
@@ -2167,10 +2197,9 @@ function DocumentPreview({
             <button aria-label="关闭文件预览" className="cwu-document-close" onClick={closePreview} type="button">×</button>
           </div>
         </header>
-        {!editing && hasRenderedPreview && hasSource ? (
+        {!editing && tabs.length > 1 ? (
           <nav aria-label="文件查看方式" className="cwu-document-tabs">
-            <button aria-pressed={activeTab === 'preview'} onClick={() => setActiveTab('preview')} type="button">预览</button>
-            <button aria-pressed={activeTab === 'source'} onClick={() => setActiveTab('source')} type="button">源码</button>
+            {tabs.map((tab) => <button aria-pressed={activeTab === tab.id} key={tab.id} onClick={() => setActiveTab(tab.id)} type="button">{tab.label}</button>)}
           </nav>
         ) : editing ? <div className="cwu-document-editor-bar"><span>{dirty ? '有未保存的修改' : '尚未修改'}</span>{saveError ? <strong role="alert">{saveError}</strong> : null}</div> : null}
         <div className="cwu-document-body">
@@ -2183,6 +2212,10 @@ function DocumentPreview({
               spellCheck={false}
               value={editorContent}
             />
+          ) : file.loading ? (
+            <div aria-label="正在加载文件预览" className="cwu-document-loading"><i /><i /><i /></div>
+          ) : file.previewError ? (
+            <DocumentPreviewError error={file.previewError} />
           ) : file.format === 'image' ? (
             <div className="cwu-document-image"><img alt={file.name} src={file.src} /></div>
           ) : file.format === 'pdf' ? (
@@ -2191,6 +2224,10 @@ function DocumentPreview({
             <div className="cwu-document-audio"><audio controls src={file.src} /></div>
           ) : file.format === 'spreadsheet' ? (
             <SpreadsheetPreview file={file} />
+          ) : file.format === 'csv' && activeTab === 'table' ? (
+            file.csv ? <CsvPreview csv={file.csv} /> : <DocumentPreviewError error={file.csvError || { message: '无法生成 CSV 表格预览。' }} />
+          ) : file.format === 'csv' && activeTab === 'raw' ? (
+            file.rawAvailable ? <DocumentCodePreview file={{ ...file, content: file.rawText || '', format: 'code' }} /> : <DocumentPreviewError error={file.rawError} />
           ) : file.format === 'html' && activeTab === 'preview' ? (
             <iframe
               className="cwu-document-html"
@@ -2200,16 +2237,28 @@ function DocumentPreview({
               title={file.name}
             />
           ) : file.format === 'markdown' && activeTab === 'preview' ? (
-            <div className="cwu-document-content cwu-message-body">
-              <ReactMarkdown
-                components={documentMarkdownComponents({ documentResourceUrl, file, onOpenLink, onRevealLink, revealLabel })}
-                rehypePlugins={DOCUMENT_MARKDOWN_REHYPE_PLUGINS}
-                remarkPlugins={MARKDOWN_REMARK_PLUGINS}
-              >{normalizeMarkdownMath(file.content || '')}</ReactMarkdown>
-            </div>
+            file.rawAvailable ? (
+              <div className="cwu-document-content cwu-message-body">
+                <ReactMarkdown
+                  components={documentMarkdownComponents({ documentResourceUrl, file, onOpenLink, onRevealLink, revealLabel })}
+                  rehypePlugins={DOCUMENT_MARKDOWN_REHYPE_PLUGINS}
+                  remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+                >{normalizeMarkdownMath(file.rawText ?? file.content ?? '')}</ReactMarkdown>
+              </div>
+            ) : <DocumentPreviewError error={file.rawError} />
+          ) : file.format === 'markdown' && activeTab === 'raw' ? (
+            file.rawAvailable ? <DocumentCodePreview file={{ ...file, content: file.rawText || '', format: 'code' }} /> : <DocumentPreviewError error={file.rawError} />
+          ) : file.format === 'sql' ? (
+            !file.rawAvailable
+              ? <DocumentPreviewError error={file.rawError} />
+              : <DocumentCodePreview file={{ ...file, content: activeTab === 'raw' ? file.rawText || '' : file.formattedText ?? file.rawText ?? '', format: 'sql' }} />
+          ) : file.format === 'text' && !file.rawAvailable ? (
+            <DocumentPreviewError error={file.rawError} />
+          ) : file.format === 'unsupported' ? (
+            <DocumentPreviewError error={{ message: '暂不支持站内预览此文件类型，请下载原文件。' }} />
           ) : preview.code || activeTab === 'source' ? (
             <DocumentCodePreview file={file} />
-          ) : <pre className="cwu-document-text">{file.content || ''}</pre>}
+          ) : <pre className={`cwu-document-text${(file.rawText ?? file.content ?? '') === '' ? ' is-empty' : ''}`}>{(file.rawText ?? file.content ?? '') === '' ? '空文件' : (file.rawText ?? file.content)}</pre>}
         </div>
       </section>
     </div>
@@ -2218,6 +2267,7 @@ function DocumentPreview({
 
 function DocumentCodePreview({ file }) {
   const preview = useMemo(() => documentPreviewPresentation(file), [file]);
+  const tokenLines = useMemo(() => file.format === 'sql' ? sqlPreviewTokenLines(file.content) : null, [file.content, file.format]);
   const highlightedLineRef = useRef(null);
 
   useEffect(() => {
@@ -2242,12 +2292,65 @@ function DocumentCodePreview({ file }) {
             role="listitem"
           >
             <span aria-hidden="true" className="cwu-document-line-number">{lineNumber}</span>
-            <code>{line || '\u00a0'}</code>
+            <code>{tokenLines ? tokenLines[index].map((token, tokenIndex) => (
+              <span className={`cwu-sql-${token.type}`} key={`${tokenIndex}-${token.text}`}>{token.text}</span>
+            )) : line || '\u00a0'}</code>
           </div>
         );
       })}
     </div>
   );
+}
+
+function CsvPreview({ csv }) {
+  return (
+    <div className="cwu-csv-preview">
+      <div className="cwu-csv-scroll">
+        <table>
+          <thead><tr>{csv.headers.map((header, index) => <th key={`${header}-${index}`}>{header}</th>)}</tr></thead>
+          <tbody>{csv.rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>
+          ))}</tbody>
+        </table>
+      </div>
+      {csv.hasMore ? <p>仅预览前 200 行，下载查看完整文件</p> : <p>首行作为列名 · 共预览 {csv.previewedRows} 行</p>}
+    </div>
+  );
+}
+
+function DocumentPreviewError({ error }) {
+  return <div className="cwu-document-error" role="status"><strong>无法预览</strong><p>{error?.message || '文件预览不可用，请下载原文件。'}</p></div>;
+}
+
+function documentPreviewTabs(file) {
+  if (file.loading) return [];
+  if (file.format === 'markdown') return [{ id: 'preview', label: '预览' }, { id: 'raw', label: 'Raw' }];
+  if (file.format === 'sql') return [{ id: 'formatted', label: '格式化' }, { id: 'raw', label: '原文' }];
+  if (file.format === 'csv') return [{ id: 'table', label: '表格' }, { id: 'raw', label: 'Raw' }];
+  if (file.format === 'html') return [{ id: 'preview', label: '预览' }, { id: 'source', label: '源码' }];
+  return [];
+}
+
+function documentPreviewCopyText(file, activeTab) {
+  if (file.loading || file.previewError || ['image', 'pdf', 'audio', 'unsupported'].includes(file.format)) return null;
+  if (file.format === 'csv' && activeTab === 'table' && file.csv) {
+    return [file.csv.headers, ...file.csv.rows].map((row) => row.join('\t')).join('\n');
+  }
+  if (file.format === 'sql' && activeTab === 'formatted') return file.formattedText ?? file.rawText ?? '';
+  if (file.rawAvailable === false && ['csv', 'markdown', 'sql', 'text'].includes(file.format)) return null;
+  return file.rawText ?? file.content ?? '';
+}
+
+function sqlPreviewTokenLines(content) {
+  const lines = [[]];
+  for (const token of tokenizeSqlPreview(content)) {
+    const parts = token.text.split('\n');
+    parts.forEach((part, index) => {
+      if (part) lines.at(-1).push({ ...token, text: part });
+      if (index < parts.length - 1) lines.push([]);
+    });
+  }
+  return lines;
 }
 
 function SpreadsheetPreview({ file }) {
@@ -2442,19 +2545,29 @@ function Message({
         </div>
       ))}
       {visibleAttachments.length ? (
-        <div className="cwu-message-attachments" aria-label="本轮附件">
-          {visibleAttachments.map((attachment) => (
-            <button
-              className="cwu-message-attachment"
-              disabled={!attachmentOpenable(attachment, onOpenAttachment)}
-              key={attachment.id}
-              onClick={() => onOpenAttachment?.(attachment, message)}
-              title={attachmentOpenable(attachment, onOpenAttachment) ? `打开 ${attachment.name}` : attachment.name}
-              type="button"
-            >
-              <i aria-hidden="true">{attachment.kind === 'image' ? '▧' : attachment.kind === 'audio' ? '♪' : attachment.kind === 'directory' ? '▱' : '▤'}</i>
-              <span>{attachment.name}</span>
-            </button>
+        <div className="cwu-message-resource-group">
+          <strong>{isUser ? '附件' : 'Agent 产物'}</strong>
+          <div className="cwu-message-attachments" aria-label={isUser ? '附件' : 'Agent 产物'}>
+            {visibleAttachments.map((attachment) => (
+              <button
+                className="cwu-message-attachment"
+                disabled={!attachmentOpenable(attachment, onOpenAttachment)}
+                key={attachment.id}
+                onClick={() => onOpenAttachment?.(attachment, message)}
+                title={attachmentOpenable(attachment, onOpenAttachment) ? `打开 ${attachment.name}` : attachment.name}
+                type="button"
+              >
+                <i aria-hidden="true">{attachment.kind === 'image' ? '▧' : attachment.kind === 'audio' ? '♪' : attachment.kind === 'directory' ? '▱' : '▤'}</i>
+                <span>{attachment.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {message.artifactErrors?.length ? (
+        <div className="cwu-artifact-errors" role="status">
+          {message.artifactErrors.map((failure, index) => (
+            <span key={`${failure.name}-${index}`}>{failure.name} 未能归档</span>
           ))}
         </div>
       ) : null}

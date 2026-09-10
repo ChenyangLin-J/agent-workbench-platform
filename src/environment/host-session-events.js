@@ -143,6 +143,10 @@ function applyRuntimeItem(session, event) {
       turnId: event.runtimeTurnId || null,
       turnStatus: item.status || (event.type === 'item_completed' ? 'completed' : 'inProgress'),
       createdAt: eventTimestamp(event),
+      ...(Array.isArray(item.publishedArtifacts) ? { attachments: item.publishedArtifacts.map((entry) => ({ ...entry })) } : {}),
+      ...(Array.isArray(item.artifactPublicationErrors) ? {
+        artifactErrors: item.artifactPublicationErrors.map((entry) => ({ ...entry })),
+      } : {}),
     };
     if (existing) Object.assign(existing, message);
     else if (!existingUserTurn && !session.messages.some((candidate) => (

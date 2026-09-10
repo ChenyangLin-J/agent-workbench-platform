@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
 import { AgentSessionKernel } from '../src/runtime/core/index.js';
@@ -156,6 +157,101 @@ test('Minimal Host persists native generated images and publishes authorized mes
     `${listening.url}/api/sessions/${branch.sessionId}/attachments/${branchMedia.resourceId}/content`,
     { headers },
   )).status, 200);
+});
+
+test('Minimal Host promotes explicitly delivered Codex file changes into durable Agent artifacts', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-result-file-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'workspace'), { recursive: true });
+  const manifest = runManifest(root, 'run-result-file');
+  manifest.features.agentArtifacts = true;
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const provider = new FakeRuntimeProvider();
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({ manifest, kernel, sessionStore: store, accessToken: 'result-file-token' });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = { 'content-type': 'application/json', 'x-agent-workbench-token': 'result-file-token' };
+  const session = await fetch(`${listening.url}/api/sessions`, { method: 'POST', headers, body: '{}' })
+    .then((response) => response.json()).then((body) => body.session);
+  const submitted = await fetch(`${listening.url}/api/sessions/${session.sessionId}/turns`, {
+    method: 'POST', headers, body: JSON.stringify({ prompt: '生成 SQL' }),
+  }).then((response) => response.json());
+  await writeFile(join(root, 'workspace', 'report.sql'), 'select 42');
+  const runtime = provider.createdSessions[0];
+  const eventBase = {
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: submitted.result.runtimeTurnId,
+  };
+  runtime.emit('event', { ...eventBase, type: 'item_completed', payload: { item: {
+    id: 'result-files', type: 'fileChange', status: 'completed', changes: [
+      { path: 'report.sql', kind: 'add' },
+      { path: 'unmentioned.txt', kind: 'add' },
+    ],
+  } } });
+  runtime.emit('event', { ...eventBase, type: 'item_completed', payload: { item: {
+    id: 'result-answer', type: 'agentMessage', status: 'completed', phase: 'final_answer',
+    text: '已生成 [report.sql](report.sql)。',
+  } } });
+  await eventually(async () => {
+    const detail = await fetch(`${listening.url}/api/sessions/${session.sessionId}`, { headers }).then((response) => response.json());
+    return detail.session.messages.at(-1)?.attachments?.length === 1;
+  });
+  const detail = await fetch(`${listening.url}/api/sessions/${session.sessionId}`, { headers }).then((response) => response.json());
+  const artifact = detail.session.messages.at(-1).attachments[0];
+  assert.equal(artifact.name, 'report.sql');
+  assert.equal(artifact.resource.kind, 'session-artifact');
+  assert.equal(artifact.resource.lifecycle.state, 'promoted');
+  assert.equal(JSON.stringify(artifact).includes(root), false);
+  const preview = await fetch(
+    `${listening.url}/api/sessions/${session.sessionId}/attachments/${artifact.id}/preview`, { headers },
+  ).then((response) => response.json());
+  assert.equal(preview.format, 'sql');
+  assert.equal(preview.rawText, 'select 42');
+});
+
+test('Minimal Host drains final Agent artifact publication before it stops', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-result-file-stop-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'workspace'), { recursive: true });
+  const manifest = runManifest(root, 'run-result-file-stop');
+  manifest.features.agentArtifacts = true;
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
+  const promote = resourceStore.promote.bind(resourceStore);
+  let promotionFinished = false;
+  resourceStore.promote = async (...args) => {
+    await delay(30);
+    const result = await promote(...args);
+    promotionFinished = true;
+    return result;
+  };
+  const provider = new FakeRuntimeProvider();
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({ manifest, kernel, sessionStore: store, resourceStore });
+  const listening = await host.start();
+  const headers = { 'content-type': 'application/json' };
+  const session = await fetch(`${listening.url}/api/sessions`, { method: 'POST', headers, body: '{}' })
+    .then((response) => response.json()).then((body) => body.session);
+  const submitted = await fetch(`${listening.url}/api/sessions/${session.sessionId}/turns`, {
+    method: 'POST', headers, body: JSON.stringify({ prompt: '生成文件' }),
+  }).then((response) => response.json());
+  await writeFile(join(root, 'workspace', 'stop.md'), '# retained');
+  const runtime = provider.createdSessions[0];
+  const eventBase = {
+    runtimeSessionId: runtime.runtimeSessionId,
+    runtimeTurnId: submitted.result.runtimeTurnId,
+  };
+  runtime.emit('event', { ...eventBase, type: 'item_completed', payload: { item: {
+    id: 'stop-files', type: 'fileChange', status: 'completed', changes: [{ path: 'stop.md', kind: 'add' }],
+  } } });
+  runtime.emit('event', { ...eventBase, type: 'item_completed', payload: { item: {
+    id: 'stop-answer', type: 'agentMessage', status: 'completed', text: '[stop.md](stop.md)',
+  } } });
+  await host.stop();
+  assert.equal(promotionFinished, true);
+  const persisted = await store.get(session.sessionId);
+  assert.equal(persisted.messages.at(-1).attachments[0].resource.kind, 'session-artifact');
 });
 
 test('Minimal Host defers an empty Runtime thread so the first Turn survives a Host restart', async (t) => {
@@ -656,6 +752,75 @@ test('Minimal Host gives Runtime the exact managed-file path without exposing it
   const detail = await fetch(`${listening.url}/api/sessions/${sessionId}`).then((response) => response.json());
   assert.equal(JSON.stringify(detail.session.messages[0].attachments).includes(root), false);
   assert.equal(detail.session.messages[0].attachments[0].name, 'dashboard-chart.json');
+});
+
+test('Minimal Host previews Markdown, SQL, CSV and TXT resources in-site with bounded safe modes', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-text-preview-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
+  const kernel = new AgentSessionKernel({ provider: new FakeRuntimeProvider(), bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store, resourceStore });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = { 'content-type': 'application/json' };
+  const session = await fetch(`${listening.url}/api/sessions`, { method: 'POST', headers, body: '{}' })
+    .then((response) => response.json()).then((body) => body.session);
+
+  async function upload(name, type, content) {
+    return fetch(`${listening.url}/api/sessions/${session.sessionId}/attachments`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ attachment: {
+        name, type, size: Buffer.byteLength(content),
+        data: `data:${type};base64,${Buffer.from(content).toString('base64')}`,
+      } }),
+    }).then((response) => response.json()).then((body) => body.attachment);
+  }
+
+  const markdown = await upload('guide.md', 'application/octet-stream', '# Guide\n<script>alert(1)</script>');
+  const sql = await upload('query.sql', 'text/plain', "select count(*) from events where name = '<b>'");
+  const csv = await upload('rows.csv', 'text/plain', 'name,note\r\nAlice,"hello, world"\r\nBob,"line 1\nline 2"\r\n');
+  const text = await upload('notes.txt', 'application/octet-stream', 'one\ttwo');
+  const emptyText = await upload('empty.txt', 'text/plain', '');
+  const oversizedMarkdown = await upload('large.md', 'text/markdown', `# Large\n${'x'.repeat(1024 * 1024)}`);
+  const previews = await Promise.all([markdown, sql, csv, text].map((attachment) => fetch(
+    `${listening.url}/api/sessions/${session.sessionId}/attachments/${attachment.id}/preview`,
+  ).then(async (response) => ({ response, body: await response.json() }))));
+  assert.deepEqual(previews.map(({ body }) => body.format), ['markdown', 'sql', 'csv', 'text']);
+  assert.deepEqual(previews[0].body.modes, ['preview', 'raw']);
+  assert.equal(previews[0].body.rawText.includes('<script>'), true);
+  assert.deepEqual(previews[1].body.modes, ['formatted', 'raw']);
+  assert.match(previews[1].body.formattedText, /^SELECT/);
+  assert.deepEqual(previews[2].body.csv.headers, ['name', 'note']);
+  assert.deepEqual(previews[2].body.csv.rows[1], ['Bob', 'line 1\nline 2']);
+  assert.deepEqual(previews[3].body, {
+    resourceId: text.id,
+    name: 'notes.txt',
+    mimeType: 'application/octet-stream',
+    size: 7,
+    digest: text.resource.integrity.digest,
+    format: 'text',
+    modes: ['raw'],
+    rawAvailable: true,
+    rawText: 'one\ttwo',
+  });
+  const emptyPreview = await fetch(
+    `${listening.url}/api/sessions/${session.sessionId}/attachments/${emptyText.id}/preview`,
+  ).then((response) => response.json());
+  assert.equal(emptyPreview.rawAvailable, true);
+  assert.equal(emptyPreview.rawText, '');
+  assert.equal(previews[0].response.headers.get('etag'), `"sha256-${markdown.resource.integrity.digest}"`);
+  const oversizedPreview = await fetch(
+    `${listening.url}/api/sessions/${session.sessionId}/attachments/${oversizedMarkdown.id}/preview`,
+  ).then((response) => response.json());
+  assert.equal(oversizedPreview.format, 'markdown');
+  assert.equal(oversizedPreview.rawAvailable, false);
+  assert.equal(oversizedPreview.rawError.code, 'PREVIEW_TOO_LARGE');
+  assert.equal('rawText' in oversizedPreview, false);
+  const downloaded = await fetch(`${listening.url}/api/sessions/${session.sessionId}/attachments/${sql.id}/content`);
+  assert.match(downloaded.headers.get('content-disposition'), /^attachment; filename="query\.sql";/);
+  assert.equal(await downloaded.text(), "select count(*) from events where name = '<b>'");
 });
 
 test('Minimal Host leaves failed Turn attachments staged and rejects cross-Session reuse', async (t) => {
@@ -1186,6 +1351,22 @@ test('Minimal Host isolates Sessions by a verified owner header', async (t) => {
   assert.equal((await fetch(`${listening.url}/api/sessions/${first.session.id}`, {
     headers: headersFor('user-b'),
   })).status, 404);
+  const firstAttachment = await fetch(`${listening.url}/api/sessions/${first.session.id}/attachments`, {
+    method: 'POST',
+    headers: headersFor('user-a'),
+    body: JSON.stringify({ attachment: {
+      name: 'owner.txt', type: 'text/plain', size: 5,
+      data: `data:text/plain;base64,${Buffer.from('owned').toString('base64')}`,
+    } }),
+  }).then((response) => response.json()).then((body) => body.attachment);
+  assert.equal((await fetch(
+    `${listening.url}/api/sessions/${first.session.id}/attachments/${firstAttachment.id}/preview`,
+    { headers: headersFor('user-a') },
+  )).status, 200);
+  assert.equal((await fetch(
+    `${listening.url}/api/sessions/${first.session.id}/attachments/${firstAttachment.id}/preview`,
+    { headers: headersFor('user-b') },
+  )).status, 404);
 
   const observerHeaders = {
     'x-agent-workbench-token': 'test-token',

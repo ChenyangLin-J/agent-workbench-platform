@@ -148,11 +148,15 @@ try {
   }
 
   const dropEvidence = await page.locator('.cwu-session-header').evaluate((element) => {
-    const file = new File(['BROWSER_ATTACHMENT_CANARY'], 'browser-canary.txt', { type: 'text/plain' });
+    const files = [
+      new File(['BROWSER_ATTACHMENT_CANARY'], 'browser-canary.txt', { type: 'text/plain' }),
+      new File(['SELECT id, name FROM users WHERE active = TRUE;'], 'browser-query.sql', { type: 'application/sql' }),
+      new File(['name,note\nAlice,"hello, world"\nBob,second'], 'browser-table.csv', { type: 'text/csv' }),
+    ];
     const dataTransfer = {
       types: ['Files'],
-      items: [{ kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => null }],
-      files: [file],
+      items: files.map((file) => ({ kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => null })),
+      files,
       dropEffect: 'none',
       getData: () => '',
     };
@@ -182,6 +186,10 @@ try {
       uploadError: await page.locator('.cwu-attachment-error').allTextContents(),
     })}`, { cause: error });
   }
+  await page.locator('.cwu-attachment', { hasText: 'browser-query.sql' })
+    .getByText('已就绪', { exact: false }).waitFor();
+  await page.locator('.cwu-attachment', { hasText: 'browser-table.csv' })
+    .getByText('已就绪', { exact: false }).waitFor();
   await page.locator('.cwu-session-header').evaluate((element, encodedPng) => {
     const bytes = Uint8Array.from(atob(encodedPng), (character) => character.charCodeAt(0));
     const file = new File([bytes], 'browser-preview.png', { type: 'image/png' });
@@ -231,6 +239,37 @@ try {
   await page.getByRole('dialog', { name: '文件预览：browser-preview.png' }).waitFor();
   await page.getByRole('button', { name: '关闭文件预览' }).click();
   await page.getByRole('dialog', { name: '文件预览：browser-preview.png' }).waitFor({ state: 'detached' });
+
+  const textAttachment = page.locator('.cwu-message-attachment', { hasText: 'browser-canary.txt' });
+  await textAttachment.click();
+  const textPreview = page.getByRole('dialog', { name: '文件预览：browser-canary.txt' });
+  await textPreview.getByText('BROWSER_ATTACHMENT_CANARY', { exact: true }).waitFor();
+  await textPreview.getByRole('button', { name: '关闭文件预览' }).click();
+  if (!await textAttachment.evaluate((element) => element === document.activeElement)) {
+    throw new Error('Closing a text preview did not restore focus to its attachment card.');
+  }
+
+  await page.locator('.cwu-message-attachment', { hasText: 'browser-query.sql' }).click();
+  const sqlPreview = page.getByRole('dialog', { name: '文件预览：browser-query.sql' });
+  await sqlPreview.getByRole('button', { name: '格式化', exact: true }).waitFor();
+  if (!await sqlPreview.locator('.cwu-sql-keyword').count()) {
+    throw new Error('SQL attachment preview did not render syntax highlighting.');
+  }
+  await sqlPreview.getByRole('button', { name: '原文', exact: true }).click();
+  await sqlPreview.getByText('SELECT id, name FROM users WHERE active = TRUE;', { exact: true }).waitFor();
+  await sqlPreview.getByRole('button', { name: '关闭文件预览' }).click();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('.cwu-message-attachment', { hasText: 'browser-table.csv' }).click();
+  const csvPreview = page.getByRole('dialog', { name: '文件预览：browser-table.csv' });
+  await csvPreview.getByRole('button', { name: '表格', exact: true }).waitFor();
+  await csvPreview.getByRole('cell', { name: 'hello, world', exact: true }).waitFor();
+  const csvSheetBox = await csvPreview.locator('.cwu-document-preview').boundingBox();
+  if (!csvSheetBox || csvSheetBox.width < 389 || csvSheetBox.height < 843) {
+    throw new Error(`CSV preview is not a full-screen 390 px sheet: ${JSON.stringify(csvSheetBox)}`);
+  }
+  await csvPreview.getByRole('button', { name: '关闭文件预览' }).click();
+  await page.setViewportSize({ width: 1280, height: 800 });
 
   const runtime = provider.createdSessions[0];
   const scrollCanary = Array.from({ length: 80 }, (_, index) => `Streaming scroll canary ${index + 1}`).join('\n\n');
@@ -553,7 +592,7 @@ try {
   if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, recent-Session root return, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, whole-detail attachment drop, uploaded-image message thumbnail/lightbox, upward-reading stability during streaming, completed-response downward-scroll stability, durable generated-image media/lightbox, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, recent-Session root return, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, TXT/SQL/CSV in-site previews, uploaded-image message thumbnail/lightbox, upward-reading stability during streaming, completed-response downward-scroll stability, durable generated-image media/lightbox, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);
@@ -680,7 +719,7 @@ function runManifest(runRoot) {
     versions: { platform: 'test', runtime: 'test' },
     profile: { id: 'browser-smoke', hash: 'hash', source: { type: 'inline' } },
     runtime: { provider: 'fake' },
-    features: { sessionWorkspace: true, attachments: true },
+    features: { sessionWorkspace: true, attachments: true, agentArtifacts: true },
     capabilities: { lock: { capabilities: [] }, hash: 'hash' },
     isolation: {
       requestedLevel: 'ephemeral-machine',

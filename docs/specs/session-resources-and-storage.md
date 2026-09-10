@@ -29,11 +29,14 @@ Implemented in the active Platform worktree:
 - Minimal Host attachment staging before Send and Session-durable commit only after Runtime acceptance;
 - authorized `workspace-directory` registration, reauthorization at Runtime resolve, and persistent directory chips;
 - stable Resource metadata in Session messages with no public storage path;
+- authenticated, bounded in-site preview endpoints for Markdown, SQL, CSV, and UTF-8 text attachments; Markdown offers Preview/Raw, SQL offers formatted/raw syntax-highlighted views, and CSV offers a bounded table/Raw;
+- a structured Runtime result projector that intersects completed `fileChange` items with exact final-answer references, validates realpath containment, and promotes only those files into durable `session-artifact` Resources before publishing them on the final Agent message;
+- zero-byte artifact support, idempotent promotion, partial publication errors, and download responses with safe content disposition;
 - failed-Turn recovery and cross-Session rejection tests.
 
 Session transcript persistence now uses `agent-workbench.session-store/v2`: a SQLite summary index plus sharded per-Session snapshots and append-only NDJSON event segments. Session lists never open transcript snapshots, ordinary stream deltas are appended in 150 ms / 64 KiB batches, and non-delta boundaries compact one Session into its snapshot. Startup migrates an existing v1 `sessions.json` under an exclusive lock, retains the exact source file, records its SHA-256 digest and a migration report, and activates the new manifest last. Runtime bindings and queued Turns remain in the separate Runtime state store. A replay gap is explicit and requires a target-Session snapshot refresh; normal Minimal Host streaming projects events directly and no longer polls the full list every two seconds.
 
-Still unresolved or unimplemented: explicit reference-edge recording, quarantine/purge, consumer-specific compatibility adapters, and resumable migration journals. No cleanup is enabled by this slice.
+Still unresolved or unimplemented: explicit reference-edge recording, quarantine/purge, consumer-specific compatibility adapters, and resumable migration journals. No workspace scan or cleanup is enabled by this slice.
 
 ## Why this belongs in Platform
 

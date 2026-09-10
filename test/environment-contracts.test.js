@@ -51,11 +51,20 @@ test('profile normalization is minimal, stable, and keeps optional evaluator ass
     extensions: { 'ai.ddit.lab': { candidateLabel: 'candidate' } },
   }, { baseDirectory: '/profiles' });
   assert.equal(profile.features.sessionWorkspace, true);
+  assert.equal(profile.features.agentArtifacts, false);
   assert.equal(profile.features.evidenceDashboard, false);
   assert.deepEqual(profile.isolation.filesystem.readableRoots, ['/profiles/fixtures']);
   assert.deepEqual(profile.capabilities.sources, [{ id: 'skills.data', path: '/profiles/candidate-skill' }]);
   assert.equal(JSON.stringify(profile).includes('gold'), false);
   assert.equal(environmentProfileHash(profile), environmentProfileHash(structuredClone(profile)));
+});
+
+test('profiles opt into Agent artifact publication explicitly', () => {
+  const profile = normalizeEnvironmentProfile({
+    id: 'artifact-preview',
+    features: { agentArtifacts: true },
+  });
+  assert.equal(profile.features.agentArtifacts, true);
 });
 
 test('profiles reject unknown fields and embedded credential values', () => {
