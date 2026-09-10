@@ -26,6 +26,7 @@ test('Minimal Host event stream reconnects after failure and requests replay aft
   const calls = [];
   const waits = [];
   const events = [];
+  const states = [];
   const open = async ({ afterEventId }) => {
     calls.push(afterEventId);
     if (calls.length === 1) return new Response('', { status: 502 });
@@ -40,10 +41,12 @@ test('Minimal Host event stream reconnects after failure and requests replay aft
   await maintainMinimalHostEventStream({
     open,
     onEvent: (event) => events.push(event),
+    onState: (state) => states.push(state.status),
     signal: controller.signal,
     wait: async (delayMs) => waits.push(delayMs),
   });
   assert.deepEqual(calls, [0, 0, 12]);
   assert.deepEqual(waits, [500, 500]);
   assert.deepEqual(events, [{ eventId: 12, data: '{"type":"turn_completed"}' }]);
+  assert.deepEqual(states, ['reconnecting', 'connected', 'reconnecting']);
 });

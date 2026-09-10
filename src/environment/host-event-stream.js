@@ -4,6 +4,7 @@ const DEFAULT_RETRY_MAX_MS = 5_000;
 export async function maintainMinimalHostEventStream({
   open,
   onEvent,
+  onState = () => {},
   signal,
   retryMinMs = DEFAULT_RETRY_MIN_MS,
   retryMaxMs = DEFAULT_RETRY_MAX_MS,
@@ -11,6 +12,7 @@ export async function maintainMinimalHostEventStream({
 } = {}) {
   if (typeof open !== 'function') throw new TypeError('Event stream open function is required');
   if (typeof onEvent !== 'function') throw new TypeError('Event stream callback is required');
+  if (typeof onState !== 'function') throw new TypeError('Event stream state callback must be a function');
   if (!signal || typeof signal.aborted !== 'boolean') throw new TypeError('Event stream AbortSignal is required');
   const minimum = positiveDelay(retryMinMs, 'minimum retry delay');
   const maximum = positiveDelay(retryMaxMs, 'maximum retry delay');
@@ -26,6 +28,7 @@ export async function maintainMinimalHostEventStream({
         await response?.body?.cancel?.().catch(() => {});
         throw eventStreamError(response?.status);
       }
+      onState({ status: 'connected', afterEventId });
       const result = await readMinimalHostEventStream(response.body, {
         onEvent(event) {
           receivedEvents += 1;
@@ -34,8 +37,10 @@ export async function maintainMinimalHostEventStream({
         },
       });
       if (result.lastEventId != null) afterEventId = result.lastEventId;
+      if (!signal.aborted) onState({ status: 'reconnecting', afterEventId, reason: 'stream_ended' });
     } catch (error) {
       if (signal.aborted || error?.name === 'AbortError') return;
+      onState({ status: 'reconnecting', afterEventId, reason: error?.code || 'stream_failed' });
     }
 
     if (signal.aborted) return;

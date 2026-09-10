@@ -45,6 +45,7 @@ function MinimalHostApp() {
   const [listCollapsed, setListCollapsed] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [streamNotice, setStreamNotice] = useState('');
   const [continuing, setContinuing] = useState(false);
   const [documentPreview, setDocumentPreview] = useState(null);
   const continuationKey = useRef(null);
@@ -294,9 +295,12 @@ function MinimalHostApp() {
         const event = parseMinimalHostSessionEvent(envelope);
         if (!event || event.sessionId !== selectedIdRef.current) return;
         if (event.type === 'replay_gap' || event.payload?.snapshotRequired === true) {
-          refreshSession(event.sessionId).catch((nextError) => {
-            if (nextError.name !== 'AbortError') setError(nextError.message);
-          });
+          setStreamNotice('正在恢复此对话…');
+          refreshSession(event.sessionId)
+            .then(() => setStreamNotice(''))
+            .catch((nextError) => {
+              if (nextError.name !== 'AbortError') setError(nextError.message);
+            });
           return;
         }
         const applyEvent = (projectedEvent) => {
@@ -336,6 +340,16 @@ function MinimalHostApp() {
         } else {
           applyEvent(event);
         }
+      },
+      onState: ({ status }) => {
+        if (status === 'connected') {
+          setStreamNotice('');
+          return;
+        }
+        setStreamNotice('正在重连…');
+        refreshSession(selectedId).catch((nextError) => {
+          if (nextError.name !== 'AbortError') setError(nextError.message);
+        });
       },
       signal: controller.signal,
     }).catch((nextError) => {
@@ -657,7 +671,7 @@ function MinimalHostApp() {
           searchPlaceholder: '搜索对话',
         }}
       />
-      {notice ? <div className="awb-host-notice" role="status">{notice}</div> : null}
+      {notice || streamNotice ? <div className="awb-host-notice" role="status">{notice || streamNotice}</div> : null}
       {visibleError ? <div className="awb-host-error" role="alert">{visibleError}</div> : null}
     </main>
   );
