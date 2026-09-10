@@ -2237,7 +2237,7 @@ function DocumentPreview({
               title={file.name}
             />
           ) : file.format === 'markdown' && activeTab === 'preview' ? (
-            file.rawAvailable ? (
+            file.rawAvailable !== false ? (
               <div className="cwu-document-content cwu-message-body">
                 <ReactMarkdown
                   components={documentMarkdownComponents({ documentResourceUrl, file, onOpenLink, onRevealLink, revealLabel })}
@@ -2247,12 +2247,12 @@ function DocumentPreview({
               </div>
             ) : <DocumentPreviewError error={file.rawError} />
           ) : file.format === 'markdown' && activeTab === 'raw' ? (
-            file.rawAvailable ? <DocumentCodePreview file={{ ...file, content: file.rawText || '', format: 'code' }} /> : <DocumentPreviewError error={file.rawError} />
+            file.rawAvailable !== false ? <DocumentCodePreview file={{ ...file, content: file.rawText ?? file.content ?? '', format: 'code' }} /> : <DocumentPreviewError error={file.rawError} />
           ) : file.format === 'sql' ? (
-            !file.rawAvailable
+            file.rawAvailable === false
               ? <DocumentPreviewError error={file.rawError} />
-              : <DocumentCodePreview file={{ ...file, content: activeTab === 'raw' ? file.rawText || '' : file.formattedText ?? file.rawText ?? '', format: 'sql' }} />
-          ) : file.format === 'text' && !file.rawAvailable ? (
+              : <DocumentCodePreview file={{ ...file, content: activeTab === 'raw' ? file.rawText ?? file.content ?? '' : file.formattedText ?? file.rawText ?? file.content ?? '', format: 'sql' }} />
+          ) : file.format === 'text' && file.rawAvailable === false ? (
             <DocumentPreviewError error={file.rawError} />
           ) : file.format === 'unsupported' ? (
             <DocumentPreviewError error={{ message: '暂不支持站内预览此文件类型，请下载原文件。' }} />

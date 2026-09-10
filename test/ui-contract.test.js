@@ -51,6 +51,8 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(source, /srcDoc=\{sandboxedHtmlSource\(file\.content \|\| ''\)\}/);
   assert.match(source, /sandbox="allow-scripts"/);
   assert.match(source, /aria-label="文件查看方式"/);
+  assert.match(source, /file\.format === 'markdown'.*file\.rawAvailable !== false/s);
+  assert.match(source, /file\.format === 'sql'.*file\.rawAvailable === false/s);
   assert.match(source, /file\.format === 'spreadsheet'/);
   assert.match(source, /function SpreadsheetPreview/);
   assert.match(styles, /\.cwu-document-preview/);
