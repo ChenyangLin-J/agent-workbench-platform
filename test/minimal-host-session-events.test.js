@@ -83,11 +83,10 @@ test('Minimal Host publishes projected result media and handles requests without
       status: 'completed',
       publishedMedia: {
         type: 'resourceImage', resourceId: 'res-a', name: 'a.png', mimeType: 'image/png', size: 12,
-        kind: 'image', src: 'blob:test', attachmentId: 'res-a',
       },
     } },
   }).session;
-  assert.equal(detail.messages.at(-1).media[0].src, 'blob:test');
+  assert.equal(detail.messages.at(-1).media[0].resourceId, 'res-a');
 
   detail = applyMinimalHostSessionEvent(detail, {
     eventId: 5,

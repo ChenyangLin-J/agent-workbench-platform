@@ -140,6 +140,32 @@ export function createMinimalHost({
     return { kind: 'shared', grant, session: sharedSessionProjection(await sessionStore.getShared(sessionId), grant) };
   }
 
+  async function readConversationForAccess(sessionId, access, { cursor = null, limit = 5 } = {}) {
+    if (typeof sessionStore.getConversationPage !== 'function') {
+      throw hostError(
+        'HOST_CONVERSATION_VIEW_UNSUPPORTED',
+        'The configured Session store does not support paged conversation reads.',
+        501,
+      );
+    }
+    try {
+      const page = await sessionStore.getConversationPage(sessionId, {
+        ownerId: access.ownerId,
+        cursor,
+        limit,
+      });
+      return { kind: 'owned', session: await decorateSessionForCurrentRun(page) };
+    } catch (error) {
+      if (error?.code !== 'SESSION_NOT_FOUND') throw error;
+    }
+    const grant = access.sharedSessions.get(sessionId);
+    if (!grant?.permissions.has('session.read')) {
+      throw hostError('SESSION_NOT_FOUND', `Session not found: ${sessionId}`, 404);
+    }
+    const page = await sessionStore.getConversationPage(sessionId, { cursor, limit });
+    return { kind: 'shared', grant, session: sharedSessionProjection(page, grant) };
+  }
+
   async function requireOwnedSessionAccess(sessionId, access) {
     try {
       return await readSession(sessionId, { ownerId: access.ownerId });
@@ -519,10 +545,45 @@ export function createMinimalHost({
       if (!removed) throw hostError('HOST_QUEUED_TURN_NOT_FOUND', 'Queued Turn not found.', 404);
       return sendJson(response, 200, { removed, queueLength: queue.list(sessionId).length });
     }
+    const technicalTurnRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/turns\/([^/]+)\/technical-items$/);
+    if (technicalTurnRoute && request.method === 'GET') {
+      const sessionId = decodeURIComponent(technicalTurnRoute[1]);
+      const turnKey = decodeURIComponent(technicalTurnRoute[2]);
+      if (typeof sessionStore.getTurnTechnicalItems !== 'function') {
+        throw hostError(
+          'HOST_TECHNICAL_VIEW_UNSUPPORTED',
+          'The configured Session store does not support per-Turn technical reads.',
+          501,
+        );
+      }
+      try {
+        const items = await sessionStore.getTurnTechnicalItems(sessionId, turnKey, { ownerId });
+        return sendJson(response, 200, { sessionId, turnKey, technicalItems: items });
+      } catch (error) {
+        if (error?.code === 'SESSION_NOT_FOUND' && sessionAccess.sharedSessions.has(sessionId)) {
+          throw hostError('SESSION_ACCESS_READ_ONLY', 'Technical details are not available in shared Sessions.', 403);
+        }
+        throw error;
+      }
+    }
     const sessionRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(turns|interrupt|events|requests\/([^/]+)))?$/);
     if (sessionRoute) {
       const sessionId = decodeURIComponent(sessionRoute[1]);
       const action = sessionRoute[2] || '';
+      if (request.method === 'GET' && !action && url.searchParams.get('view') === 'conversation') {
+        const accessed = await readConversationForAccess(sessionId, sessionAccess, {
+          cursor: url.searchParams.get('turnCursor'),
+          limit: url.searchParams.get('turnLimit'),
+        });
+        const session = accessed.session;
+        session.pendingRequests = accessed.kind === 'owned'
+          ? kernel.getPendingRequests(sessionId).map(pendingRequestView)
+          : [];
+        session.queuedTurns = accessed.kind === 'owned' && queuedTurnsEnabled
+          ? (await turnQueueReady).list(sessionId)
+          : [];
+        return sendJson(response, 200, { session });
+      }
       const accessed = await readSessionForAccess(sessionId, sessionAccess);
       let session = accessed.session;
       if (request.method === 'GET' && !action) {
@@ -743,7 +804,7 @@ export function createMinimalHost({
       if (!unsubscribeEvents) {
         unsubscribeEvents = subscribeStore(kernel, sessionStore, dispatcher, {
           projectResultEvent,
-          serializeResults: Boolean(resultFileProjector),
+          serializeResults: Boolean(resultFileProjector || resultImageProjector),
         });
       }
       if (queuedTurnsEnabled) await dispatcher.recover();
@@ -769,7 +830,7 @@ export function createMinimalHost({
       const subscription = unsubscribeEvents;
       subscription?.();
       unsubscribeEvents = null;
-      if (resultFileProjector) await subscription?.drain?.();
+      await subscription?.drain?.();
       (await dispatcherReady).close();
       for (const client of clients) {
         clearInterval(client.heartbeat);
@@ -846,6 +907,9 @@ function accessIdentifier(value) {
 }
 
 function sharedSessionProjection(session, grant, { summary = false } = {}) {
+  const projectedTurnKey = (value) => value
+    ? `shared-turn-${createHash('sha256').update(`${grant.shareId}:${value}`).digest('hex').slice(0, 24)}`
+    : undefined;
   const projection = {
     id: session.id,
     sessionId: session.sessionId || session.id,
@@ -879,6 +943,7 @@ function sharedSessionProjection(session, grant, { summary = false } = {}) {
       phase: message.phase,
       content: message.content,
       turnStatus: message.turnStatus,
+      turnKey: projectedTurnKey(message.turnKey),
       createdAt: message.createdAt,
       attachments: (message.attachments || []).map(sharedAttachmentProjection).filter(Boolean),
       media: grant.permissions.has('resource.read')
@@ -886,6 +951,18 @@ function sharedSessionProjection(session, grant, { summary = false } = {}) {
         : [],
     })),
     technicalItems: [],
+    technicalDetailsAvailable: [],
+    turnMetadata: (session.turnMetadata || []).map((turn) => ({
+      turnKey: projectedTurnKey(turn.turnKey),
+      turnId: null,
+      ordinal: turn.ordinal,
+      startedAt: turn.startedAt,
+      technicalItemCount: 0,
+    })),
+    hasEarlierTurns: Boolean(session.hasEarlierTurns),
+    loadedTurnCount: session.loadedTurnCount,
+    turnCount: session.turnCount,
+    turnsCursor: session.turnsCursor || null,
     plan: [],
     pendingRequests: [],
     queuedTurns: [],
@@ -996,13 +1073,20 @@ function subscribeStore(kernel, sessionStore, dispatcher, {
   serializeResults = false,
 } = {}) {
   if (!serializeResults) {
-    const listener = (event) => void Promise.resolve(
+    const pending = new Set();
+    const listener = (event) => {
+      const operation = Promise.resolve(
       projectResultEvent ? projectResultEvent(event) : event,
     ).then((projectedEvent) => sessionStore.applyEvent(projectedEvent))
       .then(() => event.type === 'turn_completed' ? dispatcher.startNext(event.sessionId) : null)
       .catch(() => {});
+      pending.add(operation);
+      void operation.finally(() => pending.delete(operation));
+    };
     kernel.on?.('event', listener);
-    return () => kernel.off?.('event', listener);
+    const unsubscribe = () => kernel.off?.('event', listener);
+    unsubscribe.drain = () => Promise.allSettled([...pending]);
+    return unsubscribe;
   }
   const queues = new Map();
   const pending = new Set();

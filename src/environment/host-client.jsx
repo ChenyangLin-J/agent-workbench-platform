@@ -30,7 +30,10 @@ const sessionSharing = bootstrap.sessionSharing?.enabled === true ? bootstrap.se
 const startsWithNewSession = bootstrap.sessionStart === 'new';
 const initialSessionId = new URLSearchParams(globalThis.location?.search || '').get('session');
 const SHARED_SESSION_POLL_MS = 5_000;
-const SESSION_LIST_PAGE_SIZE = 100;
+const OWNED_ACTIVE_SESSION_POLL_MS = 2_000;
+const SESSION_LIST_PAGE_SIZE = 50;
+const INITIAL_CONVERSATION_TURNS = 5;
+const HISTORY_CONVERSATION_TURNS = 10;
 
 function hostUrl(path) {
   return resolveMinimalHostUrl(path, { baseUrl: hostBaseUrl });
@@ -39,9 +42,13 @@ function hostUrl(path) {
 function MinimalHostApp() {
   const [sessions, setSessions] = useState([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [sessionsLoadingMore, setSessionsLoadingMore] = useState(false);
+  const [listPagination, setListPagination] = useState({ ownedCursor: null, sharedOffset: null });
   const [selectedId, setSelectedId] = useState(initialSessionId);
   const selectedIdRef = useRef(initialSessionId);
   const [session, setSession] = useState(null);
+  const activeSessionRef = useRef(null);
+  const terminalRecheckTimer = useRef(null);
   const [listCollapsed, setListCollapsed] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -54,7 +61,10 @@ function MinimalHostApp() {
   const sessionMediaUrls = useRef({ sessionId: null, entries: new Map() });
   const openedShares = useRef(new Set());
   const detailRequest = useRef({ controller: null, generation: 0 });
+  const technicalRequests = useRef(new Map());
   const listRequestGeneration = useRef(0);
+  const eventFrame = useRef(null);
+  const pendingEvents = useRef([]);
   const operationController = useRef(null);
   const automaticSessionCreationAttempted = useRef(false);
   operationController.current ||= new SessionClientOperationController();
@@ -70,25 +80,31 @@ function MinimalHostApp() {
   const clearSessionMediaUrls = useCallback((sessionId = null) => {
     if (sessionId && sessionMediaUrls.current.sessionId !== sessionId) return;
     for (const entry of sessionMediaUrls.current.entries.values()) {
+      entry.controller?.abort();
       if (entry.url) URL.revokeObjectURL(entry.url);
     }
     sessionMediaUrls.current = { sessionId: null, entries: new Map() };
   }, []);
 
-  const loadSessionMediaUrl = useCallback(async (sessionId, media) => {
+  const loadSessionMediaUrl = useCallback(async (sessionId, media, { signal = null } = {}) => {
     const resourceId = String(media?.resourceId || media?.attachmentId || '').trim();
     if (!sessionId || !resourceId) return String(media?.src || '');
+    if (signal?.aborted) throw abortError();
     if (sessionMediaUrls.current.sessionId !== sessionId) {
       clearSessionMediaUrls();
       sessionMediaUrls.current.sessionId = sessionId;
     }
     const cached = sessionMediaUrls.current.entries.get(resourceId);
     if (cached) return cached.promise;
-    const entry = { promise: null, url: '' };
+    const controller = new AbortController();
+    const entry = { controller, promise: null, url: '' };
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
     entry.promise = fetch(hostUrl(
       `api/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(resourceId)}/content`,
     ), {
       headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
+      signal: controller.signal,
     }).then(async (response) => {
       if (!response.ok) throw new Error(`图片读取失败 (${response.status})`);
       const blob = await response.blob();
@@ -108,44 +124,14 @@ function MinimalHostApp() {
         sessionMediaUrls.current.entries.delete(resourceId);
       }
       throw error;
+    }).finally(() => {
+      signal?.removeEventListener('abort', abort);
     });
     sessionMediaUrls.current.entries.set(resourceId, entry);
     return entry.promise;
   }, [clearSessionMediaUrls]);
 
-  const presentSession = useCallback(async (value) => {
-    const presented = minimalHostSessionPresentation(value);
-    if (!attachmentsEnabled || !presented.sessionId) return presented;
-    const messages = await Promise.all((presented.messages || []).map(async (message) => {
-      const attachments = await Promise.all((message.attachments || []).map(async (attachment) => {
-        const mimeType = String(attachment?.mimeType || attachment?.resource?.display?.mimeType || '').toLowerCase();
-        if (attachment?.kind !== 'image' && !mimeType.startsWith('image/')) return attachment;
-        const previewUrl = await loadSessionMediaUrl(presented.sessionId, {
-          resourceId: attachment?.resource?.id || attachment?.id,
-          mimeType,
-        }).catch(() => '');
-        return previewUrl ? { ...attachment, previewUrl } : attachment;
-      }));
-      const media = (await Promise.all((message.media || []).map(async (item) => {
-        const mediaItem = item;
-        if (mediaItem?.src) return mediaItem;
-        const src = await loadSessionMediaUrl(presented.sessionId, mediaItem).catch(() => '');
-        if (!src) return null;
-        return {
-          id: mediaItem.resourceId,
-          kind: 'image',
-          src,
-          alt: mediaItem.name || '图片',
-          name: mediaItem.name || '图片',
-          attachmentId: mediaItem.resourceId,
-          mimeType: mediaItem.mimeType,
-          size: mediaItem.size,
-        };
-      }))).filter(Boolean);
-      return { ...message, attachments, media };
-    }));
-    return { ...presented, messages };
-  }, [loadSessionMediaUrl]);
+  const presentSession = useCallback((value) => minimalHostSessionPresentation(value), []);
 
   const request = useCallback(async (path, options = {}) => {
     const response = await fetch(hostUrl(path), {
@@ -186,47 +172,52 @@ function MinimalHostApp() {
 
   const refreshSessions = useCallback(async () => {
     const generation = ++listRequestGeneration.current;
-    const merged = new Map();
     const first = await request(`api/sessions?limit=${SESSION_LIST_PAGE_SIZE}`);
-    for (const candidate of first.sessions || []) {
-      const presented = minimalHostSessionPresentation(candidate);
-      merged.set(presented.id || presented.sessionId, presented);
-    }
-    let cursor = first.nextCursor || null;
-    for (let page = 0; cursor && page < 100; page += 1) {
-      const body = await request(
-        `api/sessions?shared=0&limit=${SESSION_LIST_PAGE_SIZE}&cursor=${encodeURIComponent(cursor)}`,
-      );
-      for (const candidate of body.sessions || []) {
-        const presented = minimalHostSessionPresentation(candidate);
-        merged.set(presented.id || presented.sessionId, presented);
-      }
-      if (body.nextCursor === cursor) throw new Error('对话分页游标未前进。');
-      cursor = body.nextCursor || null;
-    }
-    if (cursor) throw new Error('对话数量超出客户端分页上限。');
-    let sharedOffset = first.sharedNextOffset ?? null;
-    for (let page = 0; sharedOffset != null && page < 100; page += 1) {
-      const body = await request(
-        `api/sessions?owned=0&sharedOffset=${encodeURIComponent(sharedOffset)}`,
-      );
-      for (const candidate of body.sessions || []) {
-        const presented = minimalHostSessionPresentation(candidate);
-        merged.set(presented.id || presented.sessionId, presented);
-      }
-      if (body.sharedNextOffset === sharedOffset) throw new Error('共享对话分页未前进。');
-      sharedOffset = body.sharedNextOffset ?? null;
-    }
-    if (sharedOffset != null) throw new Error('共享对话数量超出客户端分页上限。');
     if (generation !== listRequestGeneration.current) return null;
-    const nextSessions = [...merged.values()].sort(
-      (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
-    );
+    const nextSessions = mergeSessionSummaries([], first.sessions || []);
     setSessions(nextSessions);
+    setListPagination({
+      ownedCursor: first.nextCursor || null,
+      sharedOffset: first.sharedNextOffset ?? null,
+    });
     setSessionsLoaded(true);
     selectSessionId((current) => selectMinimalHostSession(nextSessions, current, { fallback: 'newest' }));
     return nextSessions;
   }, [request, selectSessionId]);
+
+  const loadMoreSessions = useCallback(async () => {
+    if (sessionsLoadingMore || (!listPagination.ownedCursor && listPagination.sharedOffset == null)) return;
+    setSessionsLoadingMore(true);
+    const ownedCursor = listPagination.ownedCursor;
+    const sharedOffset = listPagination.sharedOffset;
+    try {
+      const [owned, shared] = await Promise.all([
+        ownedCursor
+          ? request(`api/sessions?shared=0&limit=${SESSION_LIST_PAGE_SIZE}&cursor=${encodeURIComponent(ownedCursor)}`)
+          : null,
+        sharedOffset != null
+          ? request(`api/sessions?owned=0&sharedOffset=${encodeURIComponent(sharedOffset)}`)
+          : null,
+      ]);
+      if (ownedCursor && owned?.nextCursor === ownedCursor) throw new Error('对话分页游标未前进。');
+      if (sharedOffset != null && shared?.sharedNextOffset === sharedOffset) {
+        throw new Error('共享对话分页未前进。');
+      }
+      setSessions((current) => mergeSessionSummaries(
+        current,
+        [...(owned?.sessions || []), ...(shared?.sessions || [])],
+      ));
+      setListPagination({
+        ownedCursor: owned ? owned.nextCursor || null : null,
+        sharedOffset: shared ? shared.sharedNextOffset ?? null : null,
+      });
+    } catch (nextError) {
+      setError(nextError.message);
+      throw nextError;
+    } finally {
+      setSessionsLoadingMore(false);
+    }
+  }, [listPagination, request, sessionsLoadingMore]);
 
   const refreshSession = useCallback(async (sessionId = selectedIdRef.current) => {
     if (!sessionId) return null;
@@ -234,23 +225,104 @@ function MinimalHostApp() {
     const controller = new AbortController();
     const generation = detailRequest.current.generation + 1;
     detailRequest.current = { controller, generation };
-    const body = await request(`api/sessions/${encodeURIComponent(sessionId)}`, { signal: controller.signal });
+    const body = await request(
+      `api/sessions/${encodeURIComponent(sessionId)}?view=conversation&turnLimit=${INITIAL_CONVERSATION_TURNS}`,
+      { signal: controller.signal },
+    );
     if (detailRequest.current.generation !== generation) return null;
     if (selectedIdRef.current !== sessionId) return null;
-    const nextSession = messageActionPresentation(await presentSession(body.session));
+    const nextSession = messageActionPresentation(presentSession(body.session));
     if (detailRequest.current.generation !== generation || selectedIdRef.current !== sessionId) {
       clearSessionMediaUrls(sessionId);
       return null;
     }
-    setSession(nextSession);
+    setSession((current) => current?.sessionId === sessionId
+      ? messageActionPresentation(mergeConversationRefresh(current, nextSession))
+      : nextSession);
     return nextSession;
   }, [clearSessionMediaUrls, presentSession, request]);
 
+  const loadEarlierTurns = useCallback(async () => {
+    const current = session;
+    if (!selectedId || !current?.hasEarlierTurns || !current.turnsCursor || current.historyLoading) return;
+    setSession((value) => value?.sessionId === selectedId ? { ...value, historyLoading: true } : value);
+    try {
+      const body = await request(
+        `api/sessions/${encodeURIComponent(selectedId)}?view=conversation&turnLimit=${HISTORY_CONVERSATION_TURNS}&turnCursor=${encodeURIComponent(current.turnsCursor)}`,
+      );
+      const page = messageActionPresentation(presentSession(body.session));
+      setSession((value) => value?.sessionId === selectedId
+        ? messageActionPresentation(mergeEarlierConversation(value, page))
+        : value);
+    } catch (nextError) {
+      setSession((value) => value?.sessionId === selectedId ? { ...value, historyLoading: false } : value);
+      setError(nextError.message);
+      throw nextError;
+    }
+  }, [presentSession, request, selectedId, session]);
+
+  const loadTechnicalDetails = useCallback(async (turnKey) => {
+    const key = String(turnKey || '');
+    if (!selectedId || !key || technicalRequests.current.has(key)) return;
+    if (session?.technicalItems?.some((item) => (item.turnKey || item.turnId) === key)) return;
+    const controller = new AbortController();
+    technicalRequests.current.set(key, controller);
+    setSession((value) => value?.sessionId === selectedId ? { ...value, technicalDetailsLoading: true } : value);
+    try {
+      const body = await request(
+        `api/sessions/${encodeURIComponent(selectedId)}/turns/${encodeURIComponent(key)}/technical-items`,
+        { signal: controller.signal },
+      );
+      setSession((value) => value?.sessionId === selectedId ? {
+        ...value,
+        technicalItems: mergeById(value.technicalItems, body.technicalItems),
+        technicalDetailsLoading: false,
+      } : value);
+    } catch (nextError) {
+      if (nextError.name !== 'AbortError') {
+        setSession((value) => value?.sessionId === selectedId
+          ? { ...value, technicalDetailsLoading: false }
+          : value);
+        setError(nextError.message);
+        throw nextError;
+      }
+    } finally {
+      technicalRequests.current.delete(key);
+    }
+  }, [request, selectedId, session?.technicalItems]);
+
+  const resolveSessionMedia = useCallback((media, { sessionId = selectedIdRef.current, signal = null } = {}) => (
+    loadSessionMediaUrl(sessionId, media, { signal })
+  ), [loadSessionMediaUrl]);
+
+  useEffect(() => {
+    const sessionId = session?.sessionId;
+    if (!sessionId) return undefined;
+    if (['running', 'waiting'].includes(session.status)) {
+      activeSessionRef.current = sessionId;
+      return undefined;
+    }
+    if (activeSessionRef.current !== sessionId) return undefined;
+    activeSessionRef.current = null;
+    clearTimeout(terminalRecheckTimer.current);
+    terminalRecheckTimer.current = setTimeout(() => {
+      if (selectedIdRef.current !== sessionId) return;
+      refreshSession(sessionId).catch((nextError) => {
+        if (nextError.name !== 'AbortError') setError(nextError.message);
+      });
+    }, 350);
+    return () => clearTimeout(terminalRecheckTimer.current);
+  }, [refreshSession, session?.sessionId, session?.status]);
+
   useEffect(() => {
     closeDocumentPreview();
+    for (const controller of technicalRequests.current.values()) controller.abort();
+    technicalRequests.current.clear();
     clearSessionMediaUrls();
     return () => {
       closeDocumentPreview();
+      for (const controller of technicalRequests.current.values()) controller.abort();
+      technicalRequests.current.clear();
       clearSessionMediaUrls();
     };
   }, [clearSessionMediaUrls, closeDocumentPreview, selectedId]);
@@ -259,6 +331,17 @@ function MinimalHostApp() {
   const selectedShared = selectedSessionLoaded
     ? session?.access?.kind === 'shared'
     : sessions.find((candidate) => candidate.id === selectedId)?.access?.kind === 'shared';
+
+  useEffect(() => {
+    if (!selectedId || !selectedSessionLoaded || selectedShared
+      || !['running', 'waiting'].includes(session?.status)) return undefined;
+    const timer = setInterval(() => {
+      refreshSession(selectedId).catch((nextError) => {
+        if (nextError.name !== 'AbortError') setError(nextError.message);
+      });
+    }, OWNED_ACTIVE_SESSION_POLL_MS);
+    return () => clearInterval(timer);
+  }, [refreshSession, selectedId, selectedSessionLoaded, selectedShared, session?.status]);
 
   useEffect(() => {
     refreshSessions().catch((nextError) => setError(nextError.message));
@@ -287,6 +370,25 @@ function MinimalHostApp() {
       };
     }
     const controller = new AbortController();
+    let recoveryRefreshTimer = null;
+    let recoveryRefreshRunning = false;
+    let lastRecoveryRefreshAt = 0;
+    const scheduleRecoveryRefresh = () => {
+      if (recoveryRefreshTimer || recoveryRefreshRunning) return;
+      const wait = Math.max(0, 2_000 - (Date.now() - lastRecoveryRefreshAt));
+      recoveryRefreshTimer = setTimeout(async () => {
+        recoveryRefreshTimer = null;
+        recoveryRefreshRunning = true;
+        try {
+          await refreshSession(selectedId);
+          lastRecoveryRefreshAt = Date.now();
+        } catch (nextError) {
+          if (nextError.name !== 'AbortError') setError(nextError.message);
+        } finally {
+          recoveryRefreshRunning = false;
+        }
+      }, wait);
+    };
     void maintainMinimalHostEventStream({
       open: ({ afterEventId, signal }) => fetch(hostUrl(
         `api/sessions/${encodeURIComponent(selectedId)}/events?after=${encodeURIComponent(afterEventId)}`,
@@ -306,42 +408,49 @@ function MinimalHostApp() {
             });
           return;
         }
-        const applyEvent = (projectedEvent) => {
+        const flushEvents = () => {
+          eventFrame.current = null;
+          const projectedEvents = pendingEvents.current.splice(0);
+          if (!projectedEvents.length) return;
           setSession((current) => {
-            const applied = applyMinimalHostSessionEvent(current, projectedEvent);
-            return !applied.session || applied.session === current
-              ? current
-              : messageActionPresentation(applied.session);
+            let next = current;
+            for (const projectedEvent of projectedEvents) {
+              const applied = applyMinimalHostSessionEvent(next, projectedEvent);
+              if (applied.session) next = applied.session;
+            }
+            return next === current ? current : messageActionPresentation(next);
           });
           setSessions((currentSessions) => {
-            const currentSummary = currentSessions.find((candidate) => (
-              (candidate.id || candidate.sessionId) === projectedEvent.sessionId
-            ));
-            if (!currentSummary) return currentSessions;
-            const applied = applyMinimalHostSessionEvent(currentSummary, projectedEvent);
-            return applied.session
-              ? patchMinimalHostSessionSummary(currentSessions, applied.session)
-              : currentSessions;
+            let next = currentSessions;
+            for (const projectedEvent of projectedEvents) {
+              const currentSummary = next.find((candidate) => (
+                (candidate.id || candidate.sessionId) === projectedEvent.sessionId
+              ));
+              if (!currentSummary) continue;
+              const applied = applyMinimalHostSessionEvent(currentSummary, projectedEvent);
+              if (applied.session) next = patchMinimalHostSessionSummary(next, applied.session);
+            }
+            return next;
           });
         };
-        const media = event.payload?.item?.publishedMedia;
-        if (media?.resourceId) {
-          void loadSessionMediaUrl(event.sessionId, media).then((src) => applyEvent({
-            ...event,
-            payload: { ...event.payload, item: {
-              ...event.payload.item,
-              publishedMedia: {
-                ...media,
-                id: media.resourceId,
-                kind: 'image',
-                src,
-                alt: media.name || '图片',
-                attachmentId: media.resourceId,
-              },
-            } },
-          })).catch(() => applyEvent(event));
-        } else {
-          applyEvent(event);
+        const publishedMedia = event.payload?.item?.publishedMedia;
+        pendingEvents.current.push(publishedMedia?.resourceId ? {
+          ...event,
+          payload: { ...event.payload, item: {
+            ...event.payload.item,
+            publishedMedia: {
+              ...publishedMedia,
+              id: publishedMedia.resourceId,
+              kind: 'image',
+              alt: publishedMedia.name || '图片',
+              attachmentId: publishedMedia.resourceId,
+            },
+          } },
+        } : event);
+        if (eventFrame.current == null) {
+          eventFrame.current = typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame(flushEvents)
+            : setTimeout(flushEvents, 16);
         }
       },
       onState: ({ status }) => {
@@ -350,9 +459,7 @@ function MinimalHostApp() {
           return;
         }
         setStreamNotice('正在重连…');
-        refreshSession(selectedId).catch((nextError) => {
-          if (nextError.name !== 'AbortError') setError(nextError.message);
-        });
+        scheduleRecoveryRefresh();
       },
       signal: controller.signal,
     }).catch((nextError) => {
@@ -361,8 +468,15 @@ function MinimalHostApp() {
     return () => {
       controller.abort();
       detailRequest.current.controller?.abort();
+      if (eventFrame.current != null) {
+        if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(eventFrame.current);
+        else clearTimeout(eventFrame.current);
+        eventFrame.current = null;
+      }
+      pendingEvents.current = [];
+      clearTimeout(recoveryRefreshTimer);
     };
-  }, [loadSessionMediaUrl, refreshSession, selectedId, selectedSessionLoaded, selectedShared]);
+  }, [refreshSession, selectedId, selectedSessionLoaded, selectedShared]);
 
   useEffect(() => {
     const shareId = session?.access?.kind === 'shared' ? session.access.shareId : null;
@@ -636,6 +750,7 @@ function MinimalHostApp() {
       onUploadAttachments: attachmentsEnabled && sessionMutable ? uploadAttachments : null,
       onResolveDroppedDirectories: attachmentsEnabled && sessionMutable ? resolveDroppedDirectories : null,
       onOpenAttachment: attachmentsEnabled ? openAttachment : null,
+      onResolveMedia: attachmentsEnabled ? resolveSessionMedia : null,
       onCloseDocument: closeDocumentPreview,
       onDownloadDocument: attachmentsEnabled ? downloadAttachment : null,
       onInterrupt: sessionMutable && session.status === 'running' ? interrupt : null,
@@ -643,6 +758,8 @@ function MinimalHostApp() {
       onForkMessage: messageForkEnabled && sessionBranchable ? (input) => branchMessage(input, 'fork') : null,
       onDeleteQueuedTurn: queuedTurnsEnabled && sessionMutable ? deleteQueuedTurn : null,
       onRespondToRequest: sessionMutable ? respondToRequest : null,
+      onLoadEarlier: loadEarlierTurns,
+      onLoadTechnicalDetails: loadTechnicalDetails,
       onError: (nextError) => setError(nextError.message),
     },
     labels: {
@@ -667,7 +784,7 @@ function MinimalHostApp() {
         </div>
       ) : null,
     },
-  } : null, [session, documentPreview, selectedId, sessionMutable, sessionBranchable, sharedReadOnly, continuing, productRequest]);
+  } : null, [session, documentPreview, selectedId, sessionMutable, sessionBranchable, sharedReadOnly, continuing, productRequest, loadEarlierTurns, loadTechnicalDetails, resolveSessionMedia]);
 
   const runtimeError = session?.status === 'error'
     ? userFacingRuntimeError(session.runtimeBinding?.lastError)
@@ -681,11 +798,15 @@ function MinimalHostApp() {
           onCreate: createSession,
           onSelect: (nextSession) => selectSessionId(nextSession.id),
           onToggleList: setListCollapsed,
+          onLoadMore: loadMoreSessions,
         }}
         browser={{
           sessions,
           selectedSessionId: selectedId,
           listCollapsed,
+          hasMore: Boolean(listPagination.ownedCursor || listPagination.sharedOffset != null),
+          loadingMore: sessionsLoadingMore,
+          paginationMode: 'incremental',
           groupMode: 'time',
           groupOptions: [{ id: 'time', label: '最近' }],
           createTargets: [{ id: 'environment', label: '对话' }],
@@ -1267,6 +1388,83 @@ function messageActionPresentation(session) {
       }),
     })),
   };
+}
+
+function mergeSessionSummaries(current, incoming) {
+  const merged = new Map((current || []).map((session) => [
+    session.id || session.sessionId,
+    session,
+  ]));
+  for (const candidate of incoming || []) {
+    const presented = minimalHostSessionPresentation(candidate);
+    merged.set(presented.id || presented.sessionId, presented);
+  }
+  return [...merged.values()].sort(
+    (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+  );
+}
+
+function mergeById(current = [], incoming = []) {
+  const merged = new Map();
+  for (const item of current || []) merged.set(item.id, item);
+  for (const item of incoming || []) merged.set(item.id, item);
+  return [...merged.values()];
+}
+
+function mergeTurnMetadata(current = [], incoming = []) {
+  const merged = new Map();
+  for (const turn of current || []) merged.set(turn.turnKey || turn.turnId, turn);
+  for (const turn of incoming || []) merged.set(turn.turnKey || turn.turnId, turn);
+  return [...merged.values()].sort((left, right) => (
+    (Number(left.ordinal) || Number.MAX_SAFE_INTEGER) - (Number(right.ordinal) || Number.MAX_SAFE_INTEGER)
+  ));
+}
+
+function mergeConversationRefresh(current, latest) {
+  const retainEarlierPaging = Boolean(current.turnsCursor)
+    && Number(current.loadedTurnCount) > Number(latest.loadedTurnCount);
+  const turnMetadata = mergeTurnMetadata(current.turnMetadata, latest.turnMetadata);
+  return {
+    ...current,
+    ...latest,
+    messages: mergeById(current.messages, latest.messages),
+    technicalItems: mergeById(current.technicalItems, latest.technicalItems),
+    turnMetadata,
+    technicalDetailsAvailable: [...new Set([
+      ...(current.technicalDetailsAvailable || []),
+      ...(latest.technicalDetailsAvailable || []),
+    ])],
+    hasEarlierTurns: retainEarlierPaging ? current.hasEarlierTurns : latest.hasEarlierTurns,
+    turnsCursor: retainEarlierPaging ? current.turnsCursor : latest.turnsCursor,
+    loadedTurnCount: turnMetadata.length,
+    historyLoading: false,
+  };
+}
+
+function mergeEarlierConversation(current, earlier) {
+  const turnMetadata = mergeTurnMetadata(earlier.turnMetadata, current.turnMetadata);
+  return {
+    ...current,
+    messages: mergeById(earlier.messages, current.messages),
+    technicalItems: mergeById(earlier.technicalItems, current.technicalItems),
+    turnMetadata,
+    technicalDetailsAvailable: [...new Set([
+      ...(earlier.technicalDetailsAvailable || []),
+      ...(current.technicalDetailsAvailable || []),
+    ])],
+    hasEarlierTurns: earlier.hasEarlierTurns,
+    turnsCursor: earlier.turnsCursor,
+    loadedTurnCount: turnMetadata.length,
+    turnCount: Math.max(Number(current.turnCount) || 0, Number(earlier.turnCount) || 0),
+    historyLoading: false,
+  };
+}
+
+function abortError() {
+  if (typeof DOMException === 'function') return new DOMException('The operation was aborted.', 'AbortError');
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
 }
 
 function featureEnabled(name) {

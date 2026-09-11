@@ -93,6 +93,14 @@ test('Minimal Host browser mutations use reusable idempotency operations', async
   assert.match(source, /documentPreview/);
   assert.match(source, /onCloseDocument: closeDocumentPreview/);
   assert.match(source, /URL\.revokeObjectURL/);
+  assert.match(source, /const SESSION_LIST_PAGE_SIZE = 50/);
+  assert.match(source, /const INITIAL_CONVERSATION_TURNS = 5/);
+  assert.match(source, /const HISTORY_CONVERSATION_TURNS = 10/);
+  assert.match(source, /paginationMode: 'incremental'/);
+  assert.match(source, /onLoadEarlier: loadEarlierTurns/);
+  assert.match(source, /onLoadTechnicalDetails: loadTechnicalDetails/);
+  assert.match(source, /requestAnimationFrame\(flushEvents\)/);
+  assert.doesNotMatch(source, /for \(let page = 0; cursor/);
 });
 
 test('Session browser keeps header actions on one row at constrained widths', async () => {
@@ -139,6 +147,28 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
     href: '',
     previewUrl: '',
   });
+  const pagedView = normalizeSessionViewModel({
+    turnCount: 12,
+    turnsCursor: 'opaque-cursor',
+    turnMetadata: [{
+      turnKey: 'opaque-turn', ordinal: 8, startedAt: '2026-09-11T01:02:00.000Z', technicalItemCount: 3,
+    }],
+    messages: [{
+      id: 'answer-with-lazy-media',
+      media: [{ type: 'resourceImage', resourceId: 'resource-1', name: 'chart.png', mimeType: 'image/png' }],
+    }],
+  });
+  assert.equal(pagedView.turnCount, 12);
+  assert.equal(pagedView.turnsCursor, 'opaque-cursor');
+  assert.deepEqual(pagedView.turnMetadata[0], {
+    turnKey: 'opaque-turn',
+    turnId: null,
+    ordinal: 8,
+    startedAt: Date.parse('2026-09-11T01:02:00.000Z'),
+    technicalItemCount: 3,
+  });
+  assert.equal(pagedView.messages[0].media[0].resourceId, 'resource-1');
+  assert.equal(pagedView.messages[0].media[0].src, '');
   assert.match(source, /onUploadAttachments\(\[placeholder\.file\], \{/);
   assert.match(source, /onDragEnter=\{handleWorkspaceAttachmentDrag\}/);
   assert.match(source, /onDrop=\{handleWorkspaceAttachmentDrop\}/);
@@ -148,6 +178,7 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
   assert.match(source, /className="cwu-technical-artifacts"/);
   assert.match(source, /onOpenArtifact/);
   assert.match(source, /onRevealArtifact/);
+  assert.match(source, /第 \$\{Number\(turnOrdinal\)\} 轮/);
   assert.match(styles, /\.cwu-attachment-progress/);
   assert.match(styles, /\.cwu-technical-artifacts/);
 });
@@ -321,8 +352,9 @@ test('Session UI embeds visualizations in a sandbox and renders image media', as
   assert.match(source, /rehypeKatex/);
   assert.match(source, /singleDollarTextMath: false/);
   assert.match(source, /const inlineMedia = \[\.\.\.\(publishesMedia \? message\.media \|\| \[\] : \[\]\)\]/);
-  assert.match(source, /attachment\.kind === 'image' && attachment\.previewUrl/);
-  assert.match(source, /<MediaGallery items=\{inlineMedia\} onOpenAttachment=\{onOpenAttachment\}/);
+  assert.match(source, /attachment\.kind === 'image' && \(attachment\.previewUrl \|\| onResolveMedia\)/);
+  assert.match(source, /onResolveMedia=\{onResolveMedia\}/);
+  assert.match(source, /function LazyMediaItem/);
   assert.match(source, /!publishesMedia \? \{ img: \(\) => null \}/);
   assert.match(styles, /\.cwu-inline-visualization iframe/);
   assert.match(styles, /katex\/dist\/katex\.min\.css/);
@@ -534,7 +566,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(styles, /\.cwu-browser-load-more/);
   assert.match(styles, /\.cwu-session-list-standalone > \.cwu-browser-list \{ position: static;/);
   assert.match(source, /cwu-history-separator/);
-  assert.match(source, /previousTop \+ \(current\.scrollHeight - previousHeight\)/);
+  assert.match(source, /currentAnchor\.getBoundingClientRect\(\)\.top - expectedAnchorTop/);
   assert.match(source, /cwu-queued-turns/);
   assert.match(source, /className="cwu-composer-actions"[\s\S]*?className="cwu-button cwu-stop"[\s\S]*?composer\.showSecondary/);
   const headerActionsStart = source.indexOf('<div className="cwu-session-actions">');

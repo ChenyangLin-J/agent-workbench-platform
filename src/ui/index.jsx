@@ -963,16 +963,18 @@ export function SessionWorkspace({
     ? `${latestMessage.id}:${latestMessage.content.length}:${latestMessage.content.slice(-32)}`
     : '';
   const technicalByTurn = new Map();
+  const technicalMetadataByTurn = new Map(view.turnMetadata.map((turn) => [turn.turnKey, turn]));
   const lastMessageByTurn = new Map();
   const technicalDetailsAvailable = new Set(view.technicalDetailsAvailable);
   for (const item of view.technicalItems) {
-    const key = item.turnId || 'unassigned';
+    const key = item.turnKey || item.turnId || 'unassigned';
     const values = technicalByTurn.get(key) || [];
     values.push(item);
     technicalByTurn.set(key, values);
   }
   for (const message of view.messages) {
-    if (message.turnId) lastMessageByTurn.set(message.turnId, message.id);
+    const key = message.turnKey || message.turnId;
+    if (key) lastMessageByTurn.set(key, message.id);
   }
 
   useEffect(() => {
@@ -1413,12 +1415,27 @@ export function SessionWorkspace({
     const target = transcriptRef.current;
     if (!target || !actions.onLoadEarlier || view.historyLoading) return;
     followLatestRef.current = false;
+    const transcriptTop = target.getBoundingClientRect().top;
+    const anchor = [...target.querySelectorAll('[data-message-id]')]
+      .find((element) => element.getBoundingClientRect().bottom > transcriptTop + 8) || null;
+    const anchorId = anchor?.getAttribute('data-message-id') || null;
+    const anchorTop = anchor?.getBoundingClientRect().top ?? null;
     const previousHeight = target.scrollHeight;
     const previousTop = target.scrollTop;
     await actions.onLoadEarlier();
     requestAnimationFrame(() => requestAnimationFrame(() => {
       const current = transcriptRef.current;
-      if (current) current.scrollTop = previousTop + (current.scrollHeight - previousHeight);
+      if (!current) return;
+      const latestTop = transcriptScrollTopRef.current;
+      const expectedAnchorTop = anchorTop == null ? null : anchorTop - (latestTop - previousTop);
+      const currentAnchor = anchorId
+        ? [...current.querySelectorAll('[data-message-id]')]
+            .find((element) => element.getAttribute('data-message-id') === anchorId)
+        : null;
+      current.scrollTop += currentAnchor && expectedAnchorTop != null
+        ? currentAnchor.getBoundingClientRect().top - expectedAnchorTop
+        : current.scrollHeight - previousHeight;
+      transcriptScrollTopRef.current = current.scrollTop;
     }));
   }
 
@@ -1514,6 +1531,8 @@ export function SessionWorkspace({
             {messageEntries.length ? messageEntries.map((entry) => {
               const messages = entry.kind === 'commentary-group' ? entry.messages : [entry.message];
               const trailingMessage = messages.at(-1);
+              const trailingTurnKey = trailingMessage.turnKey || trailingMessage.turnId;
+              const trailingTurnMetadata = technicalMetadataByTurn.get(trailingTurnKey);
               const renderedMessages = messages.map((message) => (
                 <React.Fragment key={message.id}>
                   <Message
@@ -1522,6 +1541,7 @@ export function SessionWorkspace({
                     onForkMessage={enabledFeatures.messageFork ? actions.onForkMessage : null}
                     onOpenAttachment={actions.onOpenAttachment}
                     onOpenLink={actions.onOpenLink}
+                    onResolveMedia={actions.onResolveMedia}
                     onRevealLink={actions.onRevealLink}
                     revealLabel={labels.revealFile}
                     renderContent={extensions.renderMessageContent}
@@ -1541,18 +1561,23 @@ export function SessionWorkspace({
                     >{renderedMessages}</CommentaryGroup>
                   ) : renderedMessages}
                   {enabledFeatures.technicalDetails
-                    && trailingMessage.turnId
-                    && lastMessageByTurn.get(trailingMessage.turnId) === trailingMessage.id
-                    && (technicalByTurn.get(trailingMessage.turnId)?.length || technicalDetailsAvailable.has(trailingMessage.turnId)) ? (
+                    && trailingTurnKey
+                    && lastMessageByTurn.get(trailingTurnKey) === trailingMessage.id
+                    && (technicalByTurn.get(trailingTurnKey)?.length || technicalDetailsAvailable.has(trailingTurnKey)) ? (
                       <TechnicalDetails
-                        available={technicalDetailsAvailable.has(trailingMessage.turnId)}
-                        items={technicalByTurn.get(trailingMessage.turnId) || []}
+                        available={technicalDetailsAvailable.has(trailingTurnKey)}
+                        itemCount={trailingTurnMetadata?.technicalItemCount}
+                        items={technicalByTurn.get(trailingTurnKey) || []}
                         loading={view.technicalDetailsLoading}
                         onOpenArtifact={actions.onOpenArtifact}
+                        onResolveMedia={actions.onResolveMedia}
                         onLoad={actions.onLoadTechnicalDetails
-                          ? () => actions.onLoadTechnicalDetails(trailingMessage.turnId)
+                          ? () => actions.onLoadTechnicalDetails(trailingTurnKey)
                           : null}
                         onRevealArtifact={actions.onRevealArtifact}
+                        sessionId={view.sessionId}
+                        startedAt={trailingTurnMetadata?.startedAt || trailingMessage.createdAt}
+                        turnOrdinal={trailingTurnMetadata?.ordinal}
                       />
                     ) : null}
                 </React.Fragment>
@@ -2418,6 +2443,7 @@ function Message({
   onForkMessage,
   onOpenAttachment,
   onOpenLink,
+  onResolveMedia,
   onRevealLink,
   revealLabel,
   renderContent,
@@ -2450,12 +2476,13 @@ function Message({
   const markdownContent = isUser ? renderedContent : normalizeMarkdownMath(renderedContent);
   const attachmentMedia = isUser
     ? (message.attachments || []).filter((attachment) => (
-        attachment.kind === 'image' && attachment.previewUrl
+        attachment.kind === 'image' && (attachment.previewUrl || onResolveMedia)
       )).map((attachment) => ({
         id: `attachment-media-${attachment.id}`,
         attachmentId: attachment.id,
         kind: 'image',
         src: attachment.previewUrl,
+        resourceId: attachment.resource?.id || attachment.id,
         alt: attachment.name,
         name: attachment.name,
         mimeType: attachment.mimeType,
@@ -2469,7 +2496,7 @@ function Message({
   }
   const visibleAttachments = isUser
     ? (message.attachments || []).filter((attachment) => (
-        !(attachment.kind === 'image' && attachment.previewUrl)
+        !(attachment.kind === 'image' && (attachment.previewUrl || onResolveMedia))
         && (attachment.kind !== 'image' || !message.media?.length)
       ))
     : [];
@@ -2554,7 +2581,14 @@ function Message({
           ) : null}
         </div>
       ) : null}
-      {inlineMedia.length ? <MediaGallery items={inlineMedia} onOpenAttachment={onOpenAttachment} /> : null}
+      {inlineMedia.length ? (
+        <MediaGallery
+          items={inlineMedia}
+          onOpenAttachment={onOpenAttachment}
+          onResolveMedia={onResolveMedia}
+          sessionId={sessionId}
+        />
+      ) : null}
       {visualizations.map((item) => (
         <div className={`cwu-inline-visualization${item.mode === 'wide' ? ' is-wide' : ''}`} key={item.path || item.file}>
           <iframe
@@ -2633,39 +2667,123 @@ function RemarkDirectives({ directives, onOpenLink }) {
   </div>;
 }
 
-function MediaGallery({ items, onOpenAttachment = null }) {
+function MediaGallery({ items, onOpenAttachment = null, onResolveMedia = null, sessionId = null }) {
   return (
     <div className="cwu-message-media" aria-label="消息图片">
-      {items.map((item) => onOpenAttachment ? (
-        <button
-          aria-label={`查看图片：${item.name}`}
+      {items.map((item) => (
+        <LazyMediaItem
+          item={item}
           key={item.id}
-          onClick={() => onOpenAttachment({
-            id: item.attachmentId || item.id,
-            name: item.name,
-            kind: 'image',
-            mimeType: item.mimeType,
-            size: item.size,
-            previewUrl: item.src,
-          })}
-          type="button"
-        ><img alt={item.alt} loading="lazy" src={item.src} /></button>
-      ) : (
-        <a href={item.src} key={item.id} rel="noreferrer" target="_blank">
-          <img alt={item.alt} loading="lazy" src={item.src} />
-        </a>
+          onOpenAttachment={onOpenAttachment}
+          onResolveMedia={onResolveMedia}
+          sessionId={sessionId}
+        />
       ))}
     </div>
   );
 }
 
+function LazyMediaItem({ item, onOpenAttachment, onResolveMedia, sessionId }) {
+  const rootRef = useRef(null);
+  const requestRef = useRef(null);
+  const [src, setSrc] = useState(item.src || '');
+  const [state, setState] = useState(item.src ? 'ready' : 'idle');
+
+  async function resolve({ open = false } = {}) {
+    if (src) {
+      if (open) openResolvedMedia(src);
+      return src;
+    }
+    if (!onResolveMedia) return '';
+    if (requestRef.current?.promise) {
+      const pendingSrc = await requestRef.current.promise.catch(() => '');
+      if (open && pendingSrc) openResolvedMedia(pendingSrc);
+      return pendingSrc;
+    }
+    const controller = new AbortController();
+    setState('loading');
+    const pending = Promise.resolve(onResolveMedia(item, { sessionId, signal: controller.signal }));
+    const request = { controller, promise: pending };
+    requestRef.current = request;
+    try {
+      const resolved = await pending;
+      if (controller.signal.aborted || !resolved) return '';
+      setSrc(String(resolved));
+      setState('ready');
+      if (open) openResolvedMedia(String(resolved));
+      return String(resolved);
+    } catch (error) {
+      if (error?.name !== 'AbortError') setState('error');
+      return '';
+    } finally {
+      if (requestRef.current === request) requestRef.current = null;
+    }
+  }
+
+  function openResolvedMedia(resolvedSrc) {
+    if (onOpenAttachment) {
+      onOpenAttachment({
+        id: item.attachmentId || item.resourceId || item.id,
+        name: item.name,
+        kind: 'image',
+        mimeType: item.mimeType,
+        size: item.size,
+        previewUrl: resolvedSrc,
+      });
+    } else {
+      globalThis.open?.(resolvedSrc, '_blank', 'noopener,noreferrer');
+    }
+  }
+
+  useEffect(() => {
+    requestRef.current?.controller?.abort();
+    requestRef.current = null;
+    setSrc(item.src || '');
+    setState(item.src ? 'ready' : 'idle');
+  }, [item.src, item.resourceId, item.attachmentId]);
+
+  useEffect(() => {
+    const target = rootRef.current;
+    if (!target || src || !onResolveMedia || typeof IntersectionObserver !== 'function') return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      void resolve();
+    }, { rootMargin: '240px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [src, onResolveMedia, item.resourceId, item.attachmentId, sessionId]);
+
+  useEffect(() => () => requestRef.current?.controller?.abort(), []);
+
+  return (
+    <button
+      aria-label={`${src ? '查看图片' : state === 'error' ? '重试图片' : '加载图片'}：${item.name}`}
+      className={src ? '' : 'is-placeholder'}
+      disabled={!src && !onResolveMedia}
+      onClick={() => { if (src) openResolvedMedia(src); else void resolve({ open: true }); }}
+      ref={rootRef}
+      type="button"
+    >
+      {src
+        ? <img alt={item.alt} loading="lazy" src={src} />
+        : <span><strong>{item.name}</strong><small>{state === 'loading' ? '正在读取图片…' : state === 'error' ? '读取失败，点击重试' : '进入可视区域时读取'}</small></span>}
+    </button>
+  );
+}
+
 function TechnicalDetails({
   items,
+  itemCount = null,
   available = false,
   loading = false,
   onLoad = null,
   onOpenArtifact = null,
+  onResolveMedia = null,
   onRevealArtifact = null,
+  sessionId = null,
+  startedAt = null,
+  turnOrdinal = null,
 }) {
   const [open, setOpen] = useState(false);
   async function toggle() {
@@ -2682,7 +2800,12 @@ function TechnicalDetails({
         type="button"
       >
         <span>本轮执行详情</span>
-        <small>{items.length ? `${items.length} 项 · ` : ''}{loading && open ? '读取中…' : open ? '收起' : '展开'}</small>
+        <small>{[
+          `${Number.isFinite(Number(itemCount)) ? Number(itemCount) : items.length} 项`,
+          Number.isFinite(Number(turnOrdinal)) ? `第 ${Number(turnOrdinal)} 轮` : '',
+          technicalTurnTime(startedAt),
+          loading && open ? '读取中…' : open ? '收起' : '展开',
+        ].filter(Boolean).join(' · ')}</small>
       </button>
       {open ? (
         <div className="cwu-technical-list">
@@ -2690,7 +2813,7 @@ function TechnicalDetails({
             <details key={item.id} open={item.status === 'inProgress'}>
               <summary><span>{item.title}</span><em>{item.status}</em></summary>
               {item.detail ? <pre>{item.detail}</pre> : null}
-              {item.media?.length ? <MediaGallery items={item.media} /> : null}
+              {item.media?.length ? <MediaGallery items={item.media} onResolveMedia={onResolveMedia} sessionId={sessionId} /> : null}
               {item.artifacts?.length ? (
                 <div className="cwu-technical-artifacts" aria-label="文件产物">
                   {item.artifacts.map((artifact) => (
@@ -2723,6 +2846,19 @@ function TechnicalDetails({
       ) : null}
     </section>
   );
+}
+
+function technicalTurnTime(value) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return '';
+  const date = new Date(timestamp);
+  const now = new Date();
+  const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+  return date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate()
+    ? time
+    : `${date.getMonth() + 1}/${date.getDate()} ${time}`;
 }
 
 function temporaryAttachmentId() {

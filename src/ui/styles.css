@@ -240,6 +240,11 @@
 .cwu-message-media a, .cwu-message-media button { width: min(360px, 100%); display: grid; place-items: center; min-width: 0; overflow: hidden; border: 1px solid var(--cwu-border); border-radius: 12px; background: var(--cwu-soft); padding: 0; cursor: zoom-in; }
 .cwu-message-media button:hover, .cwu-message-media button:focus-visible { border-color: var(--cwu-accent); outline: none; }
 .cwu-message-media img { display: block; width: auto; height: auto; max-width: 100%; max-height: 240px; object-fit: contain; }
+.cwu-message-media button.is-placeholder { min-height: 112px; cursor: pointer; }
+.cwu-message-media button.is-placeholder:disabled { cursor: not-allowed; opacity: .72; }
+.cwu-message-media button.is-placeholder > span { display: grid; gap: 5px; max-width: 100%; padding: 16px; text-align: center; }
+.cwu-message-media button.is-placeholder strong { overflow: hidden; color: var(--cwu-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.cwu-message-media button.is-placeholder small { color: var(--cwu-muted); font-size: 12px; }
 .cwu-message.is-user .cwu-message-media { max-height: none; }
 .cwu-message.is-user .cwu-message-media a, .cwu-message.is-user .cwu-message-media button { width: min(300px, 100%); background: var(--cwu-surface); }
 .cwu-message.is-user .cwu-message-media img { max-height: 220px; }

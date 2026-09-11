@@ -502,6 +502,112 @@ test('Session list pages use only the summary index and authorize before opening
   );
 });
 
+test('Session conversation projection pages 205 Turns without duplicates and loads technical details per Turn', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-conversation-page-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const timestamp = (index) => new Date(1_700_000_000_000 + index * 1_000).toISOString();
+  const messages = [];
+  const technicalItems = [];
+  for (let index = 1; index <= 205; index += 1) {
+    messages.push({
+      id: `user-${index}`,
+      role: 'user',
+      phase: 'answer',
+      content: `question-${index}`,
+      turnId: `runtime-${index}`,
+      turnStatus: 'completed',
+      createdAt: timestamp(index * 2),
+    }, {
+      id: `answer-${index}`,
+      role: 'assistant',
+      phase: 'answer',
+      content: `answer-${index}`,
+      turnId: `runtime-${index}`,
+      turnStatus: 'completed',
+      createdAt: timestamp(index * 2 + 1),
+    });
+    technicalItems.push({
+      id: `technical-${index}`,
+      turnId: `runtime-${index}`,
+      kind: 'commandExecution',
+      title: `Command ${index}`,
+      status: 'completed',
+      detail: `detail-${index}`,
+      startedAt: timestamp(index * 2),
+      updatedAt: timestamp(index * 2 + 1),
+    });
+  }
+  const source = {
+    version: 1,
+    sessions: {
+      'session-long': {
+        id: 'session-long',
+        ownerId: 'owner-a',
+        title: 'Long conversation',
+        status: 'idle',
+        createdAt: timestamp(0),
+        updatedAt: timestamp(500),
+        completedAt: null,
+        messages,
+        technicalItems,
+        plan: [],
+      },
+      'session-other': {
+        id: 'session-other',
+        ownerId: 'owner-a',
+        title: 'Other conversation',
+        status: 'idle',
+        createdAt: timestamp(0),
+        updatedAt: timestamp(1),
+        completedAt: null,
+        messages: [],
+        technicalItems: [],
+        plan: [],
+      },
+    },
+    bindings: {},
+    queuedTurns: {},
+  };
+  await writeFile(join(stateRoot, 'sessions.json'), `${JSON.stringify(source)}\n`, { mode: 0o600 });
+  const store = new EnvironmentSessionStore({ stateRoot });
+
+  let page = await store.getConversationPage('session-long', { ownerId: 'owner-a', limit: 5 });
+  assert.deepEqual(page.turnMetadata.map((turn) => turn.ordinal), [201, 202, 203, 204, 205]);
+  assert.equal(page.messages.length, 10);
+  assert.equal(page.technicalItems.length, 0);
+  assert.equal(page.turnCount, 205);
+  const cursorForLong = page.turnsCursor;
+  const ordinals = page.turnMetadata.map((turn) => turn.ordinal);
+  while (page.turnsCursor) {
+    page = await store.getConversationPage('session-long', {
+      ownerId: 'owner-a',
+      cursor: page.turnsCursor,
+      limit: 10,
+    });
+    ordinals.push(...page.turnMetadata.map((turn) => turn.ordinal));
+  }
+  assert.equal(ordinals.length, 205);
+  assert.equal(new Set(ordinals).size, 205);
+  assert.deepEqual([...ordinals].sort((left, right) => left - right), Array.from({ length: 205 }, (_, index) => index + 1));
+  assert.deepEqual(
+    await store.getTurnTechnicalItems('session-long', 'runtime-1', { ownerId: 'owner-a' }),
+    [{ ...technicalItems[0], turnKey: 'runtime-1' }],
+  );
+  await assert.rejects(
+    store.getConversationPage('session-long', { ownerId: 'owner-b' }),
+    (error) => error.code === 'SESSION_NOT_FOUND' && error.status === 404,
+  );
+  await assert.rejects(
+    store.getConversationPage('session-other', { ownerId: 'owner-a', cursor: cursorForLong }),
+    (error) => error.code === 'SESSION_TURN_CURSOR_INVALID' && error.status === 400,
+  );
+
+  store.db.prepare('DELETE FROM session_turns WHERE session_id = ?').run('session-long');
+  store.db.prepare('UPDATE sessions SET projection_sequence = -1 WHERE id = ?').run('session-long');
+  const rebuilt = await store.getConversationPage('session-long', { ownerId: 'owner-a', limit: 5 });
+  assert.deepEqual(rebuilt.turnMetadata.map((turn) => turn.ordinal), [201, 202, 203, 204, 205]);
+});
+
 test('Session event batches update only the target snapshot and replay a committed post-snapshot event', async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-event-log-'));
   t.after(() => rm(stateRoot, { recursive: true, force: true }));

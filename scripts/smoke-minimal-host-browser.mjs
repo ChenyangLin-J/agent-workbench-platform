@@ -230,13 +230,14 @@ try {
     throw new Error('Browser attachment was not passed to Runtime input.');
   }
   await page.getByText('browser smoke', { exact: true }).first().waitFor();
-  const uploadedImage = page.getByRole('button', { name: '查看图片：browser-preview.png' });
+  const uploadedImage = page.getByRole('button', { name: /^(?:加载|查看|重试)图片：browser-preview\.png$/ });
   await uploadedImage.waitFor();
-  if (!await uploadedImage.locator('img').count()) {
-    throw new Error('Uploaded image was not rendered as an inline user-message thumbnail.');
-  }
   await uploadedImage.click();
-  await page.getByRole('dialog', { name: '文件预览：browser-preview.png' }).waitFor();
+  const uploadedImagePreview = page.getByRole('dialog', { name: '文件预览：browser-preview.png' });
+  await uploadedImagePreview.waitFor();
+  if (!await uploadedImagePreview.locator('img').count()) {
+    throw new Error('Uploaded image was not rendered through the lazy in-site preview.');
+  }
   await page.getByRole('button', { name: '关闭文件预览' }).click();
   await page.getByRole('dialog', { name: '文件预览：browser-preview.png' }).waitFor({ state: 'detached' });
 
@@ -439,16 +440,35 @@ try {
   });
   runtime.complete();
   await page.getByText('Browser smoke OK', { exact: true }).waitFor();
-  const generatedImage = page.getByRole('button', { name: '查看图片：generated-browser-smoke-generated.png' });
-  await generatedImage.waitFor();
+  const generatedImage = page.getByRole('button', { name: /^(?:加载|查看|重试)图片：generated-browser-smoke-generated\.png$/ });
+  try {
+    await generatedImage.waitFor({ timeout: 5_000 });
+  } catch {
+    const messageMarkup = await page.locator('.cwu-message').evaluateAll((messages) => (
+      messages.map((message) => message.innerHTML).join('\n')
+    ));
+    const { sessionSnapshot, conversationReads } = await page.evaluate(async () => {
+      const headers = { 'x-agent-workbench-token': globalThis.__AGENT_WORKBENCH_BOOTSTRAP__?.accessToken || '' };
+      const listed = await fetch('api/sessions?limit=1', { headers }).then((response) => response.json());
+      const selected = listed.sessions?.[0]?.id;
+      const response = await fetch(`api/sessions/${encodeURIComponent(selected || '')}?view=conversation&turnLimit=5`, { headers });
+      return {
+        sessionSnapshot: await response.json(),
+        conversationReads: performance.getEntriesByType('resource')
+          .map((entry) => entry.name)
+          .filter((name) => name.includes('view=conversation')),
+      };
+    });
+    throw new Error(`Generated image was not available after completion. Reads: ${JSON.stringify(conversationReads)} Snapshot: ${JSON.stringify(sessionSnapshot)} Transcript: ${messageMarkup}`);
+  }
   await generatedImage.click();
   await page.getByRole('dialog', { name: '文件预览：generated-browser-smoke-generated.png' }).waitFor();
   await page.getByRole('button', { name: '关闭文件预览' }).click();
   await page.reload();
   await page.getByText('1 个对话', { exact: true }).waitFor();
   await page.getByText('Browser smoke OK', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '查看图片：browser-preview.png' }).waitFor();
-  await page.getByRole('button', { name: '查看图片：generated-browser-smoke-generated.png' }).click();
+  await page.getByRole('button', { name: /^(?:加载|查看|重试)图片：browser-preview\.png$/ }).waitFor();
+  await page.getByRole('button', { name: /^(?:加载|查看|重试)图片：generated-browser-smoke-generated\.png$/ }).click();
   await page.getByRole('dialog', { name: '文件预览：generated-browser-smoke-generated.png' }).waitFor();
   await page.getByRole('button', { name: '关闭文件预览' }).click();
   const completedTranscript = page.locator('.cwu-transcript');

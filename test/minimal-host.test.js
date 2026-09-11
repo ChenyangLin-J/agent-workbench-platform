@@ -298,6 +298,7 @@ test('Minimal Host defers an empty Runtime thread so the first Turn survives a H
   assert.equal(turnResponse.status, 202);
   assert.equal(providerB.createdSessions.length, 1);
   assert.equal(providerB.createdSessions[0].startedTurns.length, 1);
+  await hostB.stop();
 });
 
 test('Minimal Host creates an idempotent Session with an unsent draft', async (t) => {
@@ -997,6 +998,7 @@ test('Minimal Host leaves failed Turn attachments staged and rejects cross-Sessi
   assert.equal(failedTurn.status, 409);
   assert.equal((await store.get(sessionId)).messages.length, 0);
   assert.equal((await resourceStore.get(attachment.id, { sessionId })).lifecycle.state, 'staged');
+  await host.stop();
 });
 
 test('Minimal Host registers authorized directories as persistent external Resources', async (t) => {
@@ -1154,6 +1156,7 @@ test('Minimal Host persists a queued Turn and starts it after the active Turn co
     'first',
     'second',
   ]);
+  await host.stop();
 });
 
 test('Minimal Host Edit archives the source after creating an independent replacement Session', async (t) => {
@@ -1707,6 +1710,18 @@ test('Minimal Host projects scoped shared Sessions and continues them into a fre
   assert.equal(detail.runtimeBinding, null);
   assert.deepEqual(detail.technicalItems, []);
   assert.equal(provider.createdSessions.length, 1);
+  const pagedDetail = await fetch(
+    `${listening.url}/api/sessions/${source.sessionId}?view=conversation&turnLimit=5`,
+    { headers: sharedHeaders },
+  ).then((response) => response.json()).then((body) => body.session);
+  assert.deepEqual(pagedDetail.messages.map((message) => message.content), ['请记住 42']);
+  assert.equal('turnId' in pagedDetail.messages[0], false);
+  assert.notEqual(pagedDetail.messages[0].turnKey, sourceTurn.result.runtimeTurnId);
+  assert.equal(provider.createdSessions.length, 1);
+  assert.equal((await fetch(
+    `${listening.url}/api/sessions/${source.sessionId}/turns/${sourceTurn.result.runtimeTurnId}/technical-items`,
+    { headers: sharedHeaders },
+  )).status, 403);
   assert.equal(await fetch(
     `${listening.url}/api/sessions/${source.sessionId}/attachments/${sourceAttachment.id}/content`,
     { headers: sharedHeaders },

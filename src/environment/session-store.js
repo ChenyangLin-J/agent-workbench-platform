@@ -19,6 +19,8 @@ const SESSION_EVENT_FLUSH_BYTES = 64 * 1024;
 const SESSION_EVENT_SEGMENT_BYTES = 1024 * 1024;
 const SESSION_LIST_PAGE_SIZE = 50;
 const SESSION_LIST_MAX_PAGE_SIZE = 200;
+const CONVERSATION_INITIAL_MAX_TURNS = 20;
+const CONVERSATION_HISTORY_MAX_TURNS = 50;
 let DatabaseSync = null;
 let databaseSyncPromise = null;
 
@@ -272,6 +274,7 @@ export class EnvironmentSessionStore {
         const binding = await this.runtimeStore.load(sessionId);
         if (requireUnbound && binding) throw storeError('SESSION_BOUND', `Session is already bound: ${sessionId}`, 409);
         const removed = sessionView(session, binding);
+        this.db.prepare('DELETE FROM session_turns WHERE session_id = ?').run(sessionId);
         this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
         await this.runtimeStore.remove(sessionId);
         await rm(directory, { recursive: true, force: true });
@@ -301,6 +304,83 @@ export class EnvironmentSessionStore {
     await this.#flushPending(sessionId);
     const { session } = await this.#readSessionRecord(sessionId);
     return sessionView(session, null);
+  }
+
+  async getConversationPage(sessionId, {
+    ownerId = null,
+    includeOwnerId = false,
+    cursor = null,
+    limit = 5,
+  } = {}) {
+    await this.ready;
+    await this.#flushPending(sessionId, { strong: false });
+    const history = cursor != null && cursor !== '';
+    const maximum = history ? CONVERSATION_HISTORY_MAX_TURNS : CONVERSATION_INITIAL_MAX_TURNS;
+    const pageSize = Math.max(1, Math.min(maximum, Number(limit) || (history ? 10 : 5)));
+    const beforeOrdinal = decodeConversationCursor(cursor, sessionId);
+    const row = await this.#ensureSessionProjection(sessionId, { ownerId });
+    const selected = beforeOrdinal == null
+      ? this.db.prepare(`
+          SELECT * FROM session_turns
+          WHERE session_id = ?
+          ORDER BY ordinal DESC
+          LIMIT ?
+        `).all(sessionId, pageSize).reverse()
+      : this.db.prepare(`
+          SELECT * FROM session_turns
+          WHERE session_id = ? AND ordinal < ?
+          ORDER BY ordinal DESC
+          LIMIT ?
+        `).all(sessionId, beforeOrdinal, pageSize).reverse();
+    const metadata = sessionUiMetadataFromRow(row, sessionId);
+    const firstOrdinal = selected[0]?.ordinal ?? null;
+    const hasEarlierTurns = firstOrdinal != null && firstOrdinal > 1;
+    const turnsCursor = hasEarlierTurns
+      ? encodeConversationCursor({ sessionId, beforeOrdinal: firstOrdinal })
+      : null;
+    const turnMetadata = selected.map((turn) => ({
+      turnKey: turn.turn_key,
+      turnId: turn.runtime_turn_id ?? null,
+      ordinal: turn.ordinal,
+      startedAt: turn.started_at ?? null,
+      technicalItemCount: turn.technical_count,
+    }));
+    const messages = selected.flatMap((turn) => projectionJsonArray(
+      turn.messages_json,
+      'SESSION_CONVERSATION_PROJECTION_INVALID',
+      sessionId,
+    ).map((message) => ({ ...message, turnKey: turn.turn_key })));
+    return {
+      ...sessionViewMetadata(indexRowSession(row), metadata, { includeOwnerId }),
+      messages,
+      technicalItems: [],
+      technicalDetailsAvailable: turnMetadata
+        .filter((turn) => turn.technicalItemCount > 0)
+        .map((turn) => turn.turnKey),
+      turnMetadata,
+      hasEarlierTurns,
+      loadedTurnCount: selected.length,
+      turnCount: Number(row.turn_count) || 0,
+      turnsCursor,
+    };
+  }
+
+  async getTurnTechnicalItems(sessionId, turnKey, { ownerId = null } = {}) {
+    await this.ready;
+    await this.#flushPending(sessionId, { strong: false });
+    await this.#ensureSessionProjection(sessionId, { ownerId });
+    const key = nonEmptyString(turnKey, 'Turn key');
+    const row = this.db.prepare(`
+      SELECT technical_json FROM session_turns
+      WHERE session_id = ? AND turn_key = ?
+      LIMIT 1
+    `).get(sessionId, key);
+    if (!row) throw storeError('SESSION_TURN_NOT_FOUND', `Turn not found: ${key}`, 404);
+    return projectionJsonArray(
+      row.technical_json,
+      'SESSION_CONVERSATION_PROJECTION_INVALID',
+      sessionId,
+    ).map((item) => ({ ...item, turnKey: key }));
   }
 
   async load(sessionId) {
@@ -479,6 +559,10 @@ export class EnvironmentSessionStore {
         throw storeError('SESSION_STORE_INVALID', `Invalid Session store manifest: ${this.manifestPath}`, 500);
       }
       this.db = openSessionIndex(this.indexPath);
+      this.db.prepare(`
+        UPDATE sessions SET projection_sequence = -1
+        WHERE status IN ('running', 'waiting')
+      `).run();
       this.sessionsCanonicalRoot = await realpath(this.sessionsRoot);
     } finally {
       await release();
@@ -507,6 +591,7 @@ export class EnvironmentSessionStore {
         await mkdir(dirname(snapshotPath), { recursive: true, mode: 0o700 });
         await writeJsonAtomic(snapshotPath, { version: SESSION_STORE_VERSION, sequence: 0, session });
         upsertSessionIndex(temporaryDatabase, session, relative(temporarySessions, snapshotPath));
+        writeSessionProjection(temporaryDatabase, session, 0);
       }
       temporaryDatabase.close();
       temporaryDatabase = null;
@@ -579,6 +664,7 @@ export class EnvironmentSessionStore {
     await mkdir(dirname(snapshotPath), { recursive: true, mode: 0o700 });
     await writeJsonAtomic(snapshotPath, { version: SESSION_STORE_VERSION, sequence: 0, session });
     upsertSessionIndex(this.db, session, relative(this.sessionsRoot, snapshotPath));
+    writeSessionProjection(this.db, session, 0);
   }
 
   async #writeSessionRecord(record, { events = [], strong = true } = {}) {
@@ -598,6 +684,7 @@ export class EnvironmentSessionStore {
         session: record.session,
       });
       upsertSessionIndex(this.db, record.session, relative(this.sessionsRoot, record.snapshotPath), sequence);
+      writeSessionProjection(this.db, record.session, sequence);
       await rotateSessionEventSegment(record.directory, sequence);
     }
     record.sequence = sequence;
@@ -646,10 +733,17 @@ export class EnvironmentSessionStore {
       await this.#enqueueSessionOperation(sessionId, async () => {
         const release = await this.#acquireSessionLock(sessionId);
         try {
+          if (!strong && batch.events.every((event) => event.type === 'item_delta')) {
+            const applied = await this.#writeWeakDeltaBatch(sessionId, batch.events);
+            if (applied) return;
+          }
           const record = await this.#readSessionRecord(sessionId);
           const binding = await this.runtimeStore.load(sessionId);
           for (const event of batch.events) applySessionEvent(record.session, event, binding);
           await this.#writeSessionRecord(record, { events: batch.events, strong });
+          if (!strong) {
+            this.db.prepare('UPDATE sessions SET projection_sequence = -1 WHERE id = ?').run(sessionId);
+          }
         } catch (error) {
           if (error?.code !== 'SESSION_NOT_FOUND') throw error;
         } finally {
@@ -662,9 +756,88 @@ export class EnvironmentSessionStore {
     }
   }
 
-  async #flushPending(sessionId) {
+  async #writeWeakDeltaBatch(sessionId, events) {
+    const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
+    if (!row || row.projection_sequence !== row.last_sequence) return false;
+    const runtimeTurnId = String(events[0]?.runtimeTurnId || '');
+    if (!runtimeTurnId || events.some((event) => String(event.runtimeTurnId || '') !== runtimeTurnId)) return false;
+    const turn = this.db.prepare(`
+      SELECT * FROM session_turns
+      WHERE session_id = ? AND runtime_turn_id = ?
+      LIMIT 1
+    `).get(sessionId, runtimeTurnId);
+    if (!turn) return false;
+    const messages = projectionJsonArray(
+      turn.messages_json,
+      'SESSION_CONVERSATION_PROJECTION_INVALID',
+      sessionId,
+    );
+    const projectedSession = { messages, technicalItems: [], plan: [] };
+    const storedEvents = [];
+    let sequence = row.last_sequence;
+    for (const event of events) {
+      sequence += 1;
+      const storedEvent = persistentSessionEvent(event);
+      if (storedEvent) storedEvents.push({ sequence, event: storedEvent });
+      applyAgentDelta(projectedSession, event);
+    }
+    if (!storedEvents.length) return true;
+    const directory = dirname(join(this.sessionsRoot, row.snapshot_path));
+    await appendSessionEvents(directory, storedEvents, { sync: false });
+    const updatedAt = new Date(events.at(-1)?.createdAt || Date.now()).toISOString();
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      this.db.prepare(`
+        UPDATE session_turns SET messages_json = ?, started_at = COALESCE(started_at, ?)
+        WHERE session_id = ? AND ordinal = ?
+      `).run(JSON.stringify(projectedSession.messages), updatedAt, sessionId, turn.ordinal);
+      this.db.prepare(`
+        UPDATE sessions
+        SET updated_at = ?, last_sequence = ?, projection_sequence = ?
+        WHERE id = ?
+      `).run(updatedAt, sequence, sequence, sessionId);
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      this.db.prepare('UPDATE sessions SET projection_sequence = -1 WHERE id = ?').run(sessionId);
+      throw error;
+    }
+  }
+
+  async #ensureSessionProjection(sessionId, { ownerId = null } = {}) {
+    const readRow = () => ownerId == null
+      ? this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId)
+      : this.db.prepare('SELECT * FROM sessions WHERE id = ? AND owner_id = ?').get(sessionId, ownerId);
+    let row = readRow();
+    if (!row) throw storeError('SESSION_NOT_FOUND', `Session not found: ${sessionId}`, 404);
+    if (projectionRowCurrent(this.db, row)) return row;
+    await this.#enqueueSessionOperation(sessionId, async () => {
+      const release = await this.#acquireSessionLock(sessionId);
+      try {
+        row = readRow();
+        if (!row) throw storeError('SESSION_NOT_FOUND', `Session not found: ${sessionId}`, 404);
+        if (projectionRowCurrent(this.db, row)) return;
+        const record = await this.#readSessionRecord(sessionId, { ownerId });
+        writeSessionProjection(this.db, record.session, record.sequence);
+      } finally {
+        await release();
+      }
+    });
+    row = readRow();
+    if (!row || !projectionRowCurrent(this.db, row)) {
+      throw storeError(
+        'SESSION_CONVERSATION_PROJECTION_INVALID',
+        `Session conversation projection is unavailable: ${sessionId}`,
+        500,
+      );
+    }
+    return row;
+  }
+
+  async #flushPending(sessionId, { strong = true } = {}) {
     const batch = this.pendingEventBatches.get(sessionId);
-    if (batch) await this.#flushEventBatch(sessionId, batch, { strong: true });
+    if (batch) await this.#flushEventBatch(sessionId, batch, { strong });
   }
 
   #enqueueSessionOperation(sessionId, task) {
@@ -731,7 +904,10 @@ function createSessionIndex(path) {
       shared_share_id TEXT,
       shared_key TEXT,
       snapshot_path TEXT NOT NULL,
-      last_sequence INTEGER NOT NULL DEFAULT 0
+      last_sequence INTEGER NOT NULL DEFAULT 0,
+      ui_metadata_json TEXT NOT NULL DEFAULT '{}',
+      projection_sequence INTEGER NOT NULL DEFAULT -1,
+      turn_count INTEGER NOT NULL DEFAULT 0
     ) STRICT;
     CREATE INDEX IF NOT EXISTS sessions_owner_updated
       ON sessions(owner_id, archived_at, updated_at DESC, id DESC);
@@ -741,6 +917,20 @@ function createSessionIndex(path) {
     CREATE UNIQUE INDEX IF NOT EXISTS sessions_shared_continuation
       ON sessions(owner_id, shared_share_id, shared_key)
       WHERE shared_share_id IS NOT NULL AND shared_key IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS session_turns (
+      session_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      turn_key TEXT NOT NULL,
+      runtime_turn_id TEXT,
+      started_at TEXT,
+      messages_json TEXT NOT NULL,
+      technical_json TEXT NOT NULL,
+      technical_count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (session_id, ordinal),
+      UNIQUE (session_id, turn_key)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS session_turns_runtime
+      ON session_turns(session_id, runtime_turn_id);
   `);
   return database;
 }
@@ -748,7 +938,37 @@ function createSessionIndex(path) {
 function openSessionIndex(path) {
   const database = new DatabaseSync(path);
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
+  ensureSessionProjectionSchema(database);
   return database;
+}
+
+function ensureSessionProjectionSchema(database) {
+  const columns = new Set(database.prepare('PRAGMA table_info(sessions)').all().map((column) => column.name));
+  if (!columns.has('ui_metadata_json')) {
+    database.exec("ALTER TABLE sessions ADD COLUMN ui_metadata_json TEXT NOT NULL DEFAULT '{}'");
+  }
+  if (!columns.has('projection_sequence')) {
+    database.exec('ALTER TABLE sessions ADD COLUMN projection_sequence INTEGER NOT NULL DEFAULT -1');
+  }
+  if (!columns.has('turn_count')) {
+    database.exec('ALTER TABLE sessions ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0');
+  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS session_turns (
+      session_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      turn_key TEXT NOT NULL,
+      runtime_turn_id TEXT,
+      started_at TEXT,
+      messages_json TEXT NOT NULL,
+      technical_json TEXT NOT NULL,
+      technical_count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (session_id, ordinal),
+      UNIQUE (session_id, turn_key)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS session_turns_runtime
+      ON session_turns(session_id, runtime_turn_id);
+  `);
 }
 
 function upsertSessionIndex(database, session, snapshotPath, sequence = 0) {
@@ -804,6 +1024,163 @@ function indexRowSession(row) {
     completedAt: row.completed_at ?? null,
     ...(row.archived_at ? { archivedAt: row.archived_at } : {}),
   };
+}
+
+function sessionViewMetadata(session, metadata, { includeOwnerId = false } = {}) {
+  return {
+    ...publicSession(session, { includeOwnerId }),
+    sessionId: session.id,
+    draft: typeof metadata.draft === 'string' ? metadata.draft : '',
+    plan: Array.isArray(metadata.plan) ? structuredClone(metadata.plan) : [],
+    pendingRequests: [],
+    runtimeBinding: null,
+    executionProfile: {
+      model: '',
+      reasoningEffort: 'medium',
+      accessMode: 'restricted',
+    },
+  };
+}
+
+function sessionUiMetadataFromRow(row, sessionId) {
+  try {
+    const value = JSON.parse(row.ui_metadata_json || '{}');
+    if (!plainObject(value) || !Array.isArray(value.plan || [])) throw new Error();
+    return value;
+  } catch {
+    throw storeError(
+      'SESSION_CONVERSATION_PROJECTION_INVALID',
+      `Session conversation metadata is invalid: ${sessionId}`,
+      500,
+    );
+  }
+}
+
+function projectionJsonArray(value, code, sessionId) {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    if (!Array.isArray(parsed)) throw new Error();
+    return structuredClone(parsed);
+  } catch {
+    throw storeError(code, `Session conversation projection is invalid: ${sessionId}`, 500);
+  }
+}
+
+function projectionRowCurrent(database, row) {
+  if (!Number.isSafeInteger(row.projection_sequence) || row.projection_sequence < 0
+    || row.projection_sequence !== row.last_sequence
+    || !Number.isSafeInteger(row.turn_count) || row.turn_count < 0) return false;
+  const count = database.prepare('SELECT COUNT(*) AS count FROM session_turns WHERE session_id = ?').get(row.id)?.count;
+  return Number(count) === row.turn_count;
+}
+
+function writeSessionProjection(database, session, sequence) {
+  const turns = projectSessionTurns(session);
+  const metadata = JSON.stringify({
+    draft: typeof session.draft === 'string' ? session.draft : '',
+    plan: Array.isArray(session.plan) ? session.plan : [],
+  });
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database.prepare('DELETE FROM session_turns WHERE session_id = ?').run(session.id);
+    const insert = database.prepare(`
+      INSERT INTO session_turns (
+        session_id, ordinal, turn_key, runtime_turn_id, started_at,
+        messages_json, technical_json, technical_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const turn of turns) {
+      insert.run(
+        session.id,
+        turn.ordinal,
+        turn.turnKey,
+        turn.runtimeTurnId,
+        turn.startedAt,
+        JSON.stringify(turn.messages),
+        JSON.stringify(turn.technicalItems),
+        turn.technicalItems.length,
+      );
+    }
+    database.prepare(`
+      UPDATE sessions
+      SET ui_metadata_json = ?, projection_sequence = ?, turn_count = ?, last_sequence = ?
+      WHERE id = ?
+    `).run(metadata, sequence, turns.length, sequence, session.id);
+    database.exec('COMMIT');
+  } catch (error) {
+    try { database.exec('ROLLBACK'); } catch {}
+    throw error;
+  }
+}
+
+function projectSessionTurns(session) {
+  const turns = [];
+  const byRuntimeId = new Map();
+  let current = null;
+  const createTurn = (runtimeTurnId, seed) => {
+    const turnKey = runtimeTurnId || `legacy-${createHash('sha256')
+      .update(`${session.id}:${seed || turns.length + 1}`)
+      .digest('hex').slice(0, 24)}`;
+    const turn = {
+      ordinal: turns.length + 1,
+      turnKey,
+      runtimeTurnId: runtimeTurnId || null,
+      startedAt: null,
+      messages: [],
+      technicalItems: [],
+    };
+    turns.push(turn);
+    if (runtimeTurnId) byRuntimeId.set(runtimeTurnId, turn);
+    current = turn;
+    return turn;
+  };
+  for (const message of session.messages || []) {
+    const runtimeTurnId = typeof message?.turnId === 'string' && message.turnId ? message.turnId : null;
+    let turn = runtimeTurnId ? byRuntimeId.get(runtimeTurnId) : null;
+    if (message?.role === 'user') {
+      turn ||= createTurn(runtimeTurnId, message.id);
+    } else if (!turn) {
+      if (current && !current.runtimeTurnId && runtimeTurnId) {
+        current.runtimeTurnId = runtimeTurnId;
+        byRuntimeId.set(runtimeTurnId, current);
+        turn = current;
+      } else {
+        turn = current || createTurn(runtimeTurnId, message?.id);
+      }
+    }
+    turn.messages.push(structuredClone(message));
+    turn.startedAt ||= validTimestamp(message?.createdAt);
+  }
+  for (const item of session.technicalItems || []) {
+    const runtimeTurnId = typeof item?.turnId === 'string' && item.turnId ? item.turnId : null;
+    const turn = (runtimeTurnId ? byRuntimeId.get(runtimeTurnId) : null)
+      || current
+      || createTurn(runtimeTurnId, item?.id);
+    turn.technicalItems.push(structuredClone(item));
+    turn.startedAt ||= validTimestamp(item?.startedAt || item?.updatedAt);
+  }
+  return turns;
+}
+
+function encodeConversationCursor({ sessionId, beforeOrdinal }) {
+  return Buffer.from(JSON.stringify({
+    v: 1,
+    session: createHash('sha256').update(sessionId).digest('hex').slice(0, 24),
+    before: beforeOrdinal,
+  }), 'utf8').toString('base64url');
+}
+
+function decodeConversationCursor(value, sessionId) {
+  if (value == null || value === '') return null;
+  try {
+    const cursor = JSON.parse(Buffer.from(String(value), 'base64url').toString('utf8'));
+    const sessionDigest = createHash('sha256').update(sessionId).digest('hex').slice(0, 24);
+    if (cursor?.v !== 1 || cursor.session !== sessionDigest
+      || !Number.isSafeInteger(cursor.before) || cursor.before < 1) throw new Error();
+    return cursor.before;
+  } catch {
+    throw storeError('SESSION_TURN_CURSOR_INVALID', 'Session Turn cursor is invalid.', 400);
+  }
 }
 
 function encodeSessionListCursor({ updatedAt, id }) {

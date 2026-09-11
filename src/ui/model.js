@@ -171,6 +171,7 @@ export function normalizeSessionViewModel(value = {}) {
           id: String(message?.id || `message-${index}`),
           content: String(message?.content || ''),
           turnId: stringOrNull(message?.turnId),
+          turnKey: stringOrNull(message?.turnKey ?? message?.turnId),
           turnStatus: stringOrNull(message?.turnStatus),
           canEdit: Boolean(message?.canEdit),
           canFork: Boolean(message?.canFork),
@@ -203,6 +204,7 @@ export function normalizeSessionViewModel(value = {}) {
           status: String(item?.status || ''),
           detail: String(item?.detail || ''),
           turnId: stringOrNull(item?.turnId),
+          turnKey: stringOrNull(item?.turnKey ?? item?.turnId),
           media: normalizeMedia(item?.media, `technical-${index}`),
           artifacts: normalizeTechnicalArtifacts(item?.artifacts, `technical-${index}`),
         }))
@@ -211,6 +213,19 @@ export function normalizeSessionViewModel(value = {}) {
       ? [...new Set(value.technicalDetailsAvailable.map((turnId) => String(turnId || '')).filter(Boolean))]
       : [],
     technicalDetailsLoading: Boolean(value.technicalDetailsLoading),
+    turnMetadata: Array.isArray(value.turnMetadata)
+      ? value.turnMetadata.map((turn, index) => ({
+          turnKey: String(turn?.turnKey || turn?.turnId || `turn-${index}`),
+          turnId: stringOrNull(turn?.turnId),
+          ordinal: Number.isSafeInteger(Number(turn?.ordinal)) && Number(turn.ordinal) > 0
+            ? Number(turn.ordinal)
+            : null,
+          startedAt: normalizeTimestamp(turn?.startedAt),
+          technicalItemCount: Number.isSafeInteger(Number(turn?.technicalItemCount))
+            ? Math.max(0, Number(turn.technicalItemCount))
+            : 0,
+        }))
+      : [],
     pendingRequests: Array.isArray(value.pendingRequests)
       ? value.pendingRequests.map((request) => ({
           token: String(request?.token || ''),
@@ -279,6 +294,8 @@ export function normalizeSessionViewModel(value = {}) {
     loadedTurnCount: Number.isFinite(Number(value.loadedTurnCount))
       ? Math.max(0, Number(value.loadedTurnCount))
       : null,
+    turnCount: Number.isFinite(Number(value.turnCount)) ? Math.max(0, Number(value.turnCount)) : null,
+    turnsCursor: stringOrNull(value.turnsCursor),
     externalUrl: stringOrNull(value.externalUrl),
   };
 }
@@ -412,14 +429,19 @@ function normalizeMedia(value, fallbackPrefix) {
   return Array.isArray(value)
     ? value.map((media, index) => ({
         id: String(media?.id || `${fallbackPrefix}-media-${index}`),
-        kind: media?.kind === 'image' ? 'image' : 'file',
+        kind: media?.kind === 'image'
+          || media?.type === 'resourceImage'
+          || String(media?.mimeType || '').toLowerCase().startsWith('image/')
+          ? 'image'
+          : 'file',
         src: String(media?.src || ''),
         alt: String(media?.alt || media?.name || '图片'),
         name: String(media?.name || media?.alt || '图片'),
         attachmentId: media?.attachmentId ? String(media.attachmentId) : '',
+        resourceId: media?.resourceId ? String(media.resourceId) : '',
         mimeType: String(media?.mimeType || 'image/*').toLowerCase(),
         size: Number.isFinite(Number(media?.size)) ? Number(media.size) : 0,
-      })).filter((media) => media.kind === 'image' && media.src)
+      })).filter((media) => media.kind === 'image' && (media.src || media.resourceId || media.attachmentId))
     : [];
 }
 

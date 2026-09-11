@@ -23,6 +23,8 @@ export function applyMinimalHostSessionEvent(current, event) {
     ...current,
     messages: (current.messages || []).map((message) => ({ ...message })),
     technicalItems: (current.technicalItems || []).map((item) => ({ ...item })),
+    technicalDetailsAvailable: [...(current.technicalDetailsAvailable || [])],
+    turnMetadata: (current.turnMetadata || []).map((turn) => ({ ...turn })),
     pendingRequests: (current.pendingRequests || []).map((request) => ({ ...request })),
     runtimeBinding: current.runtimeBinding ? { ...current.runtimeBinding } : null,
     livePublishedMediaByTurn: { ...(current.livePublishedMediaByTurn || {}) },
@@ -36,6 +38,7 @@ export function applyMinimalHostSessionEvent(current, event) {
       activeTurnId: event.runtimeTurnId || session.runtimeBinding?.activeTurnId || null,
       status: 'running',
     };
+    ensureTurnMetadata(session, event.runtimeTurnId, timestamp);
     bindLatestUserMessage(session, event.runtimeTurnId);
   } else if (event.type === 'turn_completed') {
     const status = String(event.payload?.status || 'completed');
@@ -118,6 +121,7 @@ function applyAgentDelta(session, event) {
       turnId: event.runtimeTurnId || null,
       turnStatus: 'inProgress',
       createdAt: eventTimestamp(event),
+      turnKey: event.runtimeTurnId || null,
     };
     session.messages.push(message);
   }
@@ -141,6 +145,7 @@ function applyRuntimeItem(session, event) {
       phase: item.phase === 'commentary' ? 'commentary' : 'answer',
       content,
       turnId: event.runtimeTurnId || null,
+      turnKey: event.runtimeTurnId || null,
       turnStatus: item.status || (event.type === 'item_completed' ? 'completed' : 'inProgress'),
       createdAt: eventTimestamp(event),
       ...(Array.isArray(item.publishedArtifacts) ? { attachments: item.publishedArtifacts.map((entry) => ({ ...entry })) } : {}),
@@ -168,9 +173,11 @@ function applyRuntimeItem(session, event) {
   }
   const id = String(item.id || `technical-${event.runtimeTurnId || 'unknown'}`);
   const existing = session.technicalItems.find((candidate) => candidate.id === id);
+  const turn = ensureTurnMetadata(session, event.runtimeTurnId, eventTimestamp(event));
   const technical = {
     id,
     turnId: event.runtimeTurnId || null,
+    turnKey: event.runtimeTurnId || null,
     kind: String(item.type || 'runtimeItem'),
     title: runtimeItemTitle(item),
     status: String(item.status || (event.type === 'item_completed' ? 'completed' : 'running')),
@@ -180,7 +187,10 @@ function applyRuntimeItem(session, event) {
   };
   if (TERMINAL_TURN_STATUSES.has(technical.status)) technical.completedAt = technical.updatedAt;
   if (existing) Object.assign(existing, technical);
-  else session.technicalItems.push(technical);
+  else {
+    session.technicalItems.push(technical);
+    if (turn) turn.technicalItemCount = (Number(turn.technicalItemCount) || 0) + 1;
+  }
 }
 
 function publishTurnMedia(session, turnId) {
@@ -210,8 +220,30 @@ function bindLatestUserMessage(session, turnId) {
   const message = [...session.messages].reverse().find((candidate) => candidate.role === 'user' && !candidate.turnId);
   if (message) {
     message.turnId = turnId;
+    message.turnKey = turnId;
     message.turnStatus = 'inProgress';
   }
+}
+
+function ensureTurnMetadata(session, turnId, startedAt) {
+  const key = String(turnId || '');
+  if (!key) return null;
+  let turn = session.turnMetadata.find((candidate) => (candidate.turnKey || candidate.turnId) === key);
+  if (turn) return turn;
+  const ordinal = Math.max(
+    Number(session.turnCount) || 0,
+    ...session.turnMetadata.map((candidate) => Number(candidate.ordinal) || 0),
+  ) + 1;
+  turn = {
+    turnKey: key,
+    turnId: key,
+    ordinal,
+    startedAt,
+    technicalItemCount: 0,
+  };
+  session.turnMetadata.push(turn);
+  session.turnCount = ordinal;
+  return turn;
 }
 
 function normalizePlan(value) {

@@ -130,11 +130,6 @@ export async function writeHostIdentity(manifest, { port, inspection, providerSt
     port,
     startedAt: new Date().toISOString(),
   };
-  await writeFile(hostIdentityPath(manifest), `${JSON.stringify(identity, null, 2)}\n`, {
-    encoding: 'utf8',
-    flag: 'wx',
-    mode: 0o600,
-  });
   await markRunStarted(manifest.paths.root, {
     pid: process.pid,
     port,
@@ -144,6 +139,11 @@ export async function writeHostIdentity(manifest, { port, inspection, providerSt
       ...providerState,
     },
     inspection,
+  });
+  await writeFile(hostIdentityPath(manifest), `${JSON.stringify(identity, null, 2)}\n`, {
+    encoding: 'utf8',
+    flag: 'wx',
+    mode: 0o600,
   });
   return identity;
 }
