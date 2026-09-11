@@ -668,7 +668,8 @@ export function SessionBrowser({
           {!view.loading && !groups.length ? (
             <div className="cwu-browser-list-empty">{searchQuery ? (labels.searchEmpty || '没有匹配的 Session。') : (labels.listEmpty || '还没有 Session，可从上方新建。')}</div>
           ) : groups.map((group) => {
-            const projectGroup = view.groupMode === 'context';
+            const favoritesGroup = group.id === 'favorites';
+            const projectGroup = view.groupMode === 'context' && !favoritesGroup;
             const expanded = projectGroup && expandedGroupIds.has(group.id);
             const visibleSessions = projectGroup
               ? group.sessions.slice(0, expanded ? group.sessions.length : 3)
@@ -707,9 +708,9 @@ export function SessionBrowser({
               {visibleSessions.map((session) => {
                 const unread = session.status === 'unread';
                 const shared = session.accessKind === 'shared';
-                const secondaryLabel = shared
+                const secondaryLabel = shared && !favoritesGroup
                   ? formatTime(session.updatedAt)
-                  : session.secondaryLabel || (view.groupMode === 'context'
+                  : session.secondaryLabel || (view.groupMode === 'context' && !favoritesGroup
                     ? formatTime(session.updatedAt)
                     : [session.contextLabel, formatTime(session.updatedAt)].filter(Boolean).join(' · '));
                 return (

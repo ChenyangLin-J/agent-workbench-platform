@@ -71,6 +71,40 @@ test('consumer group order keeps owned Sessions before newer shared Sessions', (
   assert.deepEqual(groups.map((group) => group.id), ['owned', 'shared']);
 });
 
+test('favorites stay in one leading group before time or context grouping', () => {
+  const sessions = [
+    { id: 'today', contextId: 'personal', contextLabel: 'Personal', updatedAt: 30 },
+    { id: 'older-favorite', contextId: 'data', contextLabel: 'DataMama', updatedAt: 10, favorited: true },
+    { id: 'newer-favorite', contextId: 'personal', contextLabel: 'Personal', updatedAt: 20, favorited: true },
+    { id: 'older', contextId: 'data', contextLabel: 'DataMama', updatedAt: 5 },
+  ];
+
+  for (const mode of ['time', 'context']) {
+    const groups = groupSessionSummaries(sessions, mode, 30);
+    assert.equal(groups[0].id, 'favorites');
+    assert.equal(groups[0].label, '★ 置顶');
+    assert.deepEqual(groups[0].sessions.map((session) => session.id), ['newer-favorite', 'older-favorite']);
+    assert.equal(groups.slice(1).flatMap((group) => group.sessions).some((session) => session.favorited), false);
+  }
+});
+
+test('favorite input order is stable when the consumer supplies sort order', () => {
+  const groups = groupSessionSummaries([
+    { id: 'first', updatedAt: 10, sortOrder: 2, favorited: true },
+    { id: 'second', updatedAt: 20, sortOrder: 1, favorited: true },
+  ], 'time', 30);
+  assert.deepEqual(groups[0].sessions.map((session) => session.id), ['second', 'first']);
+});
+
+test('attention grouping remains status-first even for favorites', () => {
+  const groups = groupSessionSummaries([
+    { id: 'favorite-running', status: 'running', favorited: true },
+    { id: 'idle', status: 'idle' },
+  ], 'attention');
+  assert.deepEqual(groups.map((group) => group.id), ['running', 'ready']);
+  assert.equal(groups.some((group) => group.id === 'favorites'), false);
+});
+
 test('current task is shared without leaking a project concept into Agent Web', () => {
   assert.equal(sessionCurrentTask({
     turnState: {

@@ -153,8 +153,23 @@ export function groupSessionSummaries(sessions = [], mode = 'context', now = Dat
     })).filter((group) => group.sessions.length);
   }
 
+  const favorites = normalized
+    .map((session, index) => ({ session, index }))
+    .filter(({ session }) => session.favorited)
+    .sort((left, right) => {
+      if (left.session.sortOrder != null || right.session.sortOrder != null) {
+        const orderDelta = (left.session.sortOrder ?? Number.MAX_SAFE_INTEGER)
+          - (right.session.sortOrder ?? Number.MAX_SAFE_INTEGER);
+        if (orderDelta) return orderDelta;
+        return left.index - right.index;
+      }
+      return (right.session.updatedAt || 0) - (left.session.updatedAt || 0)
+        || left.index - right.index;
+    })
+    .map(({ session }) => session);
   const groups = new Map();
   for (const session of normalized) {
+    if (session.favorited) continue;
     const descriptor = mode === 'time'
       ? timeGroupDescriptor(session.updatedAt, now)
       : { id: session.contextId || 'unassigned', label: session.contextLabel || '未分类' };
@@ -162,13 +177,16 @@ export function groupSessionSummaries(sessions = [], mode = 'context', now = Dat
     group.sessions.push(session);
     groups.set(descriptor.id, group);
   }
-  return [...groups.values()].sort((left, right) => {
+  const grouped = [...groups.values()].sort((left, right) => {
     const groupOrderDelta = Math.min(...left.sessions.map((session) => session.groupSortOrder ?? Number.MAX_SAFE_INTEGER))
       - Math.min(...right.sessions.map((session) => session.groupSortOrder ?? Number.MAX_SAFE_INTEGER));
     if (groupOrderDelta) return groupOrderDelta;
     const timeDelta = (right.sessions[0]?.updatedAt || 0) - (left.sessions[0]?.updatedAt || 0);
     return timeDelta || left.label.localeCompare(right.label);
   });
+  return favorites.length
+    ? [{ id: 'favorites', label: '★ 置顶', sessions: favorites }, ...grouped]
+    : grouped;
 }
 
 export function sessionStatusTone(statusOrSession) {
