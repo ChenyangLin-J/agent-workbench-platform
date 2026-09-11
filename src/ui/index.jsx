@@ -2787,6 +2787,8 @@ function TechnicalDetails({
   turnOrdinal = null,
 }) {
   const [open, setOpen] = useState(false);
+  const normalizedItemCount = optionalInteger(itemCount, { minimum: 0 });
+  const normalizedTurnOrdinal = optionalInteger(turnOrdinal, { minimum: 1 });
   async function toggle() {
     const next = !open;
     setOpen(next);
@@ -2802,8 +2804,8 @@ function TechnicalDetails({
       >
         <span>本轮执行详情</span>
         <small>{[
-          `${Number.isFinite(Number(itemCount)) ? Number(itemCount) : items.length} 项`,
-          Number.isFinite(Number(turnOrdinal)) ? `第 ${Number(turnOrdinal)} 轮` : '',
+          normalizedItemCount != null || items.length ? `${normalizedItemCount ?? items.length} 项` : '',
+          normalizedTurnOrdinal != null ? `第 ${normalizedTurnOrdinal} 轮` : '',
           technicalTurnTime(startedAt),
           loading && open ? '读取中…' : open ? '收起' : '展开',
         ].filter(Boolean).join(' · ')}</small>
@@ -2850,8 +2852,9 @@ function TechnicalDetails({
 }
 
 function technicalTurnTime(value) {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return '';
+  if (value == null || value === '') return '';
+  const timestamp = typeof value === 'number' ? value : Date.parse(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
   const date = new Date(timestamp);
   const now = new Date();
   const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
@@ -2860,6 +2863,12 @@ function technicalTurnTime(value) {
     && date.getDate() === now.getDate()
     ? time
     : `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+}
+
+function optionalInteger(value, { minimum }) {
+  if (value == null || value === '') return null;
+  const normalized = Number(value);
+  return Number.isSafeInteger(normalized) && normalized >= minimum ? normalized : null;
 }
 
 function temporaryAttachmentId() {

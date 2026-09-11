@@ -220,10 +220,14 @@ export function normalizeSessionViewModel(value = {}) {
           ordinal: Number.isSafeInteger(Number(turn?.ordinal)) && Number(turn.ordinal) > 0
             ? Number(turn.ordinal)
             : null,
-          startedAt: normalizeTimestamp(turn?.startedAt),
-          technicalItemCount: Number.isSafeInteger(Number(turn?.technicalItemCount))
+          startedAt: turn?.startedAt == null || turn.startedAt === ''
+            ? null
+            : normalizeTimestamp(turn.startedAt) || null,
+          technicalItemCount: turn?.technicalItemCount != null
+            && turn.technicalItemCount !== ''
+            && Number.isSafeInteger(Number(turn.technicalItemCount))
             ? Math.max(0, Number(turn.technicalItemCount))
-            : 0,
+            : null,
         }))
       : [],
     pendingRequests: Array.isArray(value.pendingRequests)

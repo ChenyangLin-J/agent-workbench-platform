@@ -167,6 +167,15 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
     startedAt: Date.parse('2026-09-11T01:02:00.000Z'),
     technicalItemCount: 3,
   });
+  assert.deepEqual(normalizeSessionViewModel({
+    turnMetadata: [{ turnKey: 'missing-optional-values', ordinal: null, startedAt: null, technicalItemCount: null }],
+  }).turnMetadata[0], {
+    turnKey: 'missing-optional-values',
+    turnId: null,
+    ordinal: null,
+    startedAt: null,
+    technicalItemCount: null,
+  });
   assert.equal(pagedView.messages[0].media[0].resourceId, 'resource-1');
   assert.equal(pagedView.messages[0].media[0].src, '');
   assert.match(source, /onUploadAttachments\(\[placeholder\.file\], \{/);
@@ -178,7 +187,8 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
   assert.match(source, /className="cwu-technical-artifacts"/);
   assert.match(source, /onOpenArtifact/);
   assert.match(source, /onRevealArtifact/);
-  assert.match(source, /第 \$\{Number\(turnOrdinal\)\} 轮/);
+  assert.match(source, /normalizedTurnOrdinal != null \? `第 \$\{normalizedTurnOrdinal\} 轮`/);
+  assert.match(source, /typeof value === 'number' \? value : Date\.parse\(value\)/);
   assert.match(styles, /\.cwu-attachment-progress/);
   assert.match(styles, /\.cwu-technical-artifacts/);
 });
