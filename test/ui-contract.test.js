@@ -74,7 +74,7 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(source, /<SessionWorkspace key=\{detail\.session\?\.sessionId \|\| 'session-detail'\} \{\.\.\.detail\} documentPreview=\{null\} \/>/);
   assert.match(source, /<SessionDocumentPreview\s+actions=\{detail\?\.actions\}\s+documentPreview=\{browserDocumentPreview\}\s+labels=\{detail\?\.labels\}/);
   assert.match(source, /inert=\{browserDocumentPreview \? true : undefined\}/);
-  assert.match(styles, /\.cwu-browser > \.cwu-document-backdrop:not\(\.is-image\) \{ position: absolute; \}/);
+  assert.match(styles, /\.cwu-browser > \.cwu-document-backdrop:not\(\.is-image\) \{ position: absolute; inset: -1px; overflow: hidden; border-radius: inherit; \}/);
 });
 
 test('Minimal Host browser mutations use reusable idempotency operations', async () => {
