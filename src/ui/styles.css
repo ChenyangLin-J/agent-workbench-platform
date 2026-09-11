@@ -249,6 +249,7 @@
 .cwu-inline-visualization.is-wide iframe { height: min(760px, 76vh); }
 .cwu-inline-visualization > a { display: inline-block; margin-top: 6px; color: var(--cwu-muted); font-size: 11px; }
 .cwu-document-backdrop { position: absolute; z-index: 1000; inset: 0; display: flex; justify-content: flex-end; background: rgba(20, 18, 16, .42); backdrop-filter: blur(10px) saturate(.82); -webkit-backdrop-filter: blur(10px) saturate(.82); }
+.cwu-browser > .cwu-document-backdrop:not(.is-image) { position: absolute; }
 .cwu-document-preview { width: min(720px, 72%); max-width: 100%; min-width: 0; height: 100%; min-height: 320px; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid color-mix(in srgb, var(--cwu-border) 82%, transparent); background: color-mix(in srgb, var(--cwu-surface) 88%, transparent); box-shadow: -18px 0 52px rgba(20, 18, 16, .2); backdrop-filter: blur(18px) saturate(1.08); -webkit-backdrop-filter: blur(18px) saturate(1.08); }
 .cwu-document-preview > header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--cwu-border); padding: 10px 14px 10px 18px; }
 .cwu-document-preview > header > div:first-child { min-width: 0; }

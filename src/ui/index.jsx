@@ -448,6 +448,7 @@ export function SessionBrowser({
   }, [detail?.session?.sessionId, isNarrow]);
 
   const listCollapsed = listOnly ? false : isNarrow && detail ? !narrowListOpen : view.listCollapsed;
+  const browserDocumentPreview = detail?.documentPreview || null;
 
   function toggleSessionList() {
     if (isNarrow && detail) {
@@ -565,7 +566,12 @@ export function SessionBrowser({
 
   const formatTime = labels.formatTime || defaultFormatTime;
   const list = (
-      <aside className={`cwu-browser-list ${listOnly ? 'is-standalone' : ''}`} aria-hidden={listOnly ? undefined : listCollapsed} aria-label={labels.listAriaLabel || 'Session 列表'}>
+      <aside
+        aria-hidden={listOnly ? undefined : Boolean(browserDocumentPreview) || listCollapsed}
+        aria-label={labels.listAriaLabel || 'Session 列表'}
+        className={`cwu-browser-list ${listOnly ? 'is-standalone' : ''}`}
+        inert={browserDocumentPreview ? true : undefined}
+      >
         <header className="cwu-browser-summary">
           <span>{view.loading && !view.sessions.length
             ? (labels.loading || '正在读取 Sessions…')
@@ -817,20 +823,27 @@ export function SessionBrowser({
   if (listOnly) return <div className="cwu-session-list-standalone">{list}</div>;
 
   return (
-    <div className={`cwu-browser ${listCollapsed ? 'is-list-collapsed' : ''}`}>
+    <div className={`cwu-browser ${listCollapsed ? 'is-list-collapsed' : ''}${browserDocumentPreview ? ' has-document-preview' : ''}`}>
       {list}
 
       {(isNarrow && detail) || actions.onToggleList ? <button
         aria-expanded={!listCollapsed}
         aria-label={listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
         className="cwu-browser-list-toggle"
+        disabled={Boolean(browserDocumentPreview)}
+        inert={browserDocumentPreview ? true : undefined}
         onClick={toggleSessionList}
         title={listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
         type="button"
       >{listCollapsed ? '›' : '‹'}</button> : null}
 
-      <section className="cwu-browser-detail" aria-label={labels.detailAriaLabel || 'Session 详情'}>
-        {detail ? <SessionWorkspace key={detail.session?.sessionId || 'session-detail'} {...detail} /> : (
+      <section
+        aria-hidden={browserDocumentPreview ? true : undefined}
+        aria-label={labels.detailAriaLabel || 'Session 详情'}
+        className="cwu-browser-detail"
+        inert={browserDocumentPreview ? true : undefined}
+      >
+        {detail ? <SessionWorkspace key={detail.session?.sessionId || 'session-detail'} {...detail} documentPreview={null} /> : (
           <div className="cwu-browser-detail-empty">
             <span>{labels.detailEyebrow || 'Session 详情'}</span>
             <h2>{labels.detailEmptyTitle || '从左侧选择一个 Session'}</h2>
@@ -838,12 +851,36 @@ export function SessionBrowser({
           </div>
         )}
       </section>
+      <SessionDocumentPreview
+        actions={detail?.actions}
+        documentPreview={browserDocumentPreview}
+        labels={detail?.labels}
+      />
     </div>
   );
 }
 
 export function SessionList(props) {
   return <SessionBrowser {...props} detail={null} listOnly />;
+}
+
+function SessionDocumentPreview({ actions = {}, documentPreview, labels = {} }) {
+  if (!documentPreview) return null;
+  return (
+    <DocumentPreview
+      documentResourceUrl={actions.documentResourceUrl}
+      file={documentPreview}
+      onClose={actions.onCloseDocument}
+      onDownload={actions.onDownloadDocument}
+      onEdit={actions.onEditDocument}
+      onOpenExternal={actions.onOpenDocumentExternal}
+      onOpenLink={actions.onOpenLink}
+      onReveal={actions.onRevealDocument}
+      onRevealLink={actions.onRevealLink}
+      onSave={actions.onSaveDocument}
+      revealLabel={labels.revealFile}
+    />
+  );
 }
 
 function CommentaryGroup({ children, initiallyOpen = false, messageCount }) {
@@ -1414,21 +1451,7 @@ export function SessionWorkspace({
       onDragOver={handleWorkspaceAttachmentDrag}
       onDrop={handleWorkspaceAttachmentDrop}
     >
-      {documentPreview ? (
-        <DocumentPreview
-          documentResourceUrl={actions.documentResourceUrl}
-          file={documentPreview}
-          onClose={actions.onCloseDocument}
-          onDownload={actions.onDownloadDocument}
-          onEdit={actions.onEditDocument}
-          onOpenExternal={actions.onOpenDocumentExternal}
-          onOpenLink={actions.onOpenLink}
-          onReveal={actions.onRevealDocument}
-          onRevealLink={actions.onRevealLink}
-          onSave={actions.onSaveDocument}
-          revealLabel={labels.revealFile}
-        />
-      ) : null}
+      <SessionDocumentPreview actions={actions} documentPreview={documentPreview} labels={labels} />
       <header className={`cwu-session-header ${actions.onBack ? 'has-back' : 'without-back'}`}>
         {actions.onBack ? <button className="cwu-quiet-button" onClick={actions.onBack} type="button">
           ← {labels.back || '返回'}

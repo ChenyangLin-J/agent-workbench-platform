@@ -249,15 +249,65 @@ try {
     throw new Error('Closing a text preview did not restore focus to its attachment card.');
   }
 
+  const browserSurface = page.locator('.cwu-browser');
+  const listToggle = browserSurface.locator('.cwu-browser-list-toggle');
+  await listToggle.click();
+  await browserSurface.evaluate((element) => {
+    if (!element.classList.contains('is-list-collapsed')) {
+      throw new Error('Session list did not enter its collapsed state before the preview layering probe.');
+    }
+  });
   await page.locator('.cwu-message-attachment', { hasText: 'browser-query.sql' }).click();
   const sqlPreview = page.getByRole('dialog', { name: '文件预览：browser-query.sql' });
   await sqlPreview.getByRole('button', { name: '格式化', exact: true }).waitFor();
+  const previewLayering = await browserSurface.evaluate((element) => {
+    const backdrop = element.querySelector(':scope > .cwu-document-backdrop');
+    const list = element.querySelector(':scope > .cwu-browser-list');
+    const toggle = element.querySelector(':scope > .cwu-browser-list-toggle');
+    const detail = element.querySelector(':scope > .cwu-browser-detail');
+    if (!backdrop || !list || !toggle || !detail) return null;
+    const browserBox = element.getBoundingClientRect();
+    const backdropBox = backdrop.getBoundingClientRect();
+    const backdropStyle = getComputedStyle(backdrop);
+    return {
+      browserBox: { x: browserBox.x, y: browserBox.y, width: browserBox.width, height: browserBox.height },
+      backdropBox: { x: backdropBox.x, y: backdropBox.y, width: backdropBox.width, height: backdropBox.height },
+      backdropFilter: backdropStyle.backdropFilter || backdropStyle.webkitBackdropFilter || '',
+      browserPreviewOpen: element.classList.contains('has-document-preview'),
+      listInert: list.hasAttribute('inert'),
+      toggleInert: toggle.hasAttribute('inert'),
+      toggleDisabled: toggle.disabled,
+      detailInert: detail.hasAttribute('inert'),
+    };
+  });
+  if (!previewLayering
+    || !previewLayering.browserPreviewOpen
+    || !previewLayering.listInert
+    || !previewLayering.toggleInert
+    || !previewLayering.toggleDisabled
+    || !previewLayering.detailInert
+    || !previewLayering.backdropFilter.includes('blur(')
+    || Math.abs(previewLayering.browserBox.x - previewLayering.backdropBox.x) > 2
+    || Math.abs(previewLayering.browserBox.y - previewLayering.backdropBox.y) > 2
+    || Math.abs(previewLayering.browserBox.width - previewLayering.backdropBox.width) > 2
+    || Math.abs(previewLayering.browserBox.height - previewLayering.backdropBox.height) > 2) {
+    throw new Error(`Attachment preview did not cover and disable the complete Session Browser: ${JSON.stringify(previewLayering)}`);
+  }
   if (!await sqlPreview.locator('.cwu-sql-keyword').count()) {
     throw new Error('SQL attachment preview did not render syntax highlighting.');
   }
   await sqlPreview.getByRole('button', { name: '原文', exact: true }).click();
   await sqlPreview.getByText('SELECT id, name FROM users WHERE active = TRUE;', { exact: true }).waitFor();
   await sqlPreview.getByRole('button', { name: '关闭文件预览' }).click();
+  await browserSurface.evaluate((element) => {
+    if (!element.classList.contains('is-list-collapsed') || element.classList.contains('has-document-preview')) {
+      throw new Error('Closing the attachment preview did not restore the prior collapsed list state.');
+    }
+  });
+  if (await listToggle.isDisabled()) {
+    throw new Error('Closing the attachment preview left the Session list restore handle disabled.');
+  }
+  await listToggle.click({ force: true });
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('.cwu-message-attachment', { hasText: 'browser-table.csv' }).click();
@@ -592,7 +642,7 @@ try {
   if (activeSessions.length !== 2 || allSessions.length !== 4 || archivedSource.archived !== true) {
     throw new Error('Edit did not archive the source while keeping the Fork copy and replacement Session active.');
   }
-  console.log('Minimal Host browser initial draft, recent-Session root return, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, TXT/SQL/CSV in-site previews, uploaded-image message thumbnail/lightbox, upward-reading stability during streaming, completed-response downward-scroll stability, durable generated-image media/lightbox, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
+  console.log('Minimal Host browser initial draft, recent-Session root return, standalone-heading paste, standalone-bullet paste, literal plain paste, structured paste attachment, direct-edit Composer, Browser-wide inert TXT/SQL/CSV in-site previews with collapsed-list restoration, uploaded-image message thumbnail/lightbox, upward-reading stability during streaming, completed-response downward-scroll stability, durable generated-image media/lightbox, idempotent Turn, reconnect, polling fallback, visible completed process, progress, title, running actions, copy-only Fork, Edit archival, and archive-filtered read-only Observer smoke passed under /agent/runtime/.');
 } finally {
   await browser.close();
   await close(proxy);
