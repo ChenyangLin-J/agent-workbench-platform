@@ -36,6 +36,7 @@ import {
   sessionTranscriptAwayFromLatest,
   sessionStatusTone,
   shouldConvertPastedTextToAttachment,
+  turnDurationLabel,
 } from './model.js';
 import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
 import { normalizeSessionFeatures } from '../capabilities.js';
@@ -1578,6 +1579,9 @@ export function SessionWorkspace({
                         onRevealArtifact={actions.onRevealArtifact}
                         sessionId={view.sessionId}
                         startedAt={trailingTurnMetadata?.startedAt || trailingMessage.createdAt}
+                        completedAt={trailingTurnMetadata?.completedAt}
+                        running={trailingMessage.turnStatus === 'inProgress'
+                          || (running && trailingTurnKey === view.turnMetadata.at(-1)?.turnKey)}
                         turnOrdinal={trailingTurnMetadata?.ordinal}
                       />
                     ) : null}
@@ -2784,11 +2788,21 @@ function TechnicalDetails({
   onRevealArtifact = null,
   sessionId = null,
   startedAt = null,
+  completedAt = null,
+  running = false,
   turnOrdinal = null,
 }) {
   const [open, setOpen] = useState(false);
+  const [durationNow, setDurationNow] = useState(() => Date.now());
   const normalizedItemCount = optionalInteger(itemCount, { minimum: 0 });
   const normalizedTurnOrdinal = optionalInteger(turnOrdinal, { minimum: 1 });
+  const duration = turnDurationLabel({ startedAt, completedAt, running, now: durationNow });
+  useEffect(() => {
+    if (!running || completedAt != null) return undefined;
+    setDurationNow(Date.now());
+    const timer = globalThis.setInterval(() => setDurationNow(Date.now()), 1_000);
+    return () => globalThis.clearInterval(timer);
+  }, [running, completedAt, startedAt]);
   async function toggle() {
     const next = !open;
     setOpen(next);
@@ -2806,7 +2820,7 @@ function TechnicalDetails({
         <small>{[
           normalizedItemCount != null || items.length ? `${normalizedItemCount ?? items.length} 项` : '',
           normalizedTurnOrdinal != null ? `第 ${normalizedTurnOrdinal} 轮` : '',
-          technicalTurnTime(startedAt),
+          duration,
           loading && open ? '读取中…' : open ? '收起' : '展开',
         ].filter(Boolean).join(' · ')}</small>
       </button>
@@ -2849,20 +2863,6 @@ function TechnicalDetails({
       ) : null}
     </section>
   );
-}
-
-function technicalTurnTime(value) {
-  if (value == null || value === '') return '';
-  const timestamp = typeof value === 'number' ? value : Date.parse(value);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
-  const date = new Date(timestamp);
-  const now = new Date();
-  const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
-  return date.getFullYear() === now.getFullYear()
-    && date.getMonth() === now.getMonth()
-    && date.getDate() === now.getDate()
-    ? time
-    : `${date.getMonth() + 1}/${date.getDate()} ${time}`;
 }
 
 function optionalInteger(value, { minimum }) {

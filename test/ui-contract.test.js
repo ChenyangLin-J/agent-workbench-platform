@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { appendComposerReferences, attachmentDragLeavesTarget, clipboardAttachmentFiles, composerDropPayload, dataTransferHasFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardHasComplexStructure, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment } from '../src/ui/model.js';
+import { appendComposerReferences, attachmentDragLeavesTarget, clipboardAttachmentFiles, composerDropPayload, dataTransferHasFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardHasComplexStructure, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment, turnDurationLabel } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -151,7 +151,8 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
     turnCount: 12,
     turnsCursor: 'opaque-cursor',
     turnMetadata: [{
-      turnKey: 'opaque-turn', ordinal: 8, startedAt: '2026-09-11T01:02:00.000Z', technicalItemCount: 3,
+      turnKey: 'opaque-turn', ordinal: 8, startedAt: '2026-09-11T01:02:00.000Z',
+      completedAt: '2026-09-11T01:04:18.000Z', technicalItemCount: 3,
     }],
     messages: [{
       id: 'answer-with-lazy-media',
@@ -165,6 +166,7 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
     turnId: null,
     ordinal: 8,
     startedAt: Date.parse('2026-09-11T01:02:00.000Z'),
+    completedAt: Date.parse('2026-09-11T01:04:18.000Z'),
     technicalItemCount: 3,
   });
   assert.deepEqual(normalizeSessionViewModel({
@@ -174,6 +176,7 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
     turnId: null,
     ordinal: null,
     startedAt: null,
+    completedAt: null,
     technicalItemCount: null,
   });
   assert.equal(pagedView.messages[0].media[0].resourceId, 'resource-1');
@@ -188,9 +191,21 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
   assert.match(source, /onOpenArtifact/);
   assert.match(source, /onRevealArtifact/);
   assert.match(source, /normalizedTurnOrdinal != null \? `第 \$\{normalizedTurnOrdinal\} 轮`/);
-  assert.match(source, /typeof value === 'number' \? value : Date\.parse\(value\)/);
+  assert.match(source, /globalThis\.setInterval\(\(\) => setDurationNow\(Date\.now\(\)\), 1_000\)/);
+  assert.match(source, /globalThis\.clearInterval\(timer\)/);
   assert.match(styles, /\.cwu-attachment-progress/);
   assert.match(styles, /\.cwu-technical-artifacts/);
+});
+
+test('turn duration labels use elapsed time instead of a wall-clock timestamp', () => {
+  const startedAt = '2026-09-11T01:02:00.000Z';
+  assert.equal(turnDurationLabel({ startedAt, completedAt: '2026-09-11T01:02:42.000Z' }), '42秒');
+  assert.equal(turnDurationLabel({ startedAt, completedAt: '2026-09-11T01:04:18.000Z' }), '2分18秒');
+  assert.equal(turnDurationLabel({ startedAt, completedAt: '2026-09-11T02:08:03.000Z' }), '1小时6分3秒');
+  assert.equal(turnDurationLabel({ startedAt, running: true, now: '2026-09-11T01:02:18.000Z' }), '已运行 18秒');
+  assert.equal(turnDurationLabel({ startedAt }), '');
+  assert.equal(turnDurationLabel({ startedAt: 'invalid', completedAt: '2026-09-11T01:02:42.000Z' }), '');
+  assert.equal(turnDurationLabel({ startedAt, completedAt: '2026-09-11T01:01:59.000Z' }), '');
 });
 
 test('code document previews keep line structure and resolve requested lines', async () => {

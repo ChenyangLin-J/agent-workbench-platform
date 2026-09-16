@@ -223,6 +223,9 @@ export function normalizeSessionViewModel(value = {}) {
           startedAt: turn?.startedAt == null || turn.startedAt === ''
             ? null
             : normalizeTimestamp(turn.startedAt) || null,
+          completedAt: turn?.completedAt == null || turn.completedAt === ''
+            ? null
+            : normalizeTimestamp(turn.completedAt) || null,
           technicalItemCount: turn?.technicalItemCount != null
             && turn.technicalItemCount !== ''
             && Number.isSafeInteger(Number(turn.technicalItemCount))
@@ -850,6 +853,33 @@ export function sessionTranscriptAwayFromLatest({
   clientHeight = 0,
 } = {}, threshold = 200) {
   return Number(scrollHeight) - Number(scrollTop) - Number(clientHeight) > threshold;
+}
+
+export function turnDurationLabel({
+  startedAt,
+  completedAt = null,
+  running = false,
+  now = Date.now(),
+} = {}) {
+  const started = normalizeTimestamp(startedAt);
+  const completed = completedAt == null || completedAt === ''
+    ? (running ? normalizeTimestamp(now) : 0)
+    : normalizeTimestamp(completedAt);
+  if (!started || !completed || completed < started) return '';
+
+  const totalSeconds = Math.floor((completed - started) / 1_000);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  let duration;
+  if (hours) {
+    duration = `${hours}小时${minutes ? `${minutes}分` : ''}${seconds ? `${seconds}秒` : ''}`;
+  } else if (minutes) {
+    duration = `${minutes}分${seconds ? `${seconds}秒` : ''}`;
+  } else {
+    duration = `${seconds}秒`;
+  }
+  return running && (completedAt == null || completedAt === '') ? `已运行 ${duration}` : duration;
 }
 
 function stringOrNull(value) {
