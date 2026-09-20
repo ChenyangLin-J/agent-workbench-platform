@@ -954,6 +954,12 @@ export function SessionWorkspace({
   const [submitting, setSubmitting] = useState(false);
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [deletingQueuedIds, setDeletingQueuedIds] = useState(() => new Set());
+  const [executionSettingsOpen, setExecutionSettingsOpen] = useState(false);
+  const [executionSettingsSaving, setExecutionSettingsSaving] = useState(false);
+  const [executionPopoverPosition, setExecutionPopoverPosition] = useState({ left: 12, top: 12, side: 'above' });
+  const executionSettingsButtonRef = useRef(null);
+  const executionSettingsPopoverRef = useRef(null);
+  const executionSettingsSaveRef = useRef(null);
   const attachmentInteractionRef = useRef({ composerDisabled: false, uploading: false, attachmentCount: 0 });
   const running = view.status === 'running';
   const uploading = attachments.some((attachment) => attachment.status === 'uploading');
@@ -964,12 +970,19 @@ export function SessionWorkspace({
     uploading,
     attachmentCount: attachments.length,
   };
-  const executionControlsDisabled = composerDisabled || running || !actions.onExecutionProfileChange;
+  const executionSettingsLocked = ['running', 'waiting'].includes(view.status);
+  const executionControlsDisabled = composerDisabled
+    || executionSettingsLocked
+    || executionSettingsSaving
+    || !actions.onExecutionProfileChange;
   const selectedExecutionModel = view.models.find((model) => model.id === view.executionProfile.model) || null;
   const executionEfforts = selectedExecutionModel?.reasoningEfforts?.length
     ? selectedExecutionModel.reasoningEfforts
     : ['low', 'medium', 'high', 'xhigh'];
   const fastTier = selectedExecutionModel?.serviceTiers.find((tier) => tier.id === 'priority') || null;
+  const executionModelLabel = selectedExecutionModel?.label || view.executionProfile.model || '默认模型';
+  const executionAccessLabel = view.accessModes.find((mode) => mode.id === view.executionProfile.accessMode)?.label
+    || view.executionProfile.accessMode;
   const composer = sessionComposerPresentation({
     running,
     submitting,
@@ -1018,6 +1031,9 @@ export function SessionWorkspace({
     setAttachmentDragKind('files');
     setAwayFromLatest(false);
     setHasNewMessagesBelow(false);
+    setExecutionSettingsOpen(false);
+    setExecutionSettingsSaving(false);
+    executionSettingsSaveRef.current = null;
     messageActivityRef.current = { sessionId: view.sessionId, key: latestMessageActivityKey };
     const focusFrame = view.draft
       ? requestAnimationFrame(() => {
@@ -1031,6 +1047,57 @@ export function SessionWorkspace({
       if (focusFrame != null) cancelAnimationFrame(focusFrame);
     };
   }, [view.sessionId]);
+
+  useEffect(() => {
+    if (!executionSettingsOpen) return undefined;
+    const positionPopover = () => {
+      const target = executionSettingsButtonRef.current;
+      const popover = executionSettingsPopoverRef.current;
+      if (!target || !popover) return;
+      const edge = 12;
+      const gap = 8;
+      const targetRect = target.getBoundingClientRect();
+      const popoverRect = popover.getBoundingClientRect();
+      const left = Math.min(
+        Math.max(edge, targetRect.left),
+        Math.max(edge, window.innerWidth - popoverRect.width - edge),
+      );
+      const above = targetRect.top - popoverRect.height - gap;
+      const placeBelow = above < edge;
+      setExecutionPopoverPosition({
+        left,
+        top: placeBelow
+          ? Math.min(window.innerHeight - popoverRect.height - edge, targetRect.bottom + gap)
+          : above,
+        side: placeBelow ? 'below' : 'above',
+      });
+    };
+    const closeOutside = (event) => {
+      if (executionSettingsButtonRef.current?.contains(event.target)
+        || executionSettingsPopoverRef.current?.contains(event.target)) return;
+      setExecutionSettingsOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      setExecutionSettingsOpen(false);
+      executionSettingsButtonRef.current?.focus();
+    };
+    positionPopover();
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    window.addEventListener('resize', positionPopover);
+    window.addEventListener('scroll', positionPopover, true);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+      window.removeEventListener('resize', positionPopover);
+      window.removeEventListener('scroll', positionPopover, true);
+    };
+  }, [executionSettingsOpen, view.sessionId]);
+
+  useEffect(() => {
+    if (!executionSettingsLocked) setExecutionSettingsOpen(false);
+  }, [executionSettingsLocked]);
 
   useEffect(() => {
     if (!referenceMention || !actions.onSearchSessionReferences) {
@@ -1666,8 +1733,16 @@ export function SessionWorkspace({
 
   function updateExecutionProfile(patch) {
     if (executionControlsDisabled) return;
+    const save = Symbol('execution-settings-save');
+    executionSettingsSaveRef.current = save;
+    setExecutionSettingsSaving(true);
     Promise.resolve(actions.onExecutionProfileChange({ ...view.executionProfile, ...patch }))
-      .catch((error) => actions.onError?.(error));
+      .catch((error) => actions.onError?.(error))
+      .finally(() => {
+        if (executionSettingsSaveRef.current !== save) return;
+        executionSettingsSaveRef.current = null;
+        setExecutionSettingsSaving(false);
+      });
   }
 
   return (
@@ -2019,7 +2094,7 @@ export function SessionWorkspace({
                     <span aria-hidden="true">＋</span>附件
                   </label>
                 ) : null}
-                {!running && view.models.length && actions.onExecutionProfileChange ? (
+                {!executionSettingsLocked && view.models.length && actions.onExecutionProfileChange ? (
                   <div className="cwu-execution-controls" aria-label={labels.executionSettings || '执行设置'}>
                     <label title={labels.model || '模型'}>
                       <span>{labels.model || '模型'}</span>
@@ -2078,7 +2153,22 @@ export function SessionWorkspace({
                       type="button"
                     >⚡ Fast</button>
                   </div>
-                ) : !running && view.executionProfile.label ? <span className="cwu-execution-profile">{view.executionProfile.label}</span> : null}
+                ) : executionSettingsLocked ? (
+                  <>
+                    <button
+                      aria-controls="cwu-execution-settings-popover"
+                      aria-expanded={executionSettingsOpen}
+                      aria-haspopup="dialog"
+                      aria-label="查看当前执行设置"
+                      className="cwu-execution-summary"
+                      onClick={() => setExecutionSettingsOpen((open) => !open)}
+                      ref={executionSettingsButtonRef}
+                      type="button"
+                    >
+                      <span>执行设置</span><span aria-hidden="true" className="cwu-execution-info">ⓘ</span>
+                    </button>
+                  </>
+                ) : view.executionProfile.label ? <span className="cwu-execution-profile">{view.executionProfile.label}</span> : null}
               </div>
               <div className="cwu-composer-actions">
                 {running && actions.onInterrupt ? (
@@ -2104,6 +2194,22 @@ export function SessionWorkspace({
           </agent-session-composer>}
         </footer>
       </main>
+      {executionSettingsOpen ? (
+        <div
+          aria-label="当前执行设置"
+          className="cwu-execution-popover"
+          data-side={executionPopoverPosition.side}
+          id="cwu-execution-settings-popover"
+          ref={executionSettingsPopoverRef}
+          role="dialog"
+          style={{ left: executionPopoverPosition.left, top: executionPopoverPosition.top }}
+        >
+          <span><small>{labels.model || '模型'}</small><strong title={executionModelLabel}>{executionModelLabel}</strong></span>
+          <span><small>{labels.reasoning || '思考'}</small><strong>{reasoningEffortLabel(view.executionProfile.reasoningEffort)}</strong></span>
+          <span><small>{labels.permissions || '权限'}</small><strong>{executionAccessLabel}</strong></span>
+          <span><small>模式</small><strong>{view.executionProfile.serviceTier === 'priority' ? 'Fast' : '标准'}</strong></span>
+        </div>
+      ) : null}
       {subagentsOpen ? (
         <div className="cwu-subagent-backdrop" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setSubagentsOpen(false);

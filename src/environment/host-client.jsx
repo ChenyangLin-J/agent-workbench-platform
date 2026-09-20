@@ -726,8 +726,28 @@ function MinimalHostApp() {
     });
   }
 
+  async function updateExecutionProfile(executionProfile) {
+    if (!selectedId) throw new Error('请先新建或选择一个对话。');
+    setError('');
+    try {
+      const body = await request(`api/sessions/${encodeURIComponent(selectedId)}/execution-profile`, {
+        method: 'PATCH',
+        body: JSON.stringify(executionProfile),
+      });
+      setSession((current) => current?.sessionId === selectedId
+        ? { ...current, executionProfile: body.executionProfile }
+        : current);
+      return body.executionProfile;
+    } catch (nextError) {
+      await refreshSession(selectedId).catch(() => {});
+      setError(nextError.message);
+      throw nextError;
+    }
+  }
+
   const sharedReadOnly = session?.access?.kind === 'shared';
   const sessionMutable = !session?.runtimeContinuationRequired && !sharedReadOnly;
+  const executionSettingsMutable = sessionMutable && !['running', 'waiting'].includes(session?.status);
   const sessionBranchable = !sharedReadOnly;
   const detail = useMemo(() => session ? {
     session,
@@ -758,6 +778,7 @@ function MinimalHostApp() {
       onForkMessage: messageForkEnabled && sessionBranchable ? (input) => branchMessage(input, 'fork') : null,
       onDeleteQueuedTurn: queuedTurnsEnabled && sessionMutable ? deleteQueuedTurn : null,
       onRespondToRequest: sessionMutable ? respondToRequest : null,
+      onExecutionProfileChange: executionSettingsMutable ? updateExecutionProfile : null,
       onLoadEarlier: loadEarlierTurns,
       onLoadTechnicalDetails: loadTechnicalDetails,
       onError: (nextError) => setError(nextError.message),

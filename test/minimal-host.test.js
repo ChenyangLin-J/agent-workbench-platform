@@ -77,6 +77,82 @@ test('Minimal Host creates and runs project-free Sessions through the Core Kerne
   assert.equal('projectId' in detail.session, false);
 });
 
+test('Minimal Host validates, persists, and applies Session execution settings', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-execution-profile-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const provider = new FakeRuntimeProvider({
+    models: [{
+      id: 'gpt-sol', model: 'gpt-sol', displayName: 'GPT Sol', isDefault: true,
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: [{ reasoningEffort: 'medium' }, { reasoningEffort: 'high' }],
+      serviceTiers: [{ id: 'priority', name: 'Fast' }],
+    }, {
+      id: 'gpt-terra', model: 'gpt-terra', displayName: 'GPT Terra',
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: [{ reasoningEffort: 'medium' }],
+      serviceTiers: [],
+    }],
+  });
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const manifest = runManifest(root, 'run-execution-profile');
+  manifest.runtime = { provider: 'fake', model: 'gpt-sol', accessModes: ['restricted', 'full'] };
+  const host = createMinimalHost({ manifest, kernel, sessionStore: store, accessToken: 'test-token' });
+  const listening = await host.start();
+  t.after(() => host.stop());
+  const headers = { 'content-type': 'application/json', 'x-agent-workbench-token': 'test-token' };
+  const created = await fetch(`${listening.url}/api/sessions`, {
+    method: 'POST', headers, body: JSON.stringify({ title: 'Settings' }),
+  }).then((response) => response.json()).then((body) => body.session);
+  assert.equal(created.models.length, 2);
+  assert.deepEqual(created.accessModes.map((mode) => mode.id), ['restricted', 'full']);
+  assert.deepEqual(created.executionProfile, {
+    model: 'gpt-sol', reasoningEffort: 'high', accessMode: 'restricted', serviceTier: null,
+  });
+
+  const selectedProfile = {
+    model: 'gpt-sol', reasoningEffort: 'medium', accessMode: 'full', serviceTier: 'priority',
+  };
+  const selectedResponse = await fetch(`${listening.url}/api/sessions/${created.sessionId}/execution-profile`, {
+    method: 'PATCH', headers, body: JSON.stringify(selectedProfile),
+  });
+  assert.equal(selectedResponse.status, 200);
+  assert.deepEqual((await selectedResponse.json()).executionProfile, selectedProfile);
+  assert.equal(provider.createdSessions.length, 0);
+
+  const forged = await fetch(`${listening.url}/api/sessions/${created.sessionId}/execution-profile`, {
+    method: 'PATCH', headers, body: JSON.stringify({ ...selectedProfile, model: 'forged' }),
+  });
+  assert.equal(forged.status, 400);
+  assert.deepEqual((await store.get(created.sessionId)).executionProfile, selectedProfile);
+
+  await fetch(`${listening.url}/api/sessions/${created.sessionId}/turns`, {
+    method: 'POST', headers, body: JSON.stringify({ prompt: 'run' }),
+  });
+  assert.equal(provider.createdSessions[0].settings.model, 'gpt-sol');
+  assert.equal(provider.createdSessions[0].settings.reasoningEffort, 'medium');
+  assert.equal(provider.createdSessions[0].settings.sandbox, 'danger-full-access');
+  assert.equal(provider.createdSessions[0].settings.serviceTier, 'priority');
+  const activeUpdate = await fetch(`${listening.url}/api/sessions/${created.sessionId}/execution-profile`, {
+    method: 'PATCH', headers, body: JSON.stringify(selectedProfile),
+  });
+  assert.equal(activeUpdate.status, 409);
+
+  provider.createdSessions[0].complete();
+  await eventually(async () => (await store.get(created.sessionId)).status === 'idle');
+  const idleProfile = {
+    model: 'gpt-terra', reasoningEffort: 'medium', accessMode: 'restricted', serviceTier: null,
+  };
+  const idleUpdate = await fetch(`${listening.url}/api/sessions/${created.sessionId}/execution-profile`, {
+    method: 'PATCH', headers, body: JSON.stringify(idleProfile),
+  });
+  assert.equal(idleUpdate.status, 200);
+  assert.deepEqual(provider.createdSessions[0].settingsUpdates.at(-1), {
+    model: 'gpt-terra', reasoningEffort: 'medium', sandbox: 'workspace-write',
+    approvalPolicy: 'on-request', serviceTier: null,
+  });
+});
+
 test('Minimal Host persists native generated images and publishes authorized message media', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-result-image-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -303,7 +379,6 @@ test('Minimal Host defers an empty Runtime thread so the first Turn survives a H
 
 test('Minimal Host creates an idempotent Session with an unsent draft', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-initial-draft-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider();
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
@@ -315,7 +390,11 @@ test('Minimal Host creates an idempotent Session with an unsent draft', async (t
     sessionObserverHeader: 'x-session-observer',
   });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => {
+    await host.stop();
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  });
   const draft = '我正在看 Solver Engine 的实验 167。\n我需要：';
   const headers = {
     'content-type': 'application/json',

@@ -109,13 +109,19 @@ export class EnvironmentSessionStore {
     ownerId = null,
     runId = this.runId,
     draft = '',
+    executionProfile = null,
     idempotencyKey = null,
   } = {}) {
     const normalizedOwnerId = ownerId == null ? null : nonEmptyString(ownerId, 'Session owner');
     const normalizedTitle = nonEmptyString(title, 'Session title');
     const normalizedDraft = sessionDraft(draft);
+    const normalizedExecutionProfile = sessionExecutionProfile(executionProfile);
     const normalizedIdempotencyKey = idempotencyKey == null ? null : sessionCreateIdempotencyKey(idempotencyKey);
-    const fingerprint = sessionCreateFingerprint({ title: normalizedTitle, draft: normalizedDraft });
+    const fingerprint = sessionCreateFingerprint({
+      title: normalizedTitle,
+      draft: normalizedDraft,
+      executionProfile: normalizedExecutionProfile,
+    });
     let result;
     await this.#withGlobalMutation(async () => {
       const existing = normalizedIdempotencyKey
@@ -151,6 +157,7 @@ export class EnvironmentSessionStore {
         messages: [],
         technicalItems: [],
         plan: [],
+        ...(normalizedExecutionProfile ? { executionProfile: normalizedExecutionProfile } : {}),
         ...(normalizedIdempotencyKey ? {
           creationIdempotency: { key: normalizedIdempotencyKey, fingerprint, createdAt: timestamp },
         } : {}),
@@ -200,6 +207,7 @@ export class EnvironmentSessionStore {
           messages,
           technicalItems: structuredClone(source.technicalItems.filter((item) => retainedTurnIds.has(item.turnId))),
           plan: [],
+          ...(source.executionProfile ? { executionProfile: structuredClone(source.executionProfile) } : {}),
         });
       } finally {
         await release();
@@ -252,6 +260,7 @@ export class EnvironmentSessionStore {
         messages,
         technicalItems: [],
         plan: [],
+        ...(source.executionProfile ? { executionProfile: structuredClone(source.executionProfile) } : {}),
         sharedContinuation: {
           sourceSessionId,
           shareId: normalizedShareId,
@@ -288,6 +297,15 @@ export class EnvironmentSessionStore {
   async archive(sessionId, { ownerId = null } = {}) {
     await this.#mutateSession(sessionId, { ownerId }, (session) => {
       session.archivedAt ||= this.#time();
+    });
+    return this.get(sessionId, { ownerId });
+  }
+
+  async updateExecutionProfile(sessionId, executionProfile, { ownerId = null } = {}) {
+    const normalized = sessionExecutionProfile(executionProfile, { required: true });
+    await this.#mutateSession(sessionId, { ownerId }, (session) => {
+      session.executionProfile = normalized;
+      session.updatedAt = this.#time();
     });
     return this.get(sessionId, { ownerId });
   }
@@ -1034,11 +1052,7 @@ function sessionViewMetadata(session, metadata, { includeOwnerId = false } = {})
     plan: Array.isArray(metadata.plan) ? structuredClone(metadata.plan) : [],
     pendingRequests: [],
     runtimeBinding: null,
-    executionProfile: {
-      model: '',
-      reasoningEffort: 'medium',
-      accessMode: 'restricted',
-    },
+    executionProfile: metadata.executionProfile ? structuredClone(metadata.executionProfile) : null,
   };
 }
 
@@ -1079,6 +1093,7 @@ function writeSessionProjection(database, session, sequence) {
   const metadata = JSON.stringify({
     draft: typeof session.draft === 'string' ? session.draft : '',
     plan: Array.isArray(session.plan) ? session.plan : [],
+    executionProfile: session.executionProfile ? structuredClone(session.executionProfile) : null,
   });
   database.exec('BEGIN IMMEDIATE');
   try {
@@ -1221,6 +1236,7 @@ function validateStoredSession(session) {
     || !Array.isArray(session.messages) || !Array.isArray(session.technicalItems) || !Array.isArray(session.plan)) {
     throw storeError('SESSION_STORE_INVALID', `Stored Session is invalid: ${session.id}`, 500);
   }
+  if (session.executionProfile != null) sessionExecutionProfile(session.executionProfile, { required: true });
 }
 
 async function readSessionSnapshot(path, sessionId) {
@@ -1600,11 +1616,7 @@ function sessionView(session, binding = null, { includeOwnerId = false } = {}) {
     plan: structuredClone(session.plan),
     pendingRequests: [],
     runtimeBinding: binding ? structuredClone(binding) : null,
-    executionProfile: {
-      model: '',
-      reasoningEffort: 'medium',
-      accessMode: 'restricted',
-    },
+    executionProfile: session.executionProfile ? structuredClone(session.executionProfile) : null,
   };
 }
 
@@ -1948,8 +1960,21 @@ function turnIdempotencyKey(value) {
   return normalized;
 }
 
-function sessionCreateFingerprint({ title, draft }) {
-  return createHash('sha256').update(JSON.stringify({ title, draft })).digest('hex');
+function sessionCreateFingerprint({ title, draft, executionProfile }) {
+  return createHash('sha256').update(JSON.stringify({ title, draft, executionProfile })).digest('hex');
+}
+
+function sessionExecutionProfile(value, { required = false } = {}) {
+  if (value == null && !required) return null;
+  if (!plainObject(value)) throw storeError('SESSION_EXECUTION_PROFILE_INVALID', 'Session execution profile is invalid.', 400);
+  const model = typeof value.model === 'string' ? value.model.trim() : '';
+  const reasoningEffort = typeof value.reasoningEffort === 'string' ? value.reasoningEffort.trim() : '';
+  const accessMode = typeof value.accessMode === 'string' ? value.accessMode.trim() : '';
+  const serviceTier = value.serviceTier == null ? null : String(value.serviceTier).trim();
+  if (!reasoningEffort || !['restricted', 'full'].includes(accessMode)) {
+    throw storeError('SESSION_EXECUTION_PROFILE_INVALID', 'Session execution profile is invalid.', 400);
+  }
+  return { model, reasoningEffort, accessMode, serviceTier: serviceTier || null };
 }
 
 function plainObject(value) {

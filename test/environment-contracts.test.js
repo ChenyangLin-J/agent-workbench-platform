@@ -67,6 +67,20 @@ test('profiles opt into Agent artifact publication explicitly', () => {
   assert.equal(profile.features.agentArtifacts, true);
 });
 
+test('profiles explicitly allow only known execution access modes', () => {
+  const profile = normalizeEnvironmentProfile({
+    id: 'execution-modes',
+    runtime: { provider: 'codex', accessModes: ['restricted', 'full'] },
+  });
+  assert.deepEqual(profile.runtime.accessModes, ['restricted', 'full']);
+  assert.throws(() => normalizeEnvironmentProfile({
+    id: 'empty-execution-modes', runtime: { accessModes: [] },
+  }), /cannot be empty/);
+  assert.throws(() => normalizeEnvironmentProfile({
+    id: 'invalid-execution-modes', runtime: { accessModes: ['root'] },
+  }), /restricted or full/);
+});
+
 test('profiles reject unknown fields and embedded credential values', () => {
   assert.throws(() => normalizeEnvironmentProfile({ id: 'example', gold: ['answer'] }), /unsupported field: gold/);
   assert.throws(() => normalizeEnvironmentProfile({

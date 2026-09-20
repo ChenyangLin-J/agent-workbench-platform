@@ -83,7 +83,7 @@ export class InMemoryBindingStore {
 }
 
 export class FakeRuntimeProvider {
-  constructor({ id = 'fake', capabilities = {} } = {}) {
+  constructor({ id = 'fake', capabilities = {}, models = [] } = {}) {
     this.id = id;
     this.declaredCapabilities = normalizeRuntimeCapabilities(id, {
       resume: true,
@@ -94,6 +94,7 @@ export class FakeRuntimeProvider {
       ...capabilities,
     });
     this.createdSessions = [];
+    this.models = structuredClone(models);
   }
 
   capabilities() {
@@ -104,6 +105,10 @@ export class FakeRuntimeProvider {
     const session = new FakeRuntimeSession({ providerId: this.id, ...options });
     this.createdSessions.push(session);
     return session;
+  }
+
+  async listModels() {
+    return structuredClone(this.models);
   }
 }
 
@@ -120,6 +125,7 @@ export class FakeRuntimeSession extends EventEmitter {
     this.turnSequence = 0;
     this.startedTurns = [];
     this.steeredTurns = [];
+    this.settingsUpdates = [];
   }
 
   async start() {
@@ -210,6 +216,13 @@ export class FakeRuntimeSession extends EventEmitter {
       activeTurnId: this.activeTurnId,
       history: { id: this.runtimeSessionId, turns: structuredClone(this.startedTurns) },
     };
+  }
+
+  async updateSettings(settings = {}) {
+    if (this.activeTurnId) throw Object.assign(new Error('turn active'), { code: 'RUNTIME_TURN_ACTIVE' });
+    this.settings = structuredClone(settings);
+    this.settingsUpdates.push(structuredClone(settings));
+    return this.describe();
   }
 
   async unsubscribe() {

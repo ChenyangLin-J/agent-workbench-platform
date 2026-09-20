@@ -51,6 +51,23 @@ test('provider with steer capability follows up on the exact active Turn', async
   assert.deepEqual(runtime.steeredTurns, [{ runtimeTurnId: first.runtimeTurnId, input: 'more' }]);
 });
 
+test('Session Kernel exposes optional model discovery and rejects setting changes during a Turn', async (t) => {
+  const provider = new FakeRuntimeProvider({
+    models: [{ id: 'gpt-test', model: 'gpt-test' }],
+  });
+  const kernel = new AgentSessionKernel({ provider, bindingStore: new InMemoryBindingStore() });
+  t.after(() => kernel.close());
+  assert.deepEqual(await kernel.listModels(), [{ id: 'gpt-test', model: 'gpt-test' }]);
+  await kernel.attach('session-settings');
+  await kernel.updateSettings('session-settings', { model: 'gpt-test', reasoningEffort: 'high' });
+  assert.equal(provider.createdSessions[0].settingsUpdates.length, 1);
+  await kernel.submit('session-settings', 'start');
+  await assert.rejects(
+    kernel.updateSettings('session-settings', { model: 'gpt-test', reasoningEffort: 'medium' }),
+    (error) => error.code === 'RUNTIME_TURN_ACTIVE',
+  );
+});
+
 test('requests stay scoped to one product Session and use opaque request tokens', async (t) => {
   const provider = new FakeRuntimeProvider({ capabilities: { steer: true } });
   const kernel = new AgentSessionKernel({

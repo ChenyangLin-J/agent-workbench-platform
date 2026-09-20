@@ -35,6 +35,11 @@ export class AgentSessionKernel extends EventEmitter {
     return this.provider.capabilities();
   }
 
+  async listModels(options = {}) {
+    if (typeof this.provider.listModels !== 'function') return [];
+    return structuredClone(await this.provider.listModels(options));
+  }
+
   async attach(sessionId, options = {}) {
     assertSessionId(sessionId);
     const current = this.sessions.get(sessionId);
@@ -264,6 +269,21 @@ export class AgentSessionKernel extends EventEmitter {
       queuedTurnCount: (this.turnQueues.get(sessionId) || []).length,
       pendingRequests: this.getPendingRequests(sessionId),
     };
+  }
+
+  async updateSettings(sessionId, settings, options = {}) {
+    assertSessionId(sessionId);
+    await this.attach(sessionId, options);
+    const runtimeSession = this.sessions.get(sessionId);
+    if (runtimeSession.activeTurnId || this.startingTurns.has(sessionId)) {
+      throw kernelError('RUNTIME_TURN_ACTIVE', 'Cannot update settings while a Turn is active.', 409);
+    }
+    if (typeof runtimeSession.updateSettings !== 'function') {
+      throw kernelError('RUNTIME_SETTINGS_UPDATE_UNSUPPORTED', 'Provider cannot update Session settings.', 501);
+    }
+    const result = await runtimeSession.updateSettings(settings);
+    await this.#saveBinding(sessionId, { status: 'idle', lastError: null });
+    return { sessionId, ...result };
   }
 
   getPendingRequests(sessionId) {

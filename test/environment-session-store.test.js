@@ -51,6 +51,32 @@ test('project-free Session store persists bindings and Runtime events', async (t
   assert.equal((await store.load(session.sessionId)).runtimeSessionId, 'runtime-1');
 });
 
+test('Session execution profiles persist and copy into independent branches', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-profile-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot });
+  const executionProfile = {
+    model: 'gpt-test', reasoningEffort: 'high', accessMode: 'restricted', serviceTier: 'priority',
+  };
+  const source = await store.create({ title: 'Profile', executionProfile });
+  await store.recordUserInput(source.sessionId, 'hello', { turnId: 'turn-profile' });
+  await store.updateExecutionProfile(source.sessionId, { ...executionProfile, reasoningEffort: 'medium' });
+  const branch = await store.createBranch(source.sessionId, {
+    beforeTurnId: 'turn-profile', includeTargetTurn: true,
+  });
+  assert.deepEqual((await store.get(source.sessionId)).executionProfile, {
+    ...executionProfile, reasoningEffort: 'medium',
+  });
+  assert.deepEqual(branch.executionProfile, { ...executionProfile, reasoningEffort: 'medium' });
+
+  await store.close();
+  const reopened = new EnvironmentSessionStore({ stateRoot });
+  t.after(() => reopened.close());
+  assert.deepEqual((await reopened.get(source.sessionId)).executionProfile, {
+    ...executionProfile, reasoningEffort: 'medium',
+  });
+});
+
 test('Session store keeps one product-visible user message when Runtime echoes augmented input', async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'awb-session-user-echo-'));
   t.after(() => rm(stateRoot, { recursive: true, force: true }));

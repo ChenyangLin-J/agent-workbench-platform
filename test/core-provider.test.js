@@ -20,6 +20,12 @@ function providerHarness() {
       if (message.method === 'thread/read') {
         server.respond(message, { thread: { id: message.params.threadId, turns: [] } });
       }
+      if (message.method === 'model/list') {
+        server.respond(message, { data: [{ id: 'gpt-test', model: 'gpt-test', isDefault: true }] });
+      }
+      if (message.method === 'thread/settings/update') {
+        server.respond(message, { model: message.params.model, serviceTier: message.params.serviceTier });
+      }
       if (message.method === 'turn/start') {
         const id = `turn-${++turnSequence}`;
         server.respond(message, { turn: { id, status: 'inProgress' } });
@@ -99,6 +105,7 @@ test('Codex provider prepares each connection once and maps product execution se
   });
   const first = provider.createSession({ settings: { model: 'gpt-test', reasoningEffort: 'high', accessMode: 'full' } });
   const second = provider.createSession();
+  assert.equal((await provider.listModels())[0].model, 'gpt-test');
   await Promise.all([first.start(), second.start()]);
   assert.equal(prepared.length, 1);
   await first.create();
@@ -107,6 +114,23 @@ test('Codex provider prepares each connection once and maps product execution se
   assert.equal(request.params.sandbox, 'danger-full-access');
   assert.equal('reasoningEffort' in request.params, false);
   assert.equal('accessMode' in request.params, false);
+  await first.updateSettings({
+    model: 'gpt-test',
+    reasoningEffort: 'medium',
+    accessMode: 'restricted',
+    sandbox: 'workspace-write',
+    approvalPolicy: 'on-request',
+    serviceTier: 'priority',
+  });
+  const update = fake.messages.find((message) => message.method === 'thread/settings/update');
+  assert.deepEqual(update.params, {
+    threadId: first.runtimeSessionId,
+    model: 'gpt-test',
+    effort: 'medium',
+    approvalPolicy: 'on-request',
+    sandboxPolicy: { type: 'workspaceWrite' },
+    serviceTier: 'priority',
+  });
 });
 
 test('Codex Skill root preparation validates the expected runtime inventory', async () => {
