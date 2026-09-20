@@ -47,6 +47,52 @@ test('Queued Turn dispatcher starts the next Turn and removes it after Runtime a
   dispatcher.close();
 });
 
+test('Queued Turn dispatcher reports normal and recovered Runtime acceptance before removal', async () => {
+  const queue = new SessionTurnQueue({ uuid: () => 'queued-1' });
+  await queue.enqueue('session-a', { input: 'next', prompt: 'next', afterTurnId: 'turn-1' });
+  const accepted = [];
+  const dispatcher = createQueuedTurnDispatcher({
+    queue,
+    activeTurnForSession: () => false,
+    runtime: {
+      readSession: async () => ({ turns: [{ id: 'turn-1' }] }),
+      startTurn: async () => ({ id: 'turn-2' }),
+    },
+    events: { onAccepted: (...args) => accepted.push(args) },
+  });
+  await dispatcher.startNext('session-a');
+  assert.equal(accepted[0][2].id, 'turn-2');
+  assert.equal(accepted[0][3].recovered, false);
+  dispatcher.close();
+
+  const recoveredQueue = new SessionTurnQueue({
+    entries: {
+      'session-a': [{
+        id: 'queued-1', input: 'next', prompt: 'next', attachments: [], context: null,
+        afterTurnId: 'turn-1', status: 'starting', attempts: 1, startedTurnId: null,
+        createdAt: '2026-09-02T00:00:00.000Z', updatedAt: '2026-09-02T00:00:00.000Z',
+      }],
+    },
+  });
+  const recovered = [];
+  const recoveredDispatcher = createQueuedTurnDispatcher({
+    queue: recoveredQueue,
+    activeTurnForSession: () => false,
+    runtime: {
+      readSession: async () => ({ turns: [
+        { id: 'turn-1', items: [] },
+        { id: 'turn-2', items: [{ type: 'userMessage', text: 'next' }] },
+      ] }),
+      startTurn: async () => { throw new Error('must not restart'); },
+    },
+    events: { onAccepted: (...args) => recovered.push(args) },
+  });
+  await recoveredDispatcher.startNext('session-a');
+  assert.equal(recovered[0][2].id, 'turn-2');
+  assert.equal(recovered[0][3].recovered, true);
+  recoveredDispatcher.close();
+});
+
 test('Queued Turn recovery recognizes a previously accepted Turn', () => {
   assert.equal(queuedTurnWasAccepted({
     prompt: 'next',
@@ -56,6 +102,22 @@ test('Queued Turn recovery recognizes a previously accepted Turn', () => {
     turns: [
       { id: 'turn-1', items: [] },
       { id: 'turn-2', items: [{ type: 'userMessage', text: 'next' }] },
+    ],
+  }), true);
+});
+
+test('Queued Turn recovery ignores Session reference envelopes', () => {
+  assert.equal(queuedTurnWasAccepted({
+    prompt: 'inspect',
+    afterTurnId: 'turn-1',
+    startedTurnId: null,
+  }, {
+    turns: [
+      { id: 'turn-1', items: [] },
+      { id: 'turn-2', items: [{
+        type: 'userMessage',
+        text: 'inspect\n<agent-workbench-session-references>\n[{"kind":"session","version":1,"hostId":"personal-local","threadId":"thread-2"}]\n</agent-workbench-session-references>',
+      }] },
     ],
   }), true);
 });

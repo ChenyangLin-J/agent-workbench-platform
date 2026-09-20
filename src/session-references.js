@@ -6,6 +6,7 @@ export const MAX_SESSION_REFERENCES = 8;
 const ID_LIMIT = 200;
 const LABEL_LIMIT = 240;
 const DRAG_BYTES_LIMIT = 4096;
+const REFERENCE_ENVELOPE_TAG = 'agent-workbench-session-references';
 
 function boundedText(value, limit) {
   return String(value ?? '').trim().slice(0, limit);
@@ -105,4 +106,32 @@ export function removeComposerSessionMention(value, mention) {
   const text = String(value ?? '');
   if (!mention || mention.start < 0 || mention.end < mention.start || mention.end > text.length) return text;
   return `${text.slice(0, mention.start)}${text.slice(mention.end)}`.replace(/[ \t]{2,}/g, ' ');
+}
+
+export function createSessionReferenceEnvelopeInput(values) {
+  const references = normalizeSessionReferences(values).map(({ hostId, threadId, label, contextLabel }) => ({
+    hostId,
+    threadId,
+    label,
+    contextLabel,
+  }));
+  if (!references.length) return null;
+  return {
+    type: 'text',
+    text: `<${REFERENCE_ENVELOPE_TAG}>\n${JSON.stringify(references)}\n</${REFERENCE_ENVELOPE_TAG}>`,
+  };
+}
+
+export function parseSessionReferenceEnvelopes(value = '') {
+  const references = [];
+  const pattern = new RegExp(`\\n?<${REFERENCE_ENVELOPE_TAG}>([\\s\\S]*?)<\\/${REFERENCE_ENVELOPE_TAG}>\\n?`, 'g');
+  const text = String(value || '').replace(pattern, (_match, serialized) => {
+    try {
+      references.push(...normalizeSessionReferences(JSON.parse(serialized)));
+    } catch {
+      // Malformed envelopes stay hidden and never become authorized references.
+    }
+    return '\n';
+  }).replace(/^\s+|\s+$/g, '').replace(/\n{3,}/g, '\n\n');
+  return { text, references: normalizeSessionReferences(references) };
 }

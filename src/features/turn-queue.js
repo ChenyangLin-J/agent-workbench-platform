@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { parseAttachmentEnvelopes } from '../attachments.js';
+import { parseSessionReferenceEnvelopes } from '../session-references.js';
 
 const QUEUED_TURN_STATUSES = new Set(['queued', 'starting', 'started', 'failed']);
 
@@ -199,7 +200,15 @@ export function createQueuedTurnDispatcher({
         return null;
       }
       const session = await runtime.readSession(sessionId);
-      if (['starting', 'started', 'failed'].includes(nextTurn.status) && queuedTurnWasAccepted(nextTurn, session)) {
+      const recoveredTurn = ['starting', 'started', 'failed'].includes(nextTurn.status)
+        ? queuedTurnAcceptedBy(nextTurn, session)
+        : null;
+      if (recoveredTurn) {
+        try {
+          await events.onAccepted?.(sessionId, nextTurn, recoveredTurn, { recovered: true });
+        } catch (error) {
+          events.onError?.(error, sessionId);
+        }
         await queue.remove(sessionId, nextTurn.id);
         clearRetry(sessionId);
         const queueLength = queue.list(sessionId).length;
@@ -221,6 +230,11 @@ export function createQueuedTurnDispatcher({
       try {
         const acceptedEntry = queue.peek(sessionId);
         turn = await runtime.startTurn(sessionId, acceptedEntry.input, acceptedEntry, session);
+        try {
+          await events.onAccepted?.(sessionId, acceptedEntry, turn, { recovered: false });
+        } catch (error) {
+          events.onError?.(error, sessionId);
+        }
       } catch (error) {
         const failedTurn = await queue.markFailed(sessionId, nextTurn.id, error);
         events.publish?.(sessionId, {
@@ -262,13 +276,20 @@ export function createQueuedTurnDispatcher({
 }
 
 export function queuedTurnWasAccepted(entry, session) {
+  return Boolean(queuedTurnAcceptedBy(entry, session));
+}
+
+function queuedTurnAcceptedBy(entry, session) {
   const turns = session?.turns ?? [];
-  if (entry.startedTurnId && turns.some((turn) => turn.id === entry.startedTurnId)) return true;
+  if (entry.startedTurnId) {
+    const started = turns.find((turn) => turn.id === entry.startedTurnId);
+    if (started) return started;
+  }
   const baselineIndex = entry.afterTurnId ? turns.findIndex((turn) => turn.id === entry.afterTurnId) : -1;
   const candidates = baselineIndex >= 0 ? turns.slice(baselineIndex + 1) : [];
-  if (!candidates.length) return false;
-  if (!entry.prompt) return true;
-  return candidates.some((turn) => (turn.items ?? []).some((item) => userMessageText(item) === entry.prompt));
+  if (!candidates.length) return null;
+  if (!entry.prompt) return candidates[0];
+  return candidates.find((turn) => (turn.items ?? []).some((item) => userMessageText(item) === entry.prompt)) ?? null;
 }
 
 function normalizeEntry(value, fallbackTimestamp) {
@@ -332,7 +353,7 @@ function userMessageText(item) {
     .filter((part) => part?.type === 'text')
     .map((part) => String(part.text || ''))
     .join('\n');
-  return parseAttachmentEnvelopes(text).text.trim();
+  return parseSessionReferenceEnvelopes(parseAttachmentEnvelopes(text).text).text.trim();
 }
 
 function optionalId(value) {

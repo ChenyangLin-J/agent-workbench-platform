@@ -344,7 +344,7 @@
 .cwu-progress ol { display: grid; gap: 5px; margin: 0; padding-left: 20px; }
 .cwu-progress li[data-status="completed"] { text-decoration: line-through; opacity: .7; }
 .cwu-request { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 18px 0; border: 1px solid color-mix(in srgb, var(--cwu-running) 38%, var(--cwu-border)); border-radius: 12px; background: #fffaf0; padding: 14px; }
-.cwu-request p { margin: 4px 0 0; color: var(--cwu-muted); font-size: 12px; }
+.cwu-request p { margin: 4px 0 0; color: var(--cwu-muted); font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .cwu-user-input { display: grid; gap: 13px; margin: 18px 0; border: 1px solid color-mix(in srgb, var(--cwu-running) 38%, var(--cwu-border)); border-radius: 12px; background: #fffaf0; padding: 14px; }
 .cwu-user-input-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .cwu-user-input-heading span { color: var(--cwu-muted); font-size: 10px; }

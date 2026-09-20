@@ -3207,12 +3207,13 @@ export function SessionRequestCard({ request, onRespond }) {
   if (request.kind === 'item/tool/requestUserInput') {
     return <SessionUserInputCard onRespond={onRespond} request={request} />;
   }
+  const elicitation = request.kind === 'mcpServer/elicitation/request';
   return (
     <section className="cwu-request">
       <div><strong>{request.title}</strong><p>{request.detail}</p></div>
       <div>
         <button className="cwu-button" onClick={() => onRespond({ token: request.token, decision: 'decline' })} type="button">拒绝</button>
-        <button className="cwu-button" onClick={() => onRespond({ token: request.token, decision: 'acceptForSession' })} type="button">本 Session 允许</button>
+        {!elicitation ? <button className="cwu-button" onClick={() => onRespond({ token: request.token, decision: 'acceptForSession' })} type="button">本 Session 允许</button> : null}
         <button className="cwu-send" onClick={() => onRespond({ token: request.token, decision: 'accept' })} type="button">允许一次</button>
       </div>
     </section>

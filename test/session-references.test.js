@@ -5,9 +5,11 @@ import {
   MAX_SESSION_REFERENCES,
   SESSION_REFERENCE_DRAG_MIME,
   composerSessionMention,
+  createSessionReferenceEnvelopeInput,
   dataTransferHasSessionReference,
   normalizeSessionReference,
   normalizeSessionReferences,
+  parseSessionReferenceEnvelopes,
   removeComposerSessionMention,
   sessionReferenceFromDataTransfer,
   sessionReferenceKey,
@@ -65,4 +67,19 @@ test('Composer mention parsing keeps references separate from editable text', ()
   assert.equal(removeComposerSessionMention(value, mention), '请核对 ');
   assert.equal(composerSessionMention('mail@example.com'), null);
   assert.deepEqual(composerSessionMention('第一行\n@归档'), { start: 4, end: 7, query: '归档' });
+});
+
+test('reference envelopes round-trip without leaking into visible message text', () => {
+  const input = createSessionReferenceEnvelopeInput([
+    reference('thread-2', { label: 'Target', contextLabel: 'Project' }),
+  ]);
+  const parsed = parseSessionReferenceEnvelopes(`Prompt\n${input.text}`);
+  assert.equal(parsed.text, 'Prompt');
+  assert.deepEqual(parsed.references.map(({ threadId, label }) => ({ threadId, label })), [
+    { threadId: 'thread-2', label: 'Target' },
+  ]);
+  assert.deepEqual(parseSessionReferenceEnvelopes('<agent-workbench-session-references>bad</agent-workbench-session-references>'), {
+    text: '',
+    references: [],
+  });
 });
