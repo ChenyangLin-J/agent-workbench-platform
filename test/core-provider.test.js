@@ -17,6 +17,9 @@ function providerHarness() {
       if (message.method === 'thread/resume') {
         server.respond(message, { thread: { id: message.params.threadId, turns: [] }, initialTurnsPage: { data: [] } });
       }
+      if (message.method === 'thread/fork') {
+        server.respond(message, { thread: { id: `thread-${++threadSequence}`, turns: [] } });
+      }
       if (message.method === 'thread/read') {
         server.respond(message, { thread: { id: message.params.threadId, turns: [] } });
       }
@@ -110,10 +113,23 @@ test('Codex provider prepares each connection once and maps product execution se
   assert.equal(prepared.length, 1);
   await first.create();
   const request = fake.messages.find((message) => message.method === 'thread/start');
-  assert.equal(request.params.effort, 'high');
+  assert.equal(request.params.config.model_reasoning_effort, 'high');
+  assert.equal('effort' in request.params, false);
   assert.equal(request.params.sandbox, 'danger-full-access');
   assert.equal('reasoningEffort' in request.params, false);
   assert.equal('accessMode' in request.params, false);
+  const resumable = provider.createSession({ settings: {
+    model: 'gpt-test', reasoningEffort: 'medium', accessMode: 'restricted', config: { feature_flag: true },
+  } });
+  await resumable.start();
+  await resumable.resume('thread-resume');
+  const resume = fake.messages.find((message) => message.method === 'thread/resume');
+  assert.deepEqual(resume.params.config, { feature_flag: true, model_reasoning_effort: 'medium' });
+  assert.equal('effort' in resume.params, false);
+  await first.fork(null, { reasoningEffort: 'xhigh' });
+  const fork = fake.messages.find((message) => message.method === 'thread/fork');
+  assert.equal(fork.params.config.model_reasoning_effort, 'xhigh');
+  assert.equal('effort' in fork.params, false);
   await first.updateSettings({
     model: 'gpt-test',
     reasoningEffort: 'medium',
