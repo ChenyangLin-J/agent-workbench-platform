@@ -14,6 +14,7 @@ export class CodexAppServerProvider {
     this.connection = connection;
     this.connectionFor = connectionFor;
     this.prepareConnection = prepareConnection ? createCodexConnectionPreparation(prepareConnection) : null;
+    this.connectionPreparations = new WeakMap();
   }
 
   capabilities() {
@@ -32,7 +33,33 @@ export class CodexAppServerProvider {
 
   createSession({ host = null, cwd = null, settings = {} } = {}) {
     const connection = this.connectionFor ? this.connectionFor(host) : this.connection;
-    return new CodexRuntimeSession({ connection, cwd, settings, prepareConnection: this.prepareConnection });
+    return new CodexRuntimeSession({
+      connection,
+      cwd,
+      settings,
+      prepareConnection: (candidate) => this.#prepare(candidate),
+    });
+  }
+
+  async listModels({ host = null } = {}) {
+    const connection = this.connectionFor ? this.connectionFor(host) : this.connection;
+    await connection.start();
+    await this.#prepare(connection);
+    const result = await connection.request('model/list', { includeHidden: false, limit: 100 });
+    return Array.isArray(result?.data) ? structuredClone(result.data) : [];
+  }
+
+  async #prepare(connection) {
+    if (!this.prepareConnection) return;
+    let preparation = this.connectionPreparations.get(connection);
+    if (!preparation) {
+      preparation = Promise.resolve(this.prepareConnection(connection)).catch((error) => {
+        this.connectionPreparations.delete(connection);
+        throw error;
+      });
+      this.connectionPreparations.set(connection, preparation);
+    }
+    await preparation;
   }
 }
 
@@ -124,6 +151,30 @@ export class CodexRuntimeSession extends EventEmitter {
       activeTurnId: this.activeTurnId,
       history: result?.thread || null,
     };
+  }
+
+  async updateSettings(settings = {}) {
+    this.#assertSession();
+    if (this.activeTurnId) {
+      throw providerError('RUNTIME_TURN_ACTIVE', 'Cannot update settings while a Turn is active.', 409);
+    }
+    const previous = this.#state();
+    try {
+      const result = await this.connection.request(
+        'thread/settings/update',
+        codexThreadSettingsUpdateParams(this.runtimeSessionId, settings),
+      );
+      this.settings = structuredClone(settings);
+      this.runtimeProfile = {
+        ...(this.runtimeProfile || {}),
+        ...profileFromSettings(settings),
+        ...(profileFromResult(result) || {}),
+      };
+      return this.describe();
+    } catch (error) {
+      this.#restore(previous);
+      throw error;
+    }
   }
 
   async startTurn(input, params = {}) {
@@ -333,6 +384,36 @@ export function codexExecutionSettings(settings = {}) {
   return value;
 }
 
+function codexThreadSettingsUpdateParams(threadId, settings = {}) {
+  const value = codexExecutionSettings(settings);
+  const sandboxPolicy = codexSandboxPolicy(value.sandbox);
+  return {
+    threadId,
+    ...(value.model ? { model: value.model } : {}),
+    ...(value.effort ? { effort: value.effort } : {}),
+    ...(value.approvalPolicy ? { approvalPolicy: value.approvalPolicy } : {}),
+    ...(sandboxPolicy ? { sandboxPolicy } : {}),
+    ...('serviceTier' in value ? { serviceTier: value.serviceTier ?? null } : {}),
+  };
+}
+
+function codexSandboxPolicy(value) {
+  if (value && typeof value === 'object') return structuredClone(value);
+  if (value === 'danger-full-access') return { type: 'dangerFullAccess' };
+  if (value === 'workspace-write') return { type: 'workspaceWrite' };
+  return null;
+}
+
+function profileFromSettings(settings = {}) {
+  return {
+    ...(settings.model ? { model: settings.model } : {}),
+    ...(settings.reasoningEffort ? { reasoningEffort: settings.reasoningEffort } : {}),
+    ...(settings.approvalPolicy ? { approvalPolicy: settings.approvalPolicy } : {}),
+    ...(settings.sandbox ? { sandbox: settings.sandbox } : {}),
+    ...('serviceTier' in settings ? { serviceTier: settings.serviceTier ?? null } : {}),
+  };
+}
+
 function normalizeInput(input) {
   if (Array.isArray(input)) return structuredClone(input);
   const text = String(input || '').trim();
@@ -349,12 +430,16 @@ function findActiveTurnId(result) {
 }
 
 function profileFromResult(result) {
-  const profile = {
-    model: result?.model ?? null,
-    sandbox: result?.sandbox ?? null,
-    approvalPolicy: result?.approvalPolicy ?? null,
-  };
-  return Object.values(profile).some((value) => value != null) ? profile : null;
+  if (!result || typeof result !== 'object') return null;
+  const profile = {};
+  if (result.model != null) profile.model = result.model;
+  if (result.reasoningEffort != null || result.effort != null) {
+    profile.reasoningEffort = result.reasoningEffort ?? result.effort;
+  }
+  if (result.sandbox != null) profile.sandbox = result.sandbox;
+  if (result.approvalPolicy != null) profile.approvalPolicy = result.approvalPolicy;
+  if ('serviceTier' in result) profile.serviceTier = result.serviceTier ?? null;
+  return Object.keys(profile).length ? profile : null;
 }
 
 function mapCodexEvent(method, params, activeTurnId) {

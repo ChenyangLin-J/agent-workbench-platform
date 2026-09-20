@@ -634,6 +634,14 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /serviceTier/);
   assert.match(source, /cwu-execution-fast/);
   assert.match(styles, /\.cwu-execution-controls/);
+  assert.match(source, /<span>执行设置<\/span><span aria-hidden="true" className="cwu-execution-info">ⓘ<\/span>/);
+  assert.match(source, /className="cwu-execution-popover"/);
+  assert.match(source, /setExecutionSettingsSaving\(true\)/);
+  assert.match(source, /executionSettingsSaveRef\.current !== save/);
+  assert.match(source, /setExecutionSettingsSaving\(false\)/);
+  assert.match(source, /document\.addEventListener\('pointerdown', closeOutside\)/);
+  assert.match(source, /event\.key !== 'Escape'/);
+  assert.match(styles, /\.cwu-execution-popover \{ position: fixed;/);
   assert.match(source, /松开以上传附件/);
   assert.match(styles, /\.cwu-browser-row-action/);
   assert.match(source, /<svg aria-hidden="true" fill="none" viewBox="0 0 24 24">/);

@@ -34,6 +34,14 @@ export {
 } from './session-attachments.js';
 export { createMinimalHost } from './minimal-host.js';
 export {
+  defaultExecutionProfile,
+  executionAccessModes,
+  publicRuntimeModels,
+  runtimeExecutionSettings,
+  storedExecutionProfile,
+  validateExecutionProfile,
+} from './execution-profile.js';
+export {
   capabilitySnapshotsReady,
   copyCapabilitySnapshots,
   stageCapabilitySnapshots,

@@ -450,6 +450,15 @@
 .cwu-execution-fast:hover, .cwu-execution-fast:focus-visible { background: var(--cwu-soft); color: var(--cwu-text); }
 .cwu-execution-fast[aria-pressed="true"] { background: color-mix(in srgb, var(--cwu-accent) 14%, var(--cwu-soft)); color: var(--cwu-accent); font-weight: 650; }
 .cwu-execution-fast:disabled { cursor: default; opacity: .38; }
+.cwu-execution-summary { height: 29px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--cwu-border); border-radius: 8px; background: var(--cwu-surface); color: var(--cwu-muted); padding: 0 8px; font: inherit; font-size: 10px; cursor: pointer; white-space: nowrap; }
+.cwu-execution-summary:hover, .cwu-execution-summary:focus-visible, .cwu-execution-summary[aria-expanded="true"] { border-color: var(--cwu-accent); color: var(--cwu-text); outline: 0; }
+.cwu-execution-info { color: var(--cwu-muted); font-size: 13px; line-height: 1; }
+.cwu-execution-popover { position: fixed; z-index: 90; width: min(360px, calc(100vw - 24px)); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 18px; border: 1px solid var(--cwu-border); border-radius: 8px; background: color-mix(in srgb, var(--cwu-surface) 98%, transparent); padding: 13px 14px; box-shadow: 0 12px 32px rgba(30, 26, 23, .2); }
+.cwu-execution-popover::after { content: ""; position: absolute; left: 24px; bottom: -6px; width: 10px; height: 10px; border-right: 1px solid var(--cwu-border); border-bottom: 1px solid var(--cwu-border); background: var(--cwu-surface); transform: rotate(45deg); }
+.cwu-execution-popover[data-side="below"]::after { top: -6px; bottom: auto; border: 0; border-left: 1px solid var(--cwu-border); border-top: 1px solid var(--cwu-border); }
+.cwu-execution-popover > span { min-width: 0; display: grid; gap: 3px; }
+.cwu-execution-popover small { color: var(--cwu-muted); font-size: 9px; }
+.cwu-execution-popover strong { overflow: hidden; color: var(--cwu-text); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .cwu-attach-button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--cwu-border); border-radius: 8px; background: var(--cwu-surface); color: var(--cwu-text); padding: 5px 8px; cursor: pointer; }
 .cwu-attach-button:hover { border-color: var(--cwu-accent); color: var(--cwu-accent); }
 .cwu-attach-button[aria-disabled="true"] { cursor: default; opacity: .45; }

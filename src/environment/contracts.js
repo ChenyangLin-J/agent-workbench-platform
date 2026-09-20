@@ -122,11 +122,19 @@ export function assertNoSecretMaterial(value, label = 'value') {
 
 function normalizeRuntime(runtime = {}) {
   if (!plainObject(runtime)) throw new TypeError('environment profile runtime must be an object');
-  rejectUnknownKeys(runtime, new Set(['provider', 'model', 'reasoningEffort', 'modelGateway']), 'environment profile runtime');
+  rejectUnknownKeys(runtime, new Set(['provider', 'model', 'reasoningEffort', 'accessModes', 'modelGateway']), 'environment profile runtime');
+  const accessModes = runtime.accessModes == null
+    ? null
+    : normalizeOrderedStringList(runtime.accessModes, 'runtime accessModes');
+  if (accessModes && accessModes.length === 0) throw new TypeError('runtime accessModes cannot be empty');
+  if (accessModes?.some((mode) => !['restricted', 'full'].includes(mode))) {
+    throw new TypeError('runtime accessModes must contain only restricted or full');
+  }
   return {
     provider: nonEmptyString(runtime.provider || 'codex', 'runtime provider'),
     ...(runtime.model == null ? {} : { model: nonEmptyString(runtime.model, 'runtime model') }),
     ...(runtime.reasoningEffort == null ? {} : { reasoningEffort: nonEmptyString(runtime.reasoningEffort, 'runtime reasoningEffort') }),
+    ...(accessModes == null ? {} : { accessModes }),
     ...(runtime.modelGateway == null ? {} : { modelGateway: normalizeModelGateway(runtime.modelGateway) }),
   };
 }
@@ -272,6 +280,14 @@ function normalizeStringList(value, label) {
     throw new TypeError(`${label} must be an array of non-empty strings`);
   }
   return [...new Set(value.map((item) => item.trim()))].sort();
+}
+
+function normalizeOrderedStringList(value, label) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item.trim())) {
+    throw new TypeError(`${label} must be an array of non-empty strings`);
+  }
+  return [...new Set(value.map((item) => item.trim()))];
 }
 
 function isolationRank(value) {

@@ -6,6 +6,14 @@ import { extname, join } from 'node:path';
 import { MAX_SESSION_ATTACHMENT_BYTES } from '../attachments.js';
 import { SessionBranchController } from '../features/session-branch.js';
 import { SessionTurnQueue, createQueuedTurnDispatcher } from '../features/turn-queue.js';
+import {
+  defaultExecutionProfile,
+  executionAccessModes,
+  publicRuntimeModels,
+  runtimeExecutionSettings,
+  storedExecutionProfile,
+  validateExecutionProfile,
+} from './execution-profile.js';
 import { resolveContainedPath } from './paths.js';
 import { createSessionAttachmentPreview } from './session-attachment-preview.js';
 import { MinimalHostResultImageProjector } from './result-image-projector.js';
@@ -27,6 +35,8 @@ const DIAGNOSTIC_LOG_MAX_BYTES = 64 * 1024;
 const DIAGNOSTIC_LOG_DEFAULT_LINES = 200;
 const DIAGNOSTIC_LOG_MAX_LINES = 500;
 const MAX_INITIAL_SESSION_DRAFT_CHARS = 12_000;
+const MODEL_CATALOG_TTL_MS = 30_000;
+const MODEL_CATALOG_RETRY_MS = 5_000;
 
 export function createMinimalHost({
   manifest,
@@ -81,6 +91,8 @@ export function createMinimalHost({
   const clients = new Set();
   const portableRuntimePreparations = new Map();
   const turnSubmissionQueues = new Map();
+  let modelCatalog = { models: [], error: null, expiresAt: 0 };
+  let modelCatalogRequest = null;
   const server = createServer((request, response) => {
     void route(request, response).catch((error) => sendError(response, error));
   });
@@ -92,9 +104,10 @@ export function createMinimalHost({
     runtime: {
       readSession: async (sessionId) => sessionHistoryView(await sessionStore.get(sessionId)),
       startTurn: async (sessionId, input, queuedTurn) => {
+        const session = await readSession(sessionId, { ownerId: queuedTurn.context?.ownerId ?? null });
         const result = await kernel.submit(sessionId, input, {
           mode: 'queue',
-          ...runtimeAttachOptions(manifest),
+          ...runtimeAttachOptions(manifest, session.executionProfile),
         });
         const attachments = queuedTurn.attachments.length
           ? await commitEnvironmentSessionAttachments({
@@ -125,6 +138,46 @@ export function createMinimalHost({
   async function readSession(sessionId, { ownerId = null, includeOwnerId = false } = {}) {
     const session = await sessionStore.get(sessionId, { ownerId, includeOwnerId });
     return decorateSessionForCurrentRun(session);
+  }
+
+  async function runtimeModelCatalog({ refresh = false } = {}) {
+    if (!refresh && modelCatalog.expiresAt > Date.now()) return modelCatalog;
+    if (modelCatalogRequest) return modelCatalogRequest;
+    modelCatalogRequest = Promise.resolve(kernel.listModels?.())
+      .then((models) => {
+        modelCatalog = {
+          models: publicRuntimeModels(models),
+          error: null,
+          expiresAt: Date.now() + MODEL_CATALOG_TTL_MS,
+        };
+        return modelCatalog;
+      })
+      .catch((error) => {
+        modelCatalog = {
+          models: modelCatalog.models,
+          error: { code: String(error?.code || 'HOST_MODEL_CATALOG_UNAVAILABLE'), message: String(error?.message || '模型目录暂时不可用。') },
+          expiresAt: Date.now() + MODEL_CATALOG_RETRY_MS,
+        };
+        return modelCatalog;
+      })
+      .finally(() => { modelCatalogRequest = null; });
+    return modelCatalogRequest;
+  }
+
+  async function executionProfileView(session, options = {}) {
+    const catalog = await runtimeModelCatalog(options);
+    const fallback = defaultExecutionProfile(manifest, catalog.models);
+    const accessModes = executionAccessModes(manifest);
+    const executionProfile = storedExecutionProfile(session?.executionProfile, fallback);
+    if (!accessModes.some((mode) => mode.id === executionProfile.accessMode)) {
+      executionProfile.accessMode = fallback.accessMode;
+    }
+    return {
+      executionProfile,
+      models: catalog.models,
+      accessModes,
+      executionSettingsError: catalog.error,
+    };
   }
 
   async function readSessionForAccess(sessionId, access, permission = 'session.read') {
@@ -231,8 +284,10 @@ export function createMinimalHost({
           : await sessionRuntimeStore.load(session.sessionId || session.id))
       : knownRuntimeBinding;
     const detachedFromCurrentRun = portableSessionNeedsCurrentRuntime(session, runtimeBinding);
+    const execution = await executionProfileView(session);
     return {
       ...session,
+      ...execution,
       runtimeBinding: publicRuntimeBinding(runtimeBinding),
       composerDisabled: false,
       runtimeContinuationRequired: false,
@@ -247,18 +302,18 @@ export function createMinimalHost({
   async function prepareOwnedSessionRuntime(session) {
     const sessionId = session.sessionId || session.id;
     if (!portableSessionNeedsCurrentRuntime(session)) {
-      return kernel.attach(sessionId, runtimeAttachOptions(manifest));
+      return kernel.attach(sessionId, runtimeAttachOptions(manifest, session.executionProfile));
     }
     const inFlight = portableRuntimePreparations.get(sessionId);
     if (inFlight) return inFlight;
     const preparation = (async () => {
       const existing = await sessionRuntimeStore.load(sessionId);
       if (existing?.runtimeSessionId) {
-        return kernel.attach(sessionId, runtimeAttachOptions(manifest));
+        return kernel.attach(sessionId, runtimeAttachOptions(manifest, session.executionProfile));
       }
       let attached = false;
       try {
-        const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest));
+        const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest, session.executionProfile));
         attached = true;
         await sessionRuntimeStore.save(sessionId, {
           continuationContext: portableBranchContext(session),
@@ -314,6 +369,14 @@ export function createMinimalHost({
     if (request.method === 'GET' && url.pathname === '/api/environment') {
       return sendJson(response, 200, hostEnvironmentView(manifest));
     }
+    if (request.method === 'GET' && url.pathname === '/api/runtime/models') {
+      const catalog = await runtimeModelCatalog();
+      return sendJson(response, catalog.error ? 503 : 200, {
+        models: catalog.models,
+        accessModes: executionAccessModes(manifest),
+        error: catalog.error,
+      });
+    }
     if (request.method === 'POST' && url.pathname === '/api/runtime/stop') {
       if (typeof onStopRequested !== 'function') throw hostError('HOST_STOP_UNAVAILABLE', 'Host stop is not configured.', 501);
       sendJson(response, 202, { stopping: true });
@@ -363,6 +426,7 @@ export function createMinimalHost({
     if (request.method === 'POST' && url.pathname === '/api/sessions') {
       const body = await readJsonBody(request);
       const draft = initialSessionDraft(body.draft);
+      const executionProfile = (await executionProfileView({})).executionProfile;
       const idempotencyKey = initialSessionIdempotencyKey(
         request.headers['idempotency-key'] ?? body.idempotencyKey,
       );
@@ -379,6 +443,7 @@ export function createMinimalHost({
             ownerId,
             runId: manifest.id,
             draft,
+            executionProfile,
             idempotencyKey,
           })
         : {
@@ -388,6 +453,7 @@ export function createMinimalHost({
               ownerId,
               runId: manifest.id,
               draft,
+              executionProfile,
             }),
           };
       return sendJson(response, 201, {
@@ -422,7 +488,11 @@ export function createMinimalHost({
             : messages.map((message) => ({ ...message, attachments: [], media: [] })),
         });
         if (continuation.created) {
-          await kernel.attach(continuation.session.sessionId, runtimeAttachOptions(manifest));
+          const execution = await executionProfileView(continuation.session);
+          await kernel.attach(
+            continuation.session.sessionId,
+            runtimeAttachOptions(manifest, execution.executionProfile),
+          );
           await sessionRuntimeStore.save(continuation.session.sessionId, {
             continuationContext: sharedContinuationContext(continuation.session),
           });
@@ -545,6 +615,59 @@ export function createMinimalHost({
       if (!removed) throw hostError('HOST_QUEUED_TURN_NOT_FOUND', 'Queued Turn not found.', 404);
       return sendJson(response, 200, { removed, queueLength: queue.list(sessionId).length });
     }
+    const executionProfileRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/execution-profile$/);
+    if (executionProfileRoute && request.method === 'PATCH') {
+      const sessionId = decodeURIComponent(executionProfileRoute[1]);
+      return serializeTurnSubmission(sessionId, async () => {
+        const session = await requireOwnedSessionAccess(sessionId, sessionAccess);
+        const runtimeBinding = await sessionRuntimeStore.load(sessionId);
+        if (['running', 'waiting'].includes(session.status) || runtimeBinding?.activeTurnId) {
+          throw hostError('HOST_SESSION_ACTIVE', 'Session 执行中，完成或停止后再切换执行设置。', 409);
+        }
+        if (typeof sessionStore.updateExecutionProfile !== 'function') {
+          throw hostError('HOST_EXECUTION_PROFILE_UNSUPPORTED', '当前 Session store 不支持执行设置。', 501);
+        }
+        const body = await readJsonBody(request);
+        const catalog = await runtimeModelCatalog({ refresh: modelCatalog.error != null });
+        const fallback = defaultExecutionProfile(manifest, catalog.models);
+        const current = storedExecutionProfile(session.executionProfile, fallback);
+        const next = validateExecutionProfile(body, {
+          manifest,
+          models: catalog.models,
+          fallback: current,
+        });
+        let runtimeUpdated = false;
+        if (runtimeBinding?.runtimeSessionId) {
+          await kernel.updateSettings(
+            sessionId,
+            runtimeExecutionSettings(next),
+            runtimeAttachOptions(manifest, current),
+          );
+          runtimeUpdated = true;
+        }
+        try {
+          await sessionStore.updateExecutionProfile(sessionId, next, { ownerId });
+        } catch (error) {
+          if (runtimeUpdated) {
+            try {
+              await kernel.updateSettings(
+                sessionId,
+                runtimeExecutionSettings(current),
+                runtimeAttachOptions(manifest, current),
+              );
+            } catch (compensationError) {
+              await sessionRuntimeStore.save(sessionId, {
+                status: 'error',
+                lastError: `execution_profile_compensation_failed:${compensationError?.code || compensationError?.message || 'unknown'}`,
+              }).catch(() => {});
+            }
+          }
+          throw error;
+        }
+        const updated = await readSession(sessionId, { ownerId });
+        return sendJson(response, 200, { executionProfile: updated.executionProfile, session: updated });
+      });
+    }
     const technicalTurnRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/turns\/([^/]+)\/technical-items$/);
     if (technicalTurnRoute && request.method === 'GET') {
       const sessionId = decodeURIComponent(technicalTurnRoute[1]);
@@ -590,7 +713,7 @@ export function createMinimalHost({
         if (accessed.kind === 'owned' && !session.runtimeContinuationRequired) {
           const runtimeBinding = await sessionRuntimeStore.load(sessionId);
           if (runtimeBinding?.runtimeSessionId) {
-            await kernel.attach(sessionId, runtimeAttachOptions(manifest));
+            await kernel.attach(sessionId, runtimeAttachOptions(manifest, session.executionProfile));
             session = await readSession(sessionId, { ownerId });
           }
         }
@@ -639,6 +762,7 @@ export function createMinimalHost({
         return serializeTurnSubmission(sessionId, async () => {
           let turnAccepted = false;
           try {
+            const currentSession = await requireOwnedSessionAccess(sessionId, sessionAccess);
             if (turn.attachments.length) requireAttachmentsEnabled(attachmentsEnabled);
             const attachmentInputs = attachmentsEnabled
               ? await resolveEnvironmentSessionAttachmentInputs({
@@ -648,7 +772,7 @@ export function createMinimalHost({
                   store: sessionResourceStore,
                 })
               : [];
-            const binding = await prepareOwnedSessionRuntime(session);
+            const binding = await prepareOwnedSessionRuntime(currentSession);
             const runtimeState = await sessionRuntimeStore.load(sessionId);
             const continuationContext = runtimeState?.continuationContext;
             const continuationAttachments = Array.isArray(runtimeState?.continuationAttachments)
@@ -692,7 +816,7 @@ export function createMinimalHost({
             } else {
               const result = await kernel.submit(sessionId, input, {
                 mode: requestedMode,
-                ...runtimeAttachOptions(manifest),
+                ...runtimeAttachOptions(manifest, currentSession.executionProfile),
               });
               turnAccepted = true;
               const committedAttachments = turn.attachments.length
@@ -1132,7 +1256,8 @@ function createMinimalHostBranchController({
     continuationAttachments = null,
     continuationContext = null,
   } = {}) {
-    const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest));
+    const session = await sessionStore.get(sessionId);
+    const binding = await kernel.attach(sessionId, runtimeAttachOptions(manifest, session.executionProfile));
     if (!portableHistory) return binding;
     await sessionRuntimeStore.save(sessionId, {
       ...(continuationAttachments?.length ? { continuationAttachments } : {}),
@@ -1162,7 +1287,7 @@ function createMinimalHostBranchController({
           : kernel.fork(
               sourceSessionId,
               reservation.sessionId,
-              { lastTurnId, ...runtimeAttachOptions(manifest) },
+              { lastTurnId, ...runtimeAttachOptions(manifest, reservation.executionProfile) },
             )
       ),
       submit: async ({ session, input, reservation, context }) => {
@@ -1183,7 +1308,7 @@ function createMinimalHostBranchController({
           ),
           {
             mode: 'queue',
-            ...runtimeAttachOptions(manifest),
+            ...runtimeAttachOptions(manifest, session.executionProfile),
           },
         );
         reservation.branchInputAttachments = attachments.length
@@ -1292,16 +1417,13 @@ function requireQueuedTurnsEnabled(enabled) {
   if (!enabled) throw hostError('HOST_QUEUED_TURNS_DISABLED', 'Queued Turns are disabled for this Environment.', 403);
 }
 
-function runtimeAttachOptions(manifest) {
-  const selfContained = selfContainedEphemeralRun(manifest);
+function runtimeAttachOptions(manifest, executionProfile = null) {
+  const profile = executionProfile || defaultExecutionProfile(manifest, []);
+  const settings = runtimeExecutionSettings(profile);
+  if (!settings.model) delete settings.model;
   return {
     cwd: manifest.paths.workspace,
-    settings: {
-      ...(manifest.runtime?.model ? { model: manifest.runtime.model } : {}),
-      ...(manifest.runtime?.reasoningEffort ? { reasoningEffort: manifest.runtime.reasoningEffort } : {}),
-      sandbox: selfContained ? 'danger-full-access' : 'workspace-write',
-      approvalPolicy: selfContained ? 'never' : 'on-request',
-    },
+    settings,
   };
 }
 
@@ -1310,12 +1432,6 @@ function authorizedResourceRoots(manifest) {
     manifest.paths.workspace,
     ...(manifest.isolation?.filesystem?.readableRoots || []),
   ].filter((value) => typeof value === 'string' && value.trim()))];
-}
-
-function selfContainedEphemeralRun(manifest) {
-  return manifest.isolation?.effectiveLevel === 'ephemeral-machine'
-    && ['no-external-effects', 'read-only-data-adapter-allowlist']
-      .includes(manifest.isolation?.enforcement?.externalEffects?.mode);
 }
 
 function normalizeTurnRequest(body) {
