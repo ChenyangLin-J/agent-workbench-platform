@@ -68,6 +68,8 @@
 }
 .cwu-browser-row { width: calc(100% - 12px); min-width: 0; display: flex; align-items: stretch; margin: 1px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--cwu-text); }
 .cwu-browser-row:hover { background: color-mix(in srgb, var(--cwu-accent) 6%, transparent); }
+.cwu-browser-row.is-reference-draggable { cursor: grab; }
+.cwu-browser-row.is-reference-draggable:active { cursor: grabbing; }
 .cwu-browser-row.is-active { background: color-mix(in srgb, var(--cwu-accent) 13%, var(--cwu-soft)); }
 .cwu-browser-row.is-unread { background: color-mix(in srgb, var(--cwu-unread) 13%, var(--cwu-surface)); }
 .cwu-browser-row-main { min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: inherit; padding: 9px 5px 9px 10px; text-align: left; font: inherit; cursor: pointer; }
@@ -228,6 +230,14 @@
 .cwu-message-editor button:last-child { border-color: var(--cwu-text); background: var(--cwu-text); color: var(--cwu-surface); }
 .cwu-message-editor button:disabled { cursor: default; opacity: .45; }
 .cwu-message-resource-group { display: grid; gap: 5px; margin-top: 9px; }
+.cwu-message-references { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.cwu-message-references button { min-width: 0; max-width: 260px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid color-mix(in srgb, var(--cwu-accent) 32%, var(--cwu-border)); border-radius: 8px; background: color-mix(in srgb, var(--cwu-accent) 7%, var(--cwu-surface)); color: var(--cwu-text); padding: 5px 8px; font: inherit; font-size: 10px; cursor: pointer; }
+.cwu-message-references button:hover, .cwu-message-references button:focus-visible { border-color: var(--cwu-accent); outline: 0; }
+.cwu-message-references button:disabled { cursor: default; }
+.cwu-message-references button.is-unavailable { border-style: dashed; color: var(--cwu-muted); }
+.cwu-message-references i { flex: 0 0 auto; color: var(--cwu-accent); font-style: normal; font-weight: 700; }
+.cwu-message-references span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cwu-message-references small { flex: 0 0 auto; color: var(--cwu-error); font-size: 9px; }
 .cwu-message-resource-group > strong { color: var(--cwu-muted); font-size: 10px; font-weight: 650; }
 .cwu-message-attachments { display: flex; flex-wrap: wrap; gap: 6px; }
 .cwu-message-attachment { max-width: 260px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--cwu-border); border-radius: 8px; background: var(--cwu-surface); padding: 5px 8px; color: var(--cwu-muted); font: inherit; font-size: 10px; text-align: left; cursor: pointer; }
@@ -334,7 +344,7 @@
 .cwu-progress ol { display: grid; gap: 5px; margin: 0; padding-left: 20px; }
 .cwu-progress li[data-status="completed"] { text-decoration: line-through; opacity: .7; }
 .cwu-request { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 18px 0; border: 1px solid color-mix(in srgb, var(--cwu-running) 38%, var(--cwu-border)); border-radius: 12px; background: #fffaf0; padding: 14px; }
-.cwu-request p { margin: 4px 0 0; color: var(--cwu-muted); font-size: 12px; }
+.cwu-request p { margin: 4px 0 0; color: var(--cwu-muted); font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .cwu-user-input { display: grid; gap: 13px; margin: 18px 0; border: 1px solid color-mix(in srgb, var(--cwu-running) 38%, var(--cwu-border)); border-radius: 12px; background: #fffaf0; padding: 14px; }
 .cwu-user-input-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .cwu-user-input-heading span { color: var(--cwu-muted); font-size: 10px; }
@@ -390,6 +400,22 @@
 .cwu-composer.is-dragging { border-color: var(--cwu-accent); box-shadow: 0 12px 36px rgba(40, 34, 28, .12), 0 0 0 3px color-mix(in srgb, var(--cwu-accent) 14%, transparent); }
 .cwu-attachment-dropzone { position: absolute; z-index: 4; inset: 5px; display: grid; place-items: center; border: 1px dashed var(--cwu-accent); border-radius: 12px; background: color-mix(in srgb, var(--cwu-surface) 92%, var(--cwu-accent)); color: var(--cwu-accent); font-size: 12px; font-weight: 650; pointer-events: none; }
 .cwu-composer-form { display: contents; }
+.cwu-reference-picker { position: absolute; z-index: 8; right: 10px; bottom: calc(100% + 8px); left: 10px; max-height: min(320px, 42vh); overflow-y: auto; border: 1px solid var(--cwu-border); border-radius: 8px; background: var(--cwu-surface); padding: 5px; box-shadow: 0 16px 42px rgba(20, 18, 16, .2); }
+.cwu-reference-picker > button { width: 100%; min-width: 0; display: grid; gap: 3px; border: 0; border-radius: 6px; background: transparent; color: var(--cwu-text); padding: 9px 10px; text-align: left; font: inherit; cursor: pointer; }
+.cwu-reference-picker > button:hover, .cwu-reference-picker > button.is-active { background: var(--cwu-soft); }
+.cwu-reference-picker strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.cwu-reference-picker small { overflow: hidden; color: var(--cwu-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+.cwu-reference-picker-state { padding: 12px 10px; color: var(--cwu-muted); text-align: center; font-size: 11px; }
+.cwu-reference-picker-state.is-error { color: var(--cwu-error); }
+.cwu-references { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 7px; }
+.cwu-references > span { min-width: 0; max-width: min(260px, 100%); display: inline-flex; align-items: center; gap: 5px; border: 1px solid color-mix(in srgb, var(--cwu-accent) 34%, var(--cwu-border)); border-radius: 8px; background: color-mix(in srgb, var(--cwu-accent) 7%, var(--cwu-surface)); padding: 5px 6px 5px 8px; color: var(--cwu-text); }
+.cwu-references > span.is-unavailable { border-style: dashed; color: var(--cwu-muted); }
+.cwu-references i { flex: 0 0 auto; color: var(--cwu-accent); font-style: normal; font-weight: 700; }
+.cwu-references strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.cwu-references small { flex: 0 0 auto; color: var(--cwu-error); font-size: 9px; }
+.cwu-references button { width: 22px; height: 22px; flex: 0 0 22px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--cwu-muted); padding: 0; font: inherit; font-size: 15px; cursor: pointer; }
+.cwu-references button:hover, .cwu-references button:focus-visible { background: color-mix(in srgb, var(--cwu-text) 7%, transparent); color: var(--cwu-text); outline: 0; }
+.cwu-reference-error { display: block; padding: 0 7px 7px; color: var(--cwu-error); font-size: 10px; }
 .cwu-attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 2px 4px 7px; }
 .cwu-attachment { width: min(270px, 100%); min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--cwu-border); border-radius: 10px; background: var(--cwu-soft); padding: 7px 7px 7px 9px; color: var(--cwu-text); }
 .cwu-attachment.is-error { border-color: color-mix(in srgb, var(--cwu-error) 52%, var(--cwu-border)); }

@@ -41,6 +41,16 @@ import {
 import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
 import { normalizeSessionFeatures } from '../capabilities.js';
 import { normalizeAttachmentPolicy, normalizeSessionAttachment } from '../attachments.js';
+import {
+  MAX_SESSION_REFERENCES,
+  composerSessionMention,
+  dataTransferHasSessionReference,
+  normalizeSessionReferences,
+  removeComposerSessionMention,
+  sessionReferenceFromDataTransfer,
+  sessionReferenceKey,
+  setSessionReferenceDataTransfer,
+} from '../session-references.js';
 import { tokenizeSqlPreview } from '../file-preview.js';
 import { useSessionUserInput } from '../ui-hooks.js';
 
@@ -716,8 +726,15 @@ export function SessionBrowser({
                     : [session.contextLabel, formatTime(session.updatedAt)].filter(Boolean).join(' · '));
                 return (
                 <div
-                  className={`cwu-browser-row ${session.id === view.selectedSessionId ? 'is-active' : ''} ${unread ? 'is-unread' : ''}`}
+                  className={`cwu-browser-row ${session.id === view.selectedSessionId ? 'is-active' : ''} ${unread ? 'is-unread' : ''} ${session.reference ? 'is-reference-draggable' : ''}`}
+                  draggable={Boolean(session.reference)}
                   key={session.id}
+                  onDragStart={(event) => {
+                    if (!session.reference || !setSessionReferenceDataTransfer(event.dataTransfer, session.reference)) {
+                      event.preventDefault();
+                    }
+                  }}
+                  title={session.reference ? (labels.dragReference || '拖到输入框以引用此 Session') : undefined}
                 >
                   <button className="cwu-browser-row-main" onClick={() => actions.onSelect?.(session)} type="button">
                     <span
@@ -924,6 +941,11 @@ export function SessionWorkspace({
   const messageActivityRef = useRef({ sessionId: view.sessionId, key: '' });
   const [draft, setDraft] = useState(view.draft);
   const [attachments, setAttachments] = useState([]);
+  const [references, setReferences] = useState([]);
+  const [referenceMention, setReferenceMention] = useState(null);
+  const [referenceOptions, setReferenceOptions] = useState([]);
+  const [referenceActiveIndex, setReferenceActiveIndex] = useState(0);
+  const [referenceSearchState, setReferenceSearchState] = useState({ loading: false, error: '' });
   const [attachmentUploadState, setAttachmentUploadState] = useState({ status: 'idle', error: '' });
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [attachmentDragKind, setAttachmentDragKind] = useState('files');
@@ -986,6 +1008,11 @@ export function SessionWorkspace({
     transcriptTouchYRef.current = null;
     setDraft(view.draft);
     setAttachments([]);
+    setReferences([]);
+    setReferenceMention(null);
+    setReferenceOptions([]);
+    setReferenceActiveIndex(0);
+    setReferenceSearchState({ loading: false, error: '' });
     setAttachmentUploadState({ status: 'idle', error: '' });
     setAttachmentDragActive(false);
     setAttachmentDragKind('files');
@@ -1004,6 +1031,41 @@ export function SessionWorkspace({
       if (focusFrame != null) cancelAnimationFrame(focusFrame);
     };
   }, [view.sessionId]);
+
+  useEffect(() => {
+    if (!referenceMention || !actions.onSearchSessionReferences) {
+      setReferenceOptions([]);
+      setReferenceSearchState({ loading: false, error: '' });
+      return undefined;
+    }
+    let cancelled = false;
+    const timeout = setTimeout(async () => {
+      setReferenceSearchState({ loading: true, error: '' });
+      try {
+        const result = await actions.onSearchSessionReferences({
+          query: referenceMention.query,
+          cursor: null,
+          sourceSessionId: view.sessionId,
+        });
+        if (cancelled) return;
+        const values = Array.isArray(result) ? result : result?.references || result?.items;
+        const selectedKeys = new Set(references.map(sessionReferenceKey));
+        const options = normalizeSessionReferences(values, { maximum: MAX_SESSION_REFERENCES })
+          .filter((reference) => reference.threadId !== view.sessionId && !selectedKeys.has(sessionReferenceKey(reference)));
+        setReferenceOptions(options);
+        setReferenceActiveIndex(0);
+        setReferenceSearchState({ loading: false, error: '' });
+      } catch (error) {
+        if (cancelled) return;
+        setReferenceOptions([]);
+        setReferenceSearchState({ loading: false, error: error?.message || 'Session 搜索失败。' });
+      }
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [actions.onSearchSessionReferences, referenceMention?.query, references, view.sessionId]);
 
   useEffect(() => {
     const followAfterViewportChange = () => {
@@ -1125,26 +1187,110 @@ export function SessionWorkspace({
     transcriptScrollTopRef.current = target.scrollHeight;
   }
 
+  function updateReferenceMention(value, selectionStart) {
+    if (!actions.onSearchSessionReferences || references.length >= MAX_SESSION_REFERENCES) {
+      setReferenceMention(null);
+      return;
+    }
+    setReferenceMention(composerSessionMention(value, selectionStart));
+  }
+
+  function addSessionReference(reference) {
+    if (!reference || reference.threadId === view.sessionId) {
+      setReferenceSearchState({ loading: false, error: '不能引用当前 Session。' });
+      return false;
+    }
+    const next = normalizeSessionReferences([...references, reference]);
+    if (next.length === references.length) {
+      const duplicate = references.some((item) => sessionReferenceKey(item) === sessionReferenceKey(reference));
+      setReferenceSearchState({
+        loading: false,
+        error: duplicate ? '这个 Session 已经引用。' : `每轮最多引用 ${MAX_SESSION_REFERENCES} 个 Session。`,
+      });
+      return false;
+    }
+    setReferences(next);
+    setReferenceSearchState({ loading: false, error: '' });
+    return true;
+  }
+
+  function selectSessionReference(reference) {
+    if (!referenceMention || !addSessionReference(reference)) return;
+    const nextDraft = removeComposerSessionMention(draft, referenceMention);
+    setDraft(nextDraft);
+    actions.onDraftChange?.(nextDraft);
+    setReferenceMention(null);
+    setReferenceOptions([]);
+    requestAnimationFrame(() => {
+      const target = composerRef.current;
+      if (!target) return;
+      target.focus();
+      target.setSelectionRange(referenceMention.start, referenceMention.start);
+    });
+  }
+
+  async function resolveSubmittedReferences(submittedReferences) {
+    if (!submittedReferences.length) return [];
+    if (!actions.onResolveSessionReferences) {
+      setReferences(submittedReferences.map((reference) => ({ ...reference, unavailable: true })));
+      setReferenceSearchState({ loading: false, error: '当前宿主无法验证这些 Session 引用。' });
+      return null;
+    }
+    let result;
+    try {
+      result = await actions.onResolveSessionReferences({
+        references: submittedReferences,
+        sourceSessionId: view.sessionId,
+      });
+    } catch (error) {
+      setReferenceSearchState({ loading: false, error: error?.message || 'Session 引用验证失败。' });
+      return null;
+    }
+    const resolved = normalizeSessionReferences(Array.isArray(result) ? result : result?.references);
+    const resolvedByKey = new Map(resolved.map((reference) => [sessionReferenceKey(reference), reference]));
+    const projected = submittedReferences.map((reference) => (
+      resolvedByKey.get(sessionReferenceKey(reference)) || { ...reference, unavailable: true }
+    ));
+    if (projected.some((reference) => reference.unavailable)) {
+      setReferences(projected);
+      setReferenceSearchState({ loading: false, error: '有 Session 引用已不可用，请移除后再发送。' });
+      return null;
+    }
+    return projected;
+  }
+
   async function submit(mode = 'turn') {
     const prompt = draft.trim();
     if ((!prompt && !readyAttachments.length) || submitting || uploading || !actions.onSubmit) return;
     const submittedDraft = draft;
     const submittedAttachments = readyAttachments;
+    const submittedReferences = references;
+    setSubmitting(true);
+    const resolvedReferences = await resolveSubmittedReferences(submittedReferences);
+    if (resolvedReferences == null) {
+      setSubmitting(false);
+      return;
+    }
     submitFollowRef.current = true;
     followLatest();
-    setSubmitting(true);
     setDraft('');
     setAttachments((current) => current.filter((attachment) => attachment.status === 'error'));
+    setReferences([]);
+    setReferenceMention(null);
+    setReferenceOptions([]);
+    setReferenceSearchState({ loading: false, error: '' });
     setAttachmentUploadState({ status: 'idle', error: '' });
     try {
       await actions.onSubmit({
         prompt,
         mode,
         attachments: submittedAttachments,
+        references: resolvedReferences,
       });
     } catch (error) {
       setDraft(submittedDraft);
       setAttachments((current) => [...submittedAttachments, ...current].slice(0, uploadPolicy.maxCount));
+      setReferences(submittedReferences);
       throw error;
     } finally {
       setSubmitting(false);
@@ -1278,7 +1424,18 @@ export function SessionWorkspace({
   }
 
   function handleAttachmentDrag(event) {
-    if (!dataTransferHasFiles(event.dataTransfer)
+    const hasSessionReference = dataTransferHasSessionReference(event.dataTransfer);
+    const transferHasFiles = dataTransferHasFiles(event.dataTransfer);
+    if (hasSessionReference) {
+      event.preventDefault();
+      const interaction = attachmentInteractionRef.current;
+      if (interaction.composerDisabled || interaction.uploading || !actions.onResolveSessionReferences) return;
+      event.dataTransfer.dropEffect = transferHasFiles ? 'none' : 'link';
+      setAttachmentDragKind(transferHasFiles ? 'invalid-reference-mix' : 'session-reference');
+      setAttachmentDragActive(true);
+      return;
+    }
+    if (!transferHasFiles
       || (!actions.onUploadAttachments && !actions.onResolveDroppedDirectories)) return;
     event.preventDefault();
     const interaction = attachmentInteractionRef.current;
@@ -1300,7 +1457,29 @@ export function SessionWorkspace({
   }
 
   async function handleAttachmentDrop(event) {
-    if (!dataTransferHasFiles(event.dataTransfer)
+    const hasSessionReference = dataTransferHasSessionReference(event.dataTransfer);
+    const transferHasFiles = dataTransferHasFiles(event.dataTransfer);
+    if (hasSessionReference) {
+      event.preventDefault();
+      setAttachmentDragActive(false);
+      setAttachmentDragKind('files');
+      if (transferHasFiles) {
+        setReferenceSearchState({ loading: false, error: 'Session 引用不能与文件在同一次拖放中混合。' });
+        return;
+      }
+      if (!actions.onResolveSessionReferences) {
+        setReferenceSearchState({ loading: false, error: '当前宿主不支持 Session 引用。' });
+        return;
+      }
+      const reference = sessionReferenceFromDataTransfer(event.dataTransfer);
+      if (!reference) {
+        setReferenceSearchState({ loading: false, error: '无法读取这个 Session 引用。' });
+        return;
+      }
+      addSessionReference(reference);
+      return;
+    }
+    if (!transferHasFiles
       || (!actions.onUploadAttachments && !actions.onResolveDroppedDirectories)) return;
     event.preventDefault();
     setAttachmentDragActive(false);
@@ -1406,6 +1585,36 @@ export function SessionWorkspace({
       `粘贴${structuredAttachment ? '内容' : '文本'}-${compactLocalTimestamp(new Date())}.${structuredAttachment ? 'md' : 'txt'}`,
       { type: structuredAttachment ? 'text/markdown' : 'text/plain' },
     )]);
+  }
+
+  function handleComposerKeyDown(event) {
+    if (referenceMention) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (referenceOptions.length) {
+          const direction = event.key === 'ArrowDown' ? 1 : -1;
+          setReferenceActiveIndex((current) => (
+            (current + direction + referenceOptions.length) % referenceOptions.length
+          ));
+        }
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        if (referenceOptions[referenceActiveIndex]) selectSessionReference(referenceOptions[referenceActiveIndex]);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setReferenceMention(null);
+        setReferenceOptions([]);
+        return;
+      }
+    }
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      submit(composer.primaryMode);
+    }
   }
 
   async function openSubagents() {
@@ -1543,6 +1752,7 @@ export function SessionWorkspace({
                     onForkMessage={enabledFeatures.messageFork ? actions.onForkMessage : null}
                     onOpenAttachment={actions.onOpenAttachment}
                     onOpenLink={actions.onOpenLink}
+                    onOpenSessionReference={actions.onOpenSessionReference}
                     onResolveMedia={actions.onResolveMedia}
                     onRevealLink={actions.onRevealLink}
                     revealLabel={labels.revealFile}
@@ -1668,7 +1878,11 @@ export function SessionWorkspace({
           >
           {attachmentDragActive ? (
             <div className="cwu-attachment-dropzone" role="status">{
-              attachmentDragKind === 'directories'
+              attachmentDragKind === 'session-reference'
+                ? (labels.sessionReferenceDrop || '引用这个 Session')
+                : attachmentDragKind === 'invalid-reference-mix'
+                  ? (labels.sessionReferenceMixedDrop || 'Session 引用不能与文件混合拖放')
+              : attachmentDragKind === 'directories'
                 ? (labels.directoryDrop || '松开以引用文件夹')
                 : attachmentDragKind === 'mixed'
                   ? (labels.mixedDrop || '松开以添加文件夹引用和附件')
@@ -1677,6 +1891,58 @@ export function SessionWorkspace({
           ) : null}
           <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); if (composer.primaryMode) submit(composer.primaryMode); }}>
             {extensions.renderComposerOverlay?.({ draft, session: view, setDraft }) || null}
+            {referenceMention ? (
+              <div aria-label={labels.sessionReferencePicker || '选择 Session'} className="cwu-reference-picker" role="listbox">
+                {referenceSearchState.loading ? <div className="cwu-reference-picker-state">{labels.sessionReferenceLoading || '正在搜索…'}</div> : null}
+                {!referenceSearchState.loading && referenceSearchState.error ? (
+                  <div className="cwu-reference-picker-state is-error" role="alert">{referenceSearchState.error}</div>
+                ) : null}
+                {!referenceSearchState.loading && !referenceSearchState.error && !referenceOptions.length ? (
+                  <div className="cwu-reference-picker-state">{labels.sessionReferenceEmpty || '没有匹配的 Session'}</div>
+                ) : null}
+                {referenceOptions.map((reference, index) => (
+                  <button
+                    aria-selected={index === referenceActiveIndex}
+                    className={index === referenceActiveIndex ? 'is-active' : ''}
+                    key={sessionReferenceKey(reference)}
+                    onClick={() => selectSessionReference(reference)}
+                    onMouseEnter={() => setReferenceActiveIndex(index)}
+                    role="option"
+                    type="button"
+                  >
+                    <strong>{reference.label}</strong>
+                    <small>
+                      {[reference.contextLabel, reference.archived ? '已归档' : '', reference.updatedAt ? defaultFormatTime(reference.updatedAt) : '']
+                        .filter(Boolean).join(' · ')}
+                    </small>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {references.length ? (
+              <div aria-label={labels.sessionReferences || '已引用 Sessions'} className="cwu-references">
+                {references.map((reference) => (
+                  <span className={reference.unavailable ? 'is-unavailable' : ''} key={sessionReferenceKey(reference)}>
+                    <i aria-hidden="true">@</i>
+                    <strong title={reference.label}>{reference.label}</strong>
+                    {reference.unavailable ? <small>不可用</small> : null}
+                    <button
+                      aria-label={`移除 Session 引用：${reference.label}`}
+                      disabled={submitting}
+                      onClick={() => {
+                        setReferences((current) => current.filter((item) => sessionReferenceKey(item) !== sessionReferenceKey(reference)));
+                        setReferenceSearchState({ loading: false, error: '' });
+                      }}
+                      title="移除引用"
+                      type="button"
+                    >×</button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {!referenceMention && referenceSearchState.error ? (
+              <span className="cwu-reference-error" role="alert">{referenceSearchState.error}</span>
+            ) : null}
             {attachments.length || attachmentUploadState.error ? (
               <div className="cwu-attachments" aria-live="polite">
                 {attachments.map((attachment) => (
@@ -1725,13 +1991,9 @@ export function SessionWorkspace({
               onChange={(event) => {
                 setDraft(event.target.value);
                 actions.onDraftChange?.(event.target.value);
+                updateReferenceMention(event.target.value, event.target.selectionStart);
               }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                  event.preventDefault();
-                  submit(composer.primaryMode);
-                }
-              }}
+              onKeyDown={handleComposerKeyDown}
               onPaste={handleComposerPaste}
               placeholder={labels.composerPlaceholder || '补充需求、反馈问题，或者继续修改…'}
               ref={composerRef}
@@ -2448,6 +2710,7 @@ function Message({
   onForkMessage,
   onOpenAttachment,
   onOpenLink,
+  onOpenSessionReference,
   onResolveMedia,
   onRevealLink,
   revealLabel,
@@ -2527,7 +2790,7 @@ function Message({
     if (!prompt || savingEdit || !canEdit) return;
     setSavingEdit(true);
     try {
-      await onEditMessage({ messageId: message.id, turnId: message.turnId, prompt });
+      await onEditMessage({ messageId: message.id, turnId: message.turnId, prompt, references: message.references });
       setEditing(false);
     } finally {
       setSavingEdit(false);
@@ -2538,7 +2801,7 @@ function Message({
     if (forking || !canFork) return;
     setForking(true);
     try {
-      await onForkMessage({ messageId: message.id, turnId: message.turnId, prompt: message.content });
+      await onForkMessage({ messageId: message.id, turnId: message.turnId, prompt: message.content, references: message.references });
     } finally {
       setForking(false);
     }
@@ -2575,6 +2838,24 @@ function Message({
   return (
     <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'} ${editing ? 'is-editing' : ''}`} data-message-id={message.id} phase={message.phase} role={message.role}>
       {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
+      {isUser && message.references?.length ? (
+        <div aria-label="引用的 Sessions" className="cwu-message-references">
+          {message.references.map((reference) => (
+            <button
+              className={reference.unavailable ? 'is-unavailable' : ''}
+              disabled={reference.unavailable || !onOpenSessionReference}
+              key={sessionReferenceKey(reference)}
+              onClick={() => onOpenSessionReference?.(reference, message)}
+              title={[reference.contextLabel, reference.unavailable ? '不可用' : '打开 Session'].filter(Boolean).join(' · ')}
+              type="button"
+            >
+              <i aria-hidden="true">@</i>
+              <span>{reference.label}</span>
+              {reference.unavailable ? <small>不可用</small> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {messageContent}
       {!editing && (canEdit || canFork) ? (
         <div className="cwu-message-actions" aria-label="消息操作">
@@ -2926,12 +3207,13 @@ export function SessionRequestCard({ request, onRespond }) {
   if (request.kind === 'item/tool/requestUserInput') {
     return <SessionUserInputCard onRespond={onRespond} request={request} />;
   }
+  const elicitation = request.kind === 'mcpServer/elicitation/request';
   return (
     <section className="cwu-request">
       <div><strong>{request.title}</strong><p>{request.detail}</p></div>
       <div>
         <button className="cwu-button" onClick={() => onRespond({ token: request.token, decision: 'decline' })} type="button">拒绝</button>
-        <button className="cwu-button" onClick={() => onRespond({ token: request.token, decision: 'acceptForSession' })} type="button">本 Session 允许</button>
+        {!elicitation ? <button className="cwu-button" onClick={() => onRespond({ token: request.token, decision: 'acceptForSession' })} type="button">本 Session 允许</button> : null}
         <button className="cwu-send" onClick={() => onRespond({ token: request.token, decision: 'accept' })} type="button">允许一次</button>
       </div>
     </section>

@@ -441,7 +441,7 @@ test('Minimal Host keeps owned portable Session Edit and Fork actions available'
   assert.match(source, /onEditMessage: messageEditEnabled && sessionBranchable/);
   assert.match(source, /onForkMessage: messageForkEnabled && sessionBranchable/);
   assert.match(source, /intent === 'edit' \? \{ prompt \} : \{\}/);
-  assert.match(ui, /onForkMessage\(\{ messageId: message\.id, turnId: message\.turnId, prompt: message\.content \}\)/);
+  assert.match(ui, /onForkMessage\(\{ messageId: message\.id, turnId: message\.turnId, prompt: message\.content, references: message\.references \}\)/);
   assert.match(source, /const branchable = session\.access\?\.kind !== 'shared';/);
   assert.match(source, /模型服务暂时不可用，本轮已结束。你可以编辑这条消息后重试/);
   assert.match(source, /all\\s\+\\d\+\\s\+channels/);
@@ -622,6 +622,15 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /labels\.directoryDrop \|\| '松开以引用文件夹'/);
   assert.match(source, /actions\.onExecutionProfileChange/);
   assert.match(source, /actions\.onLoadTechnicalDetails/);
+  assert.match(source, /actions\.onSearchSessionReferences/);
+  assert.match(source, /actions\.onResolveSessionReferences/);
+  assert.match(source, /setSessionReferenceDataTransfer\(event\.dataTransfer, session\.reference\)/);
+  assert.match(source, /sessionReferenceFromDataTransfer\(event\.dataTransfer\)/);
+  assert.match(source, /references: resolvedReferences/);
+  assert.match(source, /className="cwu-reference-picker"/);
+  assert.match(source, /className="cwu-message-references"/);
+  assert.match(styles, /\.cwu-reference-picker/);
+  assert.match(styles, /\.cwu-references/);
   assert.match(source, /serviceTier/);
   assert.match(source, /cwu-execution-fast/);
   assert.match(styles, /\.cwu-execution-controls/);
@@ -682,7 +691,10 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
     composerDisabled: true,
     activeActivityKind: 'contextCompaction',
     activityLabel: '整理上下文',
-    messages: [{ id: 'm1', role: 'user', content: '问题', turnStatus: 'completed', canEdit: true, canFork: true }],
+    messages: [{
+      id: 'm1', role: 'user', content: '问题', turnStatus: 'completed', canEdit: true, canFork: true,
+      references: [{ kind: 'session', version: 1, hostId: 'personal-local', threadId: 'target', label: '目标 Session' }],
+    }],
     technicalDetailsAvailable: ['turn-1', 'turn-1'],
     technicalDetailsLoading: true,
     hasEarlierTurns: true,
@@ -702,6 +714,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.equal(session.activityKind, 'contextCompaction');
   assert.equal(session.activityLabel, '整理上下文');
   assert.equal(session.messages[0].canEdit, true);
+  assert.equal(session.messages[0].references[0].threadId, 'target');
   assert.equal(session.messages[0].turnStatus, 'completed');
   assert.deepEqual(session.technicalDetailsAvailable, ['turn-1']);
   assert.equal(session.technicalDetailsLoading, true);

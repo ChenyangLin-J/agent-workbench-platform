@@ -1,4 +1,5 @@
 import { normalizeResourceDescriptor } from './resources.js';
+import { parseSessionReferenceEnvelopes } from './session-references.js';
 
 export const MAX_SESSION_ATTACHMENTS = 5;
 export const MAX_SESSION_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -113,7 +114,11 @@ export function sessionItemAttachmentPresentation(item = {}) {
     : Array.isArray(item.content)
       ? item.content.map((part) => part?.text || part?.inputText || '').filter(Boolean).join('\n')
       : '';
-  return parseAttachmentEnvelopes(content, { fallbackId: String(item.id || 'message') });
+  const presentation = parseAttachmentEnvelopes(content, { fallbackId: String(item.id || 'message') });
+  return {
+    ...presentation,
+    text: parseSessionReferenceEnvelopes(presentation.text).text,
+  };
 }
 
 function inputTypeForKind(kind) {

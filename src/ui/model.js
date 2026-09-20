@@ -4,6 +4,7 @@ import {
   sessionStatusTone as sharedSessionStatusTone,
 } from '../session.js';
 import { normalizeSessionAttachment } from '../attachments.js';
+import { normalizeSessionReference, normalizeSessionReferences } from '../session-references.js';
 import TurndownService from 'turndown';
 import { gfm as turndownGfm } from 'turndown-plugin-gfm';
 
@@ -175,6 +176,7 @@ export function normalizeSessionViewModel(value = {}) {
           turnStatus: stringOrNull(message?.turnStatus),
           canEdit: Boolean(message?.canEdit),
           canFork: Boolean(message?.canFork),
+          references: normalizeSessionReferences(message?.references),
           attachments: Array.isArray(message?.attachments)
             ? message.attachments.map((attachment, attachmentIndex) => ({
                 ...normalizeSessionAttachment(attachment, `attachment-${index}-${attachmentIndex}`),
@@ -483,6 +485,7 @@ export function normalizeSessionBrowserViewModel(value = {}) {
         canEnd: Boolean(session?.canEnd),
         favorited: Boolean(session?.favorited),
         canFavorite: session?.canFavorite !== false,
+        reference: normalizeSessionReference(session?.reference),
       }))
     : [];
   sessions.sort((left, right) => {
