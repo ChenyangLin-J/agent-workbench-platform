@@ -6,6 +6,22 @@ export {
 } from './session.js';
 
 export {
+  MAX_SESSION_REFERENCES,
+  SESSION_REFERENCE_DRAG_MIME,
+  SESSION_REFERENCE_KIND,
+  SESSION_REFERENCE_VERSION,
+  composerSessionMention,
+  dataTransferHasSessionReference,
+  encodeSessionReferenceDrag,
+  normalizeSessionReference,
+  normalizeSessionReferences,
+  removeComposerSessionMention,
+  sessionReferenceFromDataTransfer,
+  sessionReferenceKey,
+  setSessionReferenceDataTransfer,
+} from './session-references.js';
+
+export {
   APP_SERVER_FEATURES,
   APP_SERVER_REQUEST_METHODS,
   CodexAppServerApi,
