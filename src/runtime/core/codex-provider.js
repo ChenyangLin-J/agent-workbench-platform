@@ -367,8 +367,14 @@ export class CodexRuntimeSession extends EventEmitter {
 
 function codexSessionParams(cwd, settings) {
   const normalized = codexExecutionSettings(settings);
+  const config = {
+    ...(normalized.config || {}),
+    ...(normalized.effort != null ? { model_reasoning_effort: normalized.effort } : {}),
+  };
+  delete normalized.effort;
   return {
     ...normalized,
+    ...(Object.keys(config).length ? { config } : {}),
     ...(cwd ? { cwd } : {}),
   };
 }
