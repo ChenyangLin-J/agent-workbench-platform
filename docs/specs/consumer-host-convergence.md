@@ -53,7 +53,7 @@ The Composer has one editing state: the textarea remains visible and no formatte
 
 DataMama migration is intentionally separate from Platform implementation: its production branch and release lifecycle remain consumer-owned. Replace consumer patches only in an isolated worktree and only after the corresponding Platform contract has browser acceptance.
 
-Current adoption is intentionally asymmetric: Personal production pins `v0.20.0`, while Datamama production remains on its accepted `v0.19.1` Run. This is expected decoupling, not version drift by itself. Datamama adopts a later Platform candidate only when its mounted surfaces or a Datamama requirement need it; Personal does the same independently. Platform now dispatches configured impacted-consumer preflights and validates structured, SHA-bound promotion evidence. Datamama's formal contract gate additionally proves an isolated candidate Environment/Run through a disposable Gateway and real browser; these release mechanics remain separate from the Host Kit migration above.
+Current adoption is intentionally asymmetric: Personal production pins `v0.20.0`, while Datamama production remains on its accepted `v0.19.1` Run. This is expected decoupling, not version drift by itself. Datamama adopts a later Platform candidate only when its mounted surfaces or a Datamama requirement need it; Personal does the same independently. Platform publishes a tag once its own tests pass and records the impacted consumers in the Release; configured consumer preflights are early signals only. Each consumer runs its gate when it adopts a tag — Datamama's formal contract gate proves an isolated Environment/Run through a disposable Gateway and real browser. These release mechanics remain separate from the Host Kit migration above.
 
 ## Acceptance
 
@@ -70,4 +70,4 @@ Current adoption is intentionally asymmetric: Personal production pins `v0.20.0`
 - Personal consumes the released state/event slice through the public package and tests only package mounting, Host adapters and product-owned effects for compatible upgrades.
 - Plain rich-text paste, a standalone heading, and a single list item preserve literal text and remain in the editable Composer; structurally complex paste becomes an attachment and no Composer preview is rendered.
 - Existing project-free Platform tests and Minimal Host browser smoke remain green.
-- A Platform commit candidate and a consumer's formal release pin are recorded as separate states. Candidate acceptance can happen before the stable tag, but no shared migration is called deployed until the same accepted Platform SHA is promoted and formally pinned.
+- A Platform release and a consumer's formal pin are recorded as separate states. No shared migration is called deployed in a consumer until that consumer has accepted and formally pinned the released tag.

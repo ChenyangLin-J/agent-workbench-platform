@@ -38,7 +38,7 @@ Pin a release tag from any GitHub or GitLab consumer:
 }
 ```
 
-Replace `vX.Y.Z` with an existing release tag. Consumers may automatically accept a newer patch in their current minor line after their own tests pass; minor and major upgrades require product-level review. The complete version, release, consumer-canary, and rollback workflow is in [`docs/operations/RELEASING.md`](docs/operations/RELEASING.md).
+Replace `vX.Y.Z` with an existing release tag. Consumers may automatically accept a newer patch in their current minor line after their own tests pass; minor and major upgrades require product-level review. Releases do not wait for consumer acceptance; each consumer verifies a tag when it adopts it. The complete version, release, consumer-adoption, and rollback workflow is in [`docs/operations/RELEASING.md`](docs/operations/RELEASING.md).
 
 Consumers provide React and their own compatible Codex CLI version. This lets independent products keep separate accounts and upgrade from `0.145.x` to `0.147.x` without forking Core:
 

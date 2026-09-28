@@ -6,7 +6,6 @@ import {
   changedRootExportSources,
   parseConsumerList,
   rootExportMap,
-  validateConsumerAcceptance,
 } from "../.github/scripts/consumer-impact.mjs";
 
 test("repository-only changes do not request consumer acceptance", () => {
@@ -80,77 +79,4 @@ test("consumer override parsing rejects unknown names", () => {
   assert.deepEqual(parseConsumerList("personal,datamama,personal"), ["datamama", "personal"]);
   assert.deepEqual(parseConsumerList("none"), []);
   assert.throws(() => parseConsumerList("other"), /Unknown consumer/);
-});
-
-test("release acceptance must cover every required consumer", () => {
-  const candidateSha = "a".repeat(40);
-  const evidence = JSON.stringify({
-    schema: "agent-workbench.consumer-acceptance-set/v1",
-    platformCommit: candidateSha,
-    reference: "consumer artifacts",
-    acceptances: [
-      {
-        consumer: "personal",
-        consumerCommit: "b".repeat(40),
-        platformCommit: candidateSha,
-        platformWorktreeDirty: false,
-        consumerWorktreeDirty: false,
-        ok: true,
-        formalEvidence: true,
-        gate: "core:accept",
-        candidateMounted: true,
-        skippedRequiredTests: 0,
-      },
-      {
-        consumer: "datamama",
-        consumerCommit: "c".repeat(40),
-        platformCommit: candidateSha,
-        platformWorktreeDirty: false,
-        consumerWorktreeDirty: false,
-        ok: true,
-        formalEvidence: true,
-        gate: "contract",
-        candidateMounted: true,
-        gatewayMounted: true,
-        requiredBrowserTestsRan: true,
-        skippedRequiredTests: 0,
-      },
-    ],
-  });
-  assert.deepEqual(validateConsumerAcceptance({
-    required: "personal,datamama",
-    evidence,
-    candidateSha,
-  }).acceptedConsumers, ["datamama", "personal"]);
-  assert.deepEqual(validateConsumerAcceptance({
-    required: "",
-    evidence: JSON.stringify({
-      schema: "agent-workbench.consumer-acceptance-set/v1",
-      platformCommit: candidateSha,
-      acceptances: [],
-    }),
-    candidateSha,
-  }).acceptedConsumers, []);
-  assert.throws(() => validateConsumerAcceptance({
-    required: "personal,datamama",
-    evidence: JSON.stringify({
-      schema: "agent-workbench.consumer-acceptance-set/v1",
-      platformCommit: candidateSha,
-      acceptances: [JSON.parse(evidence).acceptances[0]],
-    }),
-    candidateSha,
-  }), /Missing consumer acceptance: datamama/);
-  assert.throws(() => validateConsumerAcceptance({
-    required: "",
-    evidence: "",
-    candidateSha,
-  }), /valid JSON/);
-  assert.throws(() => validateConsumerAcceptance({
-    required: "datamama",
-    evidence: JSON.stringify({
-      ...JSON.parse(evidence),
-      acceptances: [{ ...JSON.parse(evidence).acceptances[1], gatewayMounted: false }],
-    }),
-    candidateSha,
-  }), /candidate-mounted Gateway/);
 });
