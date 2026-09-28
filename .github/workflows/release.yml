@@ -7,10 +7,6 @@ on:
         description: Full 40-character tested Platform commit SHA to promote
         required: true
         type: string
-      acceptance_evidence:
-        description: agent-workbench.consumer-acceptance-set/v1 JSON bound to this Platform SHA
-        required: true
-        type: string
       impact_override:
         description: Optional comma-separated consumer override, or none
         required: false
@@ -66,22 +62,17 @@ jobs:
             --head HEAD \
             --github-output "${GITHUB_OUTPUT}" \
             --github-summary "${GITHUB_STEP_SUMMARY}"
-      - name: Validate consumer acceptance
-        id: consumer-acceptance
-        env:
-          CONSUMER_ACCEPTANCE_REQUIRED: ${{ steps.consumer-impact.outputs.consumers }}
-          CONSUMER_ACCEPTANCE_EVIDENCE: ${{ inputs.acceptance_evidence }}
-          CONSUMER_ACCEPTANCE_CANDIDATE: ${{ inputs.ref }}
-        run: node .github/scripts/consumer-impact.mjs --validate-acceptance --github-output "${GITHUB_OUTPUT}"
       - name: Validate version and publish release
         env:
           GH_TOKEN: ${{ github.token }}
-          ACCEPTED_CONSUMERS: ${{ steps.consumer-acceptance.outputs.accepted_consumers }}
-          ACCEPTANCE_EVIDENCE: ${{ steps.consumer-acceptance.outputs.evidence_reference }}
-          REQUIRED_CONSUMERS: ${{ steps.consumer-impact.outputs.consumers }}
+          ADOPTION_CONSUMERS: ${{ steps.consumer-impact.outputs.consumers }}
+          ADOPTION_SURFACES: ${{ steps.consumer-impact.outputs.surfaces }}
         shell: bash
         run: |
           target_commit="$(git rev-parse HEAD)"
+          adoption_consumers="${ADOPTION_CONSUMERS:-platform-only}"
+          adoption_surfaces="${ADOPTION_SURFACES:-none}"
+          adoption_notes="Consumers to verify on adoption: ${adoption_consumers}"$'\n'"Changed surfaces: ${adoption_surfaces}"
           git fetch origin main --tags
           if ! git merge-base --is-ancestor "${target_commit}" origin/main; then
             echo "Release target ${target_commit} is not reachable from origin/main." >&2
@@ -97,17 +88,15 @@ jobs:
             fi
             echo "${tag} already points to the selected candidate."
             gh release view "${tag}" >/dev/null 2>&1 || \
-              gh release create "${tag}" --title "${tag}" --generate-notes
+              gh release create "${tag}" --title "${tag}" --notes "${adoption_notes}" --generate-notes
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          required_consumers="${REQUIRED_CONSUMERS:-platform-only}"
           git tag -a "${tag}" \
             -m "${tag}" \
             -m "Candidate: ${target_commit}" \
-            -m "Required consumers: ${required_consumers}" \
-            -m "Accepted consumers: ${ACCEPTED_CONSUMERS}" \
-            -m "Acceptance evidence: ${ACCEPTANCE_EVIDENCE}"
+            -m "Consumers to verify on adoption: ${adoption_consumers}" \
+            -m "Changed surfaces: ${adoption_surfaces}"
           git push origin "${tag}"
-          gh release create "${tag}" --title "${tag}" --generate-notes
+          gh release create "${tag}" --title "${tag}" --notes "${adoption_notes}" --generate-notes

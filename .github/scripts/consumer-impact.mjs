@@ -110,89 +110,6 @@ export function parseConsumerList(value) {
   return consumers.sort();
 }
 
-export function parseAcceptanceEvidence(value) {
-  let evidence;
-  try {
-    evidence = JSON.parse(String(value || ""));
-  } catch {
-    throw new Error("Acceptance evidence must be valid JSON.");
-  }
-  if (evidence?.schema !== "agent-workbench.consumer-acceptance-set/v1") {
-    throw new Error("Acceptance evidence must use agent-workbench.consumer-acceptance-set/v1.");
-  }
-  if (!/^[a-f\d]{40}$/i.test(String(evidence.platformCommit || ""))) {
-    throw new Error("Acceptance evidence platformCommit must be a full commit SHA.");
-  }
-  if (!Array.isArray(evidence.acceptances)) {
-    throw new Error("Acceptance evidence acceptances must be an array.");
-  }
-  return evidence;
-}
-
-export function validateConsumerAcceptance({ required, evidence, candidateSha }) {
-  const requiredConsumers = parseConsumerList(required) ?? [];
-  const evidenceSet = parseAcceptanceEvidence(evidence);
-  const normalizedCandidate = String(candidateSha || "").toLowerCase();
-  if (!/^[a-f\d]{40}$/.test(normalizedCandidate)) {
-    throw new Error("Candidate SHA must be a full commit SHA.");
-  }
-  if (evidenceSet.platformCommit.toLowerCase() !== normalizedCandidate) {
-    throw new Error("Acceptance evidence platformCommit does not match the selected candidate.");
-  }
-  const acceptedConsumers = [];
-  const seen = new Set();
-  for (const acceptance of evidenceSet.acceptances) {
-    const consumer = String(acceptance?.consumer || "").trim();
-    if (!KNOWN_CONSUMERS.includes(consumer)) throw new Error(`Unknown acceptance consumer: ${consumer || "(missing)"}`);
-    if (seen.has(consumer)) throw new Error(`Duplicate consumer acceptance: ${consumer}`);
-    seen.add(consumer);
-    if (acceptance.ok !== true) throw new Error(`${consumer} acceptance did not pass.`);
-    if (acceptance.formalEvidence !== true) throw new Error(`${consumer} acceptance is preview-only.`);
-    if (String(acceptance.platformCommit || "").toLowerCase() !== normalizedCandidate) {
-      throw new Error(`${consumer} acceptance targets a different Platform commit.`);
-    }
-    if (!/^[a-f\d]{40}$/i.test(String(acceptance.consumerCommit || ""))) {
-      throw new Error(`${consumer} acceptance consumerCommit must be a full commit SHA.`);
-    }
-    if (acceptance.platformWorktreeDirty !== false || acceptance.consumerWorktreeDirty !== false) {
-      throw new Error(`${consumer} acceptance must come from clean worktrees.`);
-    }
-    if (acceptance.candidateMounted !== true) {
-      throw new Error(`${consumer} acceptance must mount the selected candidate.`);
-    }
-    if (acceptance.skippedRequiredTests !== 0) {
-      throw new Error(`${consumer} acceptance has skipped required tests.`);
-    }
-    if (typeof acceptance.gate !== "string" || !acceptance.gate.trim()) {
-      throw new Error(`${consumer} acceptance gate is required.`);
-    }
-    if (consumer === "personal" && acceptance.gate !== "core:accept") {
-      throw new Error("Personal acceptance must use the core:accept gate.");
-    }
-    if (consumer === "datamama") {
-      if (!new Set(["contract", "full"]).has(acceptance.gate)) {
-        throw new Error("Datamama acceptance must use the contract or full gate.");
-      }
-      if (acceptance.gatewayMounted !== true) {
-        throw new Error("Datamama acceptance must verify the candidate-mounted Gateway path.");
-      }
-      if (acceptance.requiredBrowserTestsRan !== true) {
-        throw new Error("Datamama acceptance must run every required browser test.");
-      }
-    }
-    acceptedConsumers.push(consumer);
-  }
-  acceptedConsumers.sort();
-  const missing = requiredConsumers.filter((consumer) => !acceptedConsumers.includes(consumer));
-  if (missing.length) throw new Error(`Missing consumer acceptance: ${missing.join(", ")}`);
-  return {
-    requiredConsumers,
-    acceptedConsumers,
-    platformCommit: normalizedCandidate,
-    reference: String(evidenceSet.reference || "").trim() || null,
-  };
-}
-
 export function rootExportMap(source) {
   const exports = new Map();
   const expression = /export\s*\{([\s\S]*?)\}\s*from\s*["'](\.\/[^"']+)["']\s*;?/g;
@@ -350,30 +267,13 @@ function appendGithubSummary(file, result, base, candidateSha) {
     `- Candidate: \`${candidateSha}\``,
     `- Base: \`${base}\``,
     `- Surfaces: ${result.surfaces.join(", ") || "none"}`,
-    `- Required consumers: ${consumers}`,
+    `- Consumers to verify on adoption: ${consumers}`,
     override,
     "",
   ].join("\n"));
 }
 
 async function main() {
-  if (process.argv.includes("--validate-acceptance")) {
-    const result = validateConsumerAcceptance({
-      required: process.env.CONSUMER_ACCEPTANCE_REQUIRED,
-      evidence: process.env.CONSUMER_ACCEPTANCE_EVIDENCE,
-      candidateSha: process.env.CONSUMER_ACCEPTANCE_CANDIDATE,
-    });
-    console.log(JSON.stringify(result, null, 2));
-    const outputFile = argument("--github-output");
-    if (outputFile) {
-      appendFileSync(outputFile, [
-        `accepted_consumers=${result.acceptedConsumers.join(",") || "platform-only"}`,
-        `evidence_reference=${result.reference || "structured-inline"}`,
-        "",
-      ].join("\n"));
-    }
-    return;
-  }
   const base = argument("--base") || process.env.CONSUMER_IMPACT_BASE;
   const head = argument("--head") || process.env.CONSUMER_IMPACT_HEAD || "HEAD";
   const override = argument("--consumers") ?? process.env.CONSUMER_IMPACT_OVERRIDE;
