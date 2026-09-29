@@ -27,7 +27,6 @@ const CODEX_THREAD_SCOPED_EXTENSIONS = new Set([
   'thread/goal/get',
   'thread/goal/set',
   'thread/goal/clear',
-  'mcpServerStatus/list',
   'review/start',
   'thread/realtime/start',
   'thread/realtime/stop',
@@ -44,6 +43,9 @@ const CODEX_GLOBAL_EXTENSIONS = new Set([
   'account/rateLimits/read',
   'config/read',
   'skills/list',
+  'hooks/list',
+  'plugin/list',
+  'mcpServerStatus/list',
   'thread/realtime/listVoices',
 ]);
 
@@ -141,6 +143,7 @@ export class CodexRuntimeSession extends EventEmitter {
     this.activeTurnId = null;
     this.completedTurnIds = new Set();
     this.runtimeProfile = null;
+    this.initialResult = null;
     this.started = false;
     this.closed = false;
     this.bound = false;
@@ -174,6 +177,7 @@ export class CodexRuntimeSession extends EventEmitter {
     this.activeTurnId = null;
     this.completedTurnIds.clear();
     this.runtimeProfile = profileFromResult(result);
+    this.initialResult = structuredClone(result);
     return this.describe();
   }
 
@@ -197,6 +201,7 @@ export class CodexRuntimeSession extends EventEmitter {
       this.runtimeProfile = profileFromResult(result);
       const activeTurnId = findActiveTurnId(result);
       this.activeTurnId = this.completedTurnIds.has(activeTurnId) ? null : activeTurnId;
+      this.initialResult = structuredClone(result);
       return this.describe();
     } catch (error) {
       this.#restore(previous);
@@ -340,6 +345,7 @@ export class CodexRuntimeSession extends EventEmitter {
       activeTurnId: this.activeTurnId,
       cwd: this.cwd,
       runtimeProfile: this.runtimeProfile ? structuredClone(this.runtimeProfile) : null,
+      initialResult: this.initialResult ? structuredClone(this.initialResult) : null,
     };
   }
 
@@ -436,6 +442,7 @@ export class CodexRuntimeSession extends EventEmitter {
       runtimeSessionId: this.runtimeSessionId,
       activeTurnId: this.activeTurnId,
       runtimeProfile: this.runtimeProfile ? structuredClone(this.runtimeProfile) : null,
+      initialResult: this.initialResult ? structuredClone(this.initialResult) : null,
       completedTurnIds: new Set(this.completedTurnIds),
     };
   }

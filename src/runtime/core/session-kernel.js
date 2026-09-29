@@ -251,12 +251,26 @@ export class AgentSessionKernel extends EventEmitter {
   async submit(sessionId, input, { mode = 'auto', ...params } = {}) {
     const runtimeSession = await this.#ensureRuntime(sessionId, params);
     this.#renewLease(sessionId);
-    if (this.startingTurns.has(sessionId)) {
+    if (this.startingTurns.has(sessionId) && mode !== 'new') {
       return this.#queueTurn(sessionId, input, params);
+    }
+    if (mode === 'steer') {
+      if (!runtimeSession.activeTurnId) {
+        throw kernelError('TURN_NOT_ACTIVE', 'There is no active turn.', 409);
+      }
+      if (!this.capabilities().steer) throw kernelError('RUNTIME_STEER_UNSUPPORTED', 'Provider cannot steer an active Turn.', 409);
+      const result = await runtimeSession.steerTurn(input, {
+        ...params,
+        expectedTurnId: runtimeSession.activeTurnId,
+      });
+      return { ...result, deliveryMode: 'steer' };
     }
     if (runtimeSession.activeTurnId) {
       if (mode === 'queue' || (mode === 'auto' && !this.capabilities().steer)) {
         return this.#queueTurn(sessionId, input, params);
+      }
+      if (mode === 'new') {
+        throw kernelError('TURN_ACTIVE', `Turn ${runtimeSession.activeTurnId} is already active.`, 409);
       }
       if (!this.capabilities().steer) throw kernelError('RUNTIME_STEER_UNSUPPORTED', 'Provider cannot steer an active Turn.', 409);
       try {
@@ -382,6 +396,42 @@ export class AgentSessionKernel extends EventEmitter {
       pending.timer = this.#requestTimer(requestToken, remainingMs);
       throw error;
     }
+  }
+
+  async rejectRequest(sessionId, requestToken, error) {
+    const pending = this.pendingRequests.get(requestToken);
+    if (!pending || pending.sessionId !== sessionId) throw kernelError('REQUEST_NOT_FOUND', 'Pending request not found.', 404);
+    if (pending.resolving) throw kernelError('REQUEST_RESOLVING', 'Pending request is already resolving.', 409);
+    this.#renewLease(sessionId);
+    pending.resolving = true;
+    clearTimeout(pending.timer);
+    const reason = error && typeof error === 'object' && error.code != null
+      ? error
+      : { code: -32_000, message: error?.message || String(error || 'Request rejected.') };
+    try {
+      await pending.request.reject(reason);
+      this.pendingRequests.delete(requestToken);
+      await this.#saveBinding(sessionId, {
+        status: pending.runtimeSession.activeTurnId ? 'running' : 'idle',
+        lastError: null,
+      });
+      this.#publish(sessionId, {
+        type: 'request_resolved',
+        runtimeSessionId: pending.runtimeSession.runtimeSessionId,
+        runtimeTurnId: pending.request.runtimeTurnId,
+        payload: { requestToken, source: 'client', rejected: true },
+      });
+      return { requestToken, resolved: true };
+    } catch (rejectError) {
+      pending.resolving = false;
+      const remainingMs = Math.max(1, pending.expiresAt - Date.now());
+      pending.timer = this.#requestTimer(requestToken, remainingMs);
+      throw rejectError;
+    }
+  }
+
+  clearQueue(sessionId, error = kernelError('SESSION_DETACHED', 'The Session was detached.')) {
+    this.#rejectQueue(sessionId, error);
   }
 
   async readSnapshot(sessionId) {
