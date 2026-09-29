@@ -15,6 +15,7 @@ export const CORE_EVENT_TYPES = Object.freeze([
   'turn_interrupt_requested',
   'session_attached',
   'session_detached',
+  'runtime_released',
   'connection_exited',
   'replay_gap',
   'provider_event',

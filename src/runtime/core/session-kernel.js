@@ -14,6 +14,9 @@ export class AgentSessionKernel extends EventEmitter {
     eventBuffer = new CoreEventReplayBuffer(),
     validateRequest = null,
     requestTimeoutMs = 15 * 60_000,
+    runtimeLeaseMs = 30 * 60_000,
+    detachedLeaseMs = null,
+    now = () => Date.now(),
   } = {}) {
     super();
     this.setMaxListeners(0);
@@ -23,8 +26,17 @@ export class AgentSessionKernel extends EventEmitter {
     this.eventBuffer = eventBuffer;
     this.validateRequest = validateRequest;
     this.requestTimeoutMs = positiveNumber(requestTimeoutMs, 'requestTimeoutMs');
+    this.runtimeLeaseMs = positiveNumber(runtimeLeaseMs, 'runtimeLeaseMs');
+    this.detachedLeaseMs = detachedLeaseMs == null
+      ? this.runtimeLeaseMs
+      : positiveNumber(detachedLeaseMs, 'detachedLeaseMs');
+    this.now = typeof now === 'function' ? now : () => Date.now();
     this.sessions = new Map();
+    this.detachedSessions = new Map();
+    this.deferredSessions = new Map();
+    this.leases = new Map();
     this.attachPromises = new Map();
+    this.resumePromises = new Map();
     this.startingTurns = new Set();
     this.turnQueues = new Map();
     this.pendingRequests = new Map();
@@ -40,10 +52,49 @@ export class AgentSessionKernel extends EventEmitter {
     return structuredClone(await this.provider.listModels(options));
   }
 
+  async extensionRequest(sessionId, method, params = {}, options = {}) {
+    assertSessionId(sessionId);
+    const scope = typeof this.provider.extensionScope === 'function'
+      ? this.provider.extensionScope(method)
+      : 'thread';
+    if (scope === 'global') {
+      if (typeof this.provider.requestExtension !== 'function') {
+        throw kernelError('RUNTIME_EXTENSION_UNSUPPORTED', 'Provider does not expose extension requests.', 501);
+      }
+      return this.provider.requestExtension(method, params, options);
+    }
+    const runtimeSession = await this.#ensureRuntime(sessionId, options);
+    if (typeof runtimeSession.requestExtension !== 'function') {
+      throw kernelError('RUNTIME_EXTENSION_UNSUPPORTED', 'Provider does not expose extension requests.', 501);
+    }
+    return runtimeSession.requestExtension(method, params);
+  }
+
   async attach(sessionId, options = {}) {
     assertSessionId(sessionId);
     const current = this.sessions.get(sessionId);
-    if (current && !current.closed) return this.#describe(sessionId, current);
+    if (current && !current.closed) {
+      this.#scheduleLease(sessionId, { renew: true });
+      return this.#describe(sessionId, current);
+    }
+    const reclaimed = this.#reclaimDetached(sessionId);
+    if (reclaimed) {
+      this.#scheduleLease(sessionId, { renew: true });
+      this.#publish(sessionId, {
+        type: 'session_attached',
+        runtimeSessionId: reclaimed.runtimeSessionId,
+        runtimeTurnId: reclaimed.activeTurnId,
+        payload: { capabilities: this.capabilities(), reattached: true },
+      });
+      return this.#describe(sessionId, reclaimed);
+    }
+    const resuming = this.resumePromises.get(sessionId);
+    if (resuming) {
+      const runtimeSession = await resuming;
+      return this.#describe(sessionId, runtimeSession);
+    }
+    const deferred = this.deferredSessions.get(sessionId);
+    if (deferred) return this.#describeDeferred(sessionId, deferred);
     const inFlight = this.attachPromises.get(sessionId);
     if (inFlight) return inFlight;
     const promise = this.#attach(sessionId, options);
@@ -60,6 +111,27 @@ export class AgentSessionKernel extends EventEmitter {
     if (binding?.runtimeProvider && binding.runtimeProvider !== this.provider.id) {
       throw kernelError('RUNTIME_PROVIDER_CONFLICT', `Session is bound to ${binding.runtimeProvider}.`, 409);
     }
+    if (binding?.released) {
+      this.deferredSessions.set(sessionId, binding);
+      this.#publish(sessionId, {
+        type: 'session_attached',
+        runtimeSessionId: binding.runtimeSessionId,
+        payload: { capabilities: this.capabilities(), deferred: true, released: true },
+      });
+      return this.#describeDeferred(sessionId, binding);
+    }
+    const runtimeSession = await this.#startRuntime(sessionId, binding, { host, cwd, settings });
+    this.#scheduleLease(sessionId, { renew: true });
+    this.#publish(sessionId, {
+      type: 'session_attached',
+      runtimeSessionId: runtimeSession.runtimeSessionId,
+      runtimeTurnId: runtimeSession.activeTurnId,
+      payload: { capabilities: this.capabilities() },
+    });
+    return this.#describe(sessionId, runtimeSession);
+  }
+
+  async #startRuntime(sessionId, binding, { host = null, cwd = null, settings = {} } = {}) {
     const runtimeSession = this.provider.createSession({ host, cwd: cwd || binding?.cwd || null, settings });
     this.#bindRuntimeSession(sessionId, runtimeSession);
     try {
@@ -78,17 +150,65 @@ export class AgentSessionKernel extends EventEmitter {
         cwd: runtimeSession.cwd,
         status: runtimeSession.activeTurnId ? 'running' : 'idle',
         lastError: null,
+        released: false,
+        releaseReason: null,
+        releasedAt: null,
+        detachedAt: null,
       });
+      queueMicrotask(() => void this.#drainQueue(sessionId));
+      return runtimeSession;
+    } catch (error) {
+      runtimeSession.close();
+      throw error;
+    }
+  }
+
+  async #ensureRuntime(sessionId, options = {}) {
+    const current = this.sessions.get(sessionId);
+    if (current && !current.closed) return current;
+    const reclaimed = this.#reclaimDetached(sessionId);
+    if (reclaimed) {
+      this.#scheduleLease(sessionId, { renew: true });
+      this.#publish(sessionId, {
+        type: 'session_attached',
+        runtimeSessionId: reclaimed.runtimeSessionId,
+        runtimeTurnId: reclaimed.activeTurnId,
+        payload: { capabilities: this.capabilities(), reattached: true },
+      });
+      return reclaimed;
+    }
+    const deferred = this.deferredSessions.get(sessionId);
+    if (!deferred) {
+      await this.attach(sessionId, options);
+      const attached = this.sessions.get(sessionId);
+      if (attached) return attached;
+      const stillDeferred = this.deferredSessions.get(sessionId);
+      if (!stillDeferred) throw kernelError('SESSION_NOT_ATTACHED', 'Session has no Runtime binding.', 409);
+      return this.#resumeDeferred(sessionId, stillDeferred, options);
+    }
+    return this.#resumeDeferred(sessionId, deferred, options);
+  }
+
+  async #resumeDeferred(sessionId, binding, { host = null, cwd = null, settings = {} } = {}) {
+    const inFlight = this.resumePromises.get(sessionId);
+    if (inFlight) return inFlight;
+    const promise = (async () => {
+      const runtimeSession = await this.#startRuntime(sessionId, binding, { host, cwd, settings });
+      this.#scheduleLease(sessionId, { renew: true });
       this.#publish(sessionId, {
         type: 'session_attached',
         runtimeSessionId: runtimeSession.runtimeSessionId,
         runtimeTurnId: runtimeSession.activeTurnId,
-        payload: { capabilities: this.capabilities() },
+        payload: { capabilities: this.capabilities(), resumed: true },
       });
-      return this.#describe(sessionId, runtimeSession);
-    } catch (error) {
-      runtimeSession.close();
-      throw error;
+      return runtimeSession;
+    })();
+    this.resumePromises.set(sessionId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.resumePromises.delete(sessionId);
+      if (this.sessions.get(sessionId)) this.deferredSessions.delete(sessionId);
     }
   }
 
@@ -118,6 +238,7 @@ export class AgentSessionKernel extends EventEmitter {
       status: runtimeSession.activeTurnId ? 'running' : 'idle',
       lastError: null,
     });
+    this.#scheduleLease(sessionId, { renew: true });
     this.#publish(sessionId, {
       type: 'session_attached',
       runtimeSessionId: runtimeSession.runtimeSessionId,
@@ -128,11 +249,14 @@ export class AgentSessionKernel extends EventEmitter {
   }
 
   async submit(sessionId, input, { mode = 'auto', ...params } = {}) {
-    await this.attach(sessionId, params);
-    const runtimeSession = this.sessions.get(sessionId);
-    if (runtimeSession.activeTurnId) {
-      if (mode === 'queue' || (mode === 'auto' && !this.capabilities().steer)) {
-        return this.#queueTurn(sessionId, input, params);
+    const runtimeSession = await this.#ensureRuntime(sessionId, params);
+    this.#renewLease(sessionId);
+    if (this.startingTurns.has(sessionId) && mode !== 'new') {
+      return this.#queueTurn(sessionId, input, params);
+    }
+    if (mode === 'steer') {
+      if (!runtimeSession.activeTurnId) {
+        throw kernelError('TURN_NOT_ACTIVE', 'There is no active turn.', 409);
       }
       if (!this.capabilities().steer) throw kernelError('RUNTIME_STEER_UNSUPPORTED', 'Provider cannot steer an active Turn.', 409);
       const result = await runtimeSession.steerTurn(input, {
@@ -140,6 +264,25 @@ export class AgentSessionKernel extends EventEmitter {
         expectedTurnId: runtimeSession.activeTurnId,
       });
       return { ...result, deliveryMode: 'steer' };
+    }
+    if (runtimeSession.activeTurnId) {
+      if (mode === 'queue' || (mode === 'auto' && !this.capabilities().steer)) {
+        return this.#queueTurn(sessionId, input, params);
+      }
+      if (mode === 'new') {
+        throw kernelError('TURN_ACTIVE', `Turn ${runtimeSession.activeTurnId} is already active.`, 409);
+      }
+      if (!this.capabilities().steer) throw kernelError('RUNTIME_STEER_UNSUPPORTED', 'Provider cannot steer an active Turn.', 409);
+      try {
+        const result = await runtimeSession.steerTurn(input, {
+          ...params,
+          expectedTurnId: runtimeSession.activeTurnId,
+        });
+        return { ...result, deliveryMode: 'steer' };
+      } catch (error) {
+        if (!isLateSteerError(error) || runtimeSession.activeTurnId) throw error;
+        return this.#startTurn(sessionId, runtimeSession, input, params, { steerFallback: true });
+      }
     }
     return this.#startTurn(sessionId, runtimeSession, input, params);
   }
@@ -160,7 +303,7 @@ export class AgentSessionKernel extends EventEmitter {
     });
   }
 
-  async #startTurn(sessionId, runtimeSession, input, params) {
+  async #startTurn(sessionId, runtimeSession, input, params, { steerFallback = false } = {}) {
     if (this.startingTurns.has(sessionId)) throw kernelError('TURN_START_IN_PROGRESS', 'A Turn is already starting.', 409);
     this.startingTurns.add(sessionId);
     try {
@@ -176,17 +319,17 @@ export class AgentSessionKernel extends EventEmitter {
         type: 'turn_accepted',
         runtimeSessionId: runtimeSession.runtimeSessionId,
         runtimeTurnId: result.runtimeTurnId,
-        payload: { status: completedBeforeResponse ? 'completed' : 'running' },
+        payload: { status: completedBeforeResponse ? 'completed' : 'running', steerFallback },
       });
-      return { ...result, deliveryMode: 'new' };
+      return { ...result, deliveryMode: steerFallback ? 'steer-fallback' : 'new' };
     } finally {
       this.startingTurns.delete(sessionId);
     }
   }
 
   async interrupt(sessionId, expectedTurnId) {
-    await this.attach(sessionId);
-    const runtimeSession = this.sessions.get(sessionId);
+    const runtimeSession = await this.#ensureRuntime(sessionId);
+    this.#renewLease(sessionId);
     if (!this.capabilities().interrupt) throw kernelError('RUNTIME_INTERRUPT_UNSUPPORTED', 'Provider cannot interrupt Turns.', 409);
     if (!expectedTurnId || runtimeSession.activeTurnId !== expectedTurnId) {
       throw kernelError('TURN_NOT_ACTIVE', 'The expected Turn is not active.', 409);
@@ -208,8 +351,8 @@ export class AgentSessionKernel extends EventEmitter {
     if (!this.capabilities().fork) throw kernelError('RUNTIME_FORK_UNSUPPORTED', 'Provider cannot fork Sessions.', 409);
     const normalizedLastTurnId = String(lastTurnId || '').trim();
     if (!normalizedLastTurnId) throw new TypeError('lastTurnId is required.');
-    await this.attach(sourceSessionId, { host, cwd, settings });
-    const sourceRuntimeSession = this.sessions.get(sourceSessionId);
+    const sourceRuntimeSession = await this.#ensureRuntime(sourceSessionId, { host, cwd, settings });
+    this.#renewLease(sourceSessionId);
     if (sourceRuntimeSession.activeTurnId) throw kernelError('RUNTIME_TURN_ACTIVE', 'Cannot fork an active Turn.', 409);
     if (this.sessions.has(targetSessionId) || await this.bindingStore.load(targetSessionId)) {
       throw kernelError('SESSION_ALREADY_ATTACHED', 'Fork target Session already has a Runtime binding.', 409);
@@ -230,6 +373,7 @@ export class AgentSessionKernel extends EventEmitter {
     const pending = this.pendingRequests.get(requestToken);
     if (!pending || pending.sessionId !== sessionId) throw kernelError('REQUEST_NOT_FOUND', 'Pending request not found.', 404);
     if (pending.resolving) throw kernelError('REQUEST_RESOLVING', 'Pending request is already resolving.', 409);
+    this.#renewLease(sessionId);
     pending.resolving = true;
     clearTimeout(pending.timer);
     try {
@@ -254,9 +398,44 @@ export class AgentSessionKernel extends EventEmitter {
     }
   }
 
+  async rejectRequest(sessionId, requestToken, error) {
+    const pending = this.pendingRequests.get(requestToken);
+    if (!pending || pending.sessionId !== sessionId) throw kernelError('REQUEST_NOT_FOUND', 'Pending request not found.', 404);
+    if (pending.resolving) throw kernelError('REQUEST_RESOLVING', 'Pending request is already resolving.', 409);
+    this.#renewLease(sessionId);
+    pending.resolving = true;
+    clearTimeout(pending.timer);
+    const reason = error && typeof error === 'object' && error.code != null
+      ? error
+      : { code: -32_000, message: error?.message || String(error || 'Request rejected.') };
+    try {
+      await pending.request.reject(reason);
+      this.pendingRequests.delete(requestToken);
+      await this.#saveBinding(sessionId, {
+        status: pending.runtimeSession.activeTurnId ? 'running' : 'idle',
+        lastError: null,
+      });
+      this.#publish(sessionId, {
+        type: 'request_resolved',
+        runtimeSessionId: pending.runtimeSession.runtimeSessionId,
+        runtimeTurnId: pending.request.runtimeTurnId,
+        payload: { requestToken, source: 'client', rejected: true },
+      });
+      return { requestToken, resolved: true };
+    } catch (rejectError) {
+      pending.resolving = false;
+      const remainingMs = Math.max(1, pending.expiresAt - Date.now());
+      pending.timer = this.#requestTimer(requestToken, remainingMs);
+      throw rejectError;
+    }
+  }
+
+  clearQueue(sessionId, error = kernelError('SESSION_DETACHED', 'The Session was detached.')) {
+    this.#rejectQueue(sessionId, error);
+  }
+
   async readSnapshot(sessionId) {
-    await this.attach(sessionId);
-    const runtimeSession = this.sessions.get(sessionId);
+    const runtimeSession = await this.#ensureRuntime(sessionId);
     const [binding, runtime] = await Promise.all([
       this.bindingStore.load(sessionId),
       runtimeSession.readSnapshot(),
@@ -273,8 +452,8 @@ export class AgentSessionKernel extends EventEmitter {
 
   async updateSettings(sessionId, settings, options = {}) {
     assertSessionId(sessionId);
-    await this.attach(sessionId, options);
-    const runtimeSession = this.sessions.get(sessionId);
+    const runtimeSession = await this.#ensureRuntime(sessionId, options);
+    this.#renewLease(sessionId);
     if (runtimeSession.activeTurnId || this.startingTurns.has(sessionId)) {
       throw kernelError('RUNTIME_TURN_ACTIVE', 'Cannot update settings while a Turn is active.', 409);
     }
@@ -328,29 +507,63 @@ export class AgentSessionKernel extends EventEmitter {
   }
 
   async detach(sessionId) {
+    const deferred = this.deferredSessions.get(sessionId);
+    if (deferred) {
+      this.deferredSessions.delete(sessionId);
+      return this.#saveBinding(sessionId, { status: 'released', detachedAt: new Date(this.now()).toISOString() });
+    }
     const runtimeSession = this.sessions.get(sessionId);
     if (!runtimeSession) return null;
-    if (runtimeSession.activeTurnId) throw kernelError('TURN_ACTIVE', 'Interrupt the active Turn before detaching.', 409);
-    await runtimeSession.unsubscribe();
-    runtimeSession.close();
+    this.#clearLease(sessionId);
+    const detachedAt = new Date(this.now()).toISOString();
+    const detached = { runtimeSession, detachedAt, timer: null };
+    detached.timer = setTimeout(() => void this.#expireDetached(sessionId), this.detachedLeaseMs);
+    detached.timer.unref?.();
+    this.detachedSessions.set(sessionId, detached);
     this.sessions.delete(sessionId);
-    this.#expireRequests(sessionId, 'session_detached');
-    const binding = await this.#saveBinding(sessionId, { activeTurnId: null, status: 'detached' });
+    const binding = await this.#saveBinding(sessionId, {
+      status: runtimeSession.activeTurnId ? 'running' : 'detached',
+      detachedAt,
+    });
     this.#publish(sessionId, {
       type: 'session_detached',
-      runtimeSessionId: binding.runtimeSessionId,
-      payload: {},
+      runtimeSessionId: runtimeSession.runtimeSessionId,
+      runtimeTurnId: runtimeSession.activeTurnId,
+      payload: { detachedAt, leaseMs: this.detachedLeaseMs },
     });
     return binding;
   }
 
+  renewRuntimeLease(sessionId) {
+    this.#renewLease(sessionId);
+  }
+
+  async releaseRuntime(sessionId, { reason = 'explicit' } = {}) {
+    assertSessionId(sessionId);
+    const runtimeSession = this.sessions.get(sessionId) ?? this.detachedSessions.get(sessionId)?.runtimeSession ?? null;
+    if (!runtimeSession) return this.deferredSessions.has(sessionId) ? this.bindingStore.load(sessionId) : null;
+    if (runtimeSession.activeTurnId || this.startingTurns.has(sessionId)) {
+      throw kernelError('TURN_ACTIVE', 'Interrupt the active Turn before releasing the Runtime.', 409);
+    }
+    return this.#releaseRuntime(sessionId, runtimeSession, reason);
+  }
+
   close() {
     for (const sessionId of this.sessions.keys()) this.#expireRequests(sessionId, 'kernel_closed');
+    for (const sessionId of this.detachedSessions.keys()) this.#expireRequests(sessionId, 'kernel_closed');
+    for (const lease of this.leases.values()) if (lease.timer) clearTimeout(lease.timer);
+    for (const detached of this.detachedSessions.values()) {
+      if (detached.timer) clearTimeout(detached.timer);
+      detached.runtimeSession.close();
+    }
     for (const runtimeSession of this.sessions.values()) runtimeSession.close();
     for (const queue of this.turnQueues.values()) {
       for (const entry of queue) entry.reject(kernelError('KERNEL_CLOSED', 'Session Kernel closed.'));
     }
     this.sessions.clear();
+    this.detachedSessions.clear();
+    this.deferredSessions.clear();
+    this.leases.clear();
     this.turnQueues.clear();
   }
 
@@ -419,8 +632,145 @@ export class AgentSessionKernel extends EventEmitter {
     });
   }
 
+  #runtimeFor(sessionId) {
+    return this.sessions.get(sessionId) ?? this.detachedSessions.get(sessionId)?.runtimeSession ?? null;
+  }
+
+  #reclaimDetached(sessionId) {
+    const detached = this.detachedSessions.get(sessionId);
+    if (!detached || detached.runtimeSession.closed) {
+      this.detachedSessions.delete(sessionId);
+      return null;
+    }
+    if (detached.timer) clearTimeout(detached.timer);
+    this.detachedSessions.delete(sessionId);
+    this.sessions.set(sessionId, detached.runtimeSession);
+    void this.#saveBinding(sessionId, { detachedAt: null }).catch(() => {});
+    return detached.runtimeSession;
+  }
+
+  #renewLease(sessionId) {
+    if (!this.sessions.has(sessionId)) return;
+    this.#scheduleLease(sessionId, { renew: true });
+  }
+
+  #scheduleLease(sessionId, { renew = false } = {}) {
+    const runtimeSession = this.sessions.get(sessionId);
+    if (!runtimeSession || runtimeSession.closed) return;
+    const lease = this.leases.get(sessionId) || { lastMeaningfulActivityAt: null, timer: null };
+    if (lease.timer) clearTimeout(lease.timer);
+    if (renew || !lease.lastMeaningfulActivityAt) {
+      lease.lastMeaningfulActivityAt = new Date(this.now()).toISOString();
+    }
+    const expiresAtMs = Date.parse(lease.lastMeaningfulActivityAt) + this.runtimeLeaseMs;
+    lease.timer = setTimeout(() => void this.#expireLease(sessionId), Math.max(0, expiresAtMs - this.now()));
+    lease.timer.unref?.();
+    this.leases.set(sessionId, lease);
+    void this.#saveBinding(sessionId, {
+      lastMeaningfulActivityAt: lease.lastMeaningfulActivityAt,
+      runtimeLeaseExpiresAt: new Date(expiresAtMs).toISOString(),
+    }).catch(() => {});
+  }
+
+  #clearLease(sessionId) {
+    const lease = this.leases.get(sessionId);
+    if (lease?.timer) clearTimeout(lease.timer);
+    this.leases.delete(sessionId);
+  }
+
+  async #expireLease(sessionId) {
+    const lease = this.leases.get(sessionId);
+    if (lease) lease.timer = null;
+    const runtimeSession = this.sessions.get(sessionId);
+    if (!runtimeSession || runtimeSession.closed) return;
+    const remainingMs = Date.parse(lease?.lastMeaningfulActivityAt || 0) + this.runtimeLeaseMs - this.now();
+    if (remainingMs > 0) {
+      this.#scheduleLease(sessionId);
+      return;
+    }
+    if (this.#hasActiveWork(sessionId)) {
+      const recheckMs = Math.min(60_000, Math.max(100, Math.floor(this.runtimeLeaseMs / 4)));
+      if (lease) {
+        lease.timer = setTimeout(() => void this.#expireLease(sessionId), recheckMs);
+        lease.timer.unref?.();
+      }
+      return;
+    }
+    await this.#releaseRuntime(sessionId, runtimeSession, 'idle-ttl');
+  }
+
+  async #expireDetached(sessionId) {
+    const detached = this.detachedSessions.get(sessionId);
+    if (!detached) return;
+    detached.timer = null;
+    if (this.#hasActiveWork(sessionId)) {
+      const recheckMs = Math.min(60_000, Math.max(100, Math.floor(this.detachedLeaseMs / 4)));
+      detached.timer = setTimeout(() => void this.#expireDetached(sessionId), recheckMs);
+      detached.timer.unref?.();
+      return;
+    }
+    await this.#releaseRuntime(sessionId, detached.runtimeSession, 'detached-ttl');
+  }
+
+  #hasActiveWork(sessionId) {
+    const runtimeSession = this.#runtimeFor(sessionId);
+    if (runtimeSession?.activeTurnId || this.startingTurns.has(sessionId)) return true;
+    if ((this.turnQueues.get(sessionId) || []).length) return true;
+    for (const pending of this.pendingRequests.values()) {
+      if (pending.sessionId === sessionId) return true;
+    }
+    return false;
+  }
+
+  async #releaseRuntime(sessionId, runtimeSession, reason) {
+    this.#clearLease(sessionId);
+    const detached = this.detachedSessions.get(sessionId);
+    if (detached?.timer) clearTimeout(detached.timer);
+    this.detachedSessions.delete(sessionId);
+    if (this.sessions.get(sessionId) === runtimeSession) this.sessions.delete(sessionId);
+    this.#expireRequests(sessionId, 'runtime_released');
+    await runtimeSession.unsubscribe?.().catch(() => {});
+    runtimeSession.close();
+    const releasedAt = new Date(this.now()).toISOString();
+    const binding = await this.#saveBinding(sessionId, {
+      activeTurnId: null,
+      status: 'released',
+      released: true,
+      releaseReason: reason,
+      releasedAt,
+      runtimeLeaseExpiresAt: null,
+    }).catch(() => this.bindingStore.load(sessionId));
+    this.#publish(sessionId, {
+      type: 'runtime_released',
+      runtimeSessionId: runtimeSession.runtimeSessionId,
+      payload: { reason, releasedAt },
+    });
+    return binding;
+  }
+
+  #describeDeferred(sessionId, binding) {
+    return {
+      sessionId,
+      capabilities: this.capabilities(),
+      runtimeProvider: this.provider.id,
+      runtimeSessionId: binding.runtimeSessionId || null,
+      activeTurnId: null,
+      cwd: binding.cwd || null,
+      runtimeProfile: null,
+      status: 'released',
+      released: true,
+      releaseReason: binding.releaseReason || null,
+    };
+  }
+
   async #handleRuntimeExit(sessionId, runtimeSession, details) {
     if (this.sessions.get(sessionId) === runtimeSession) this.sessions.delete(sessionId);
+    const detached = this.detachedSessions.get(sessionId);
+    if (detached?.runtimeSession === runtimeSession) {
+      if (detached.timer) clearTimeout(detached.timer);
+      this.detachedSessions.delete(sessionId);
+    }
+    this.#clearLease(sessionId);
     this.#expireRequests(sessionId, 'connection_exited');
     await this.#saveBinding(sessionId, {
       activeTurnId: null,
@@ -434,12 +784,23 @@ export class AgentSessionKernel extends EventEmitter {
       runtimeTurnId: details.runtimeTurnId,
       payload: { reason: details.reason || 'connection_exited' },
     });
+    if ((this.turnQueues.get(sessionId) || []).length) {
+      queueMicrotask(() => void this.#ensureRuntime(sessionId).catch(
+        (error) => this.#rejectQueue(sessionId, error),
+      ));
+    }
+  }
+
+  #rejectQueue(sessionId, error) {
+    const queue = this.turnQueues.get(sessionId) || [];
+    this.turnQueues.delete(sessionId);
+    for (const entry of queue) entry.reject(error);
   }
 
   async #drainQueue(sessionId) {
-    const runtimeSession = this.sessions.get(sessionId);
+    const runtimeSession = this.#runtimeFor(sessionId);
     const queue = this.turnQueues.get(sessionId) || [];
-    if (!runtimeSession || runtimeSession.activeTurnId || this.startingTurns.has(sessionId) || !queue.length) return;
+    if (!runtimeSession || runtimeSession.closed || runtimeSession.activeTurnId || this.startingTurns.has(sessionId) || !queue.length) return;
     const next = queue.shift();
     if (!queue.length) this.turnQueues.delete(sessionId);
     try {
@@ -524,6 +885,10 @@ export class AgentSessionKernel extends EventEmitter {
 function providerTurnParams(params) {
   const { host: _host, settings: _settings, mode: _mode, ...providerParams } = params;
   return providerParams;
+}
+
+function isLateSteerError(error) {
+  return error?.code === 'RUNTIME_TURN_NOT_ACTIVE' || /no active turn|turn.*not active/i.test(error?.message || '');
 }
 
 function terminalStatus(status) {

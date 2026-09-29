@@ -5,8 +5,52 @@ import { createCodexConnectionPreparation } from './codex-skills.js';
 
 const MAX_COMPLETED_TURNS = 100;
 
+const CODEX_KERNEL_OWNED_METHODS = new Set([
+  'thread/start',
+  'thread/resume',
+  'thread/fork',
+  'thread/unsubscribe',
+  'thread/settings/update',
+  'turn/start',
+  'turn/steer',
+  'turn/interrupt',
+]);
+
+const CODEX_THREAD_SCOPED_EXTENSIONS = new Set([
+  'thread/read',
+  'thread/turns/list',
+  'thread/searchOccurrences',
+  'thread/name/set',
+  'thread/archive',
+  'thread/unarchive',
+  'thread/compact/start',
+  'thread/goal/get',
+  'thread/goal/set',
+  'thread/goal/clear',
+  'review/start',
+  'thread/realtime/start',
+  'thread/realtime/stop',
+  'thread/realtime/appendText',
+  'thread/realtime/appendAudio',
+]);
+
+const CODEX_GLOBAL_EXTENSIONS = new Set([
+  'thread/list',
+  'thread/search',
+  'model/list',
+  'account/read',
+  'account/usage/read',
+  'account/rateLimits/read',
+  'config/read',
+  'skills/list',
+  'hooks/list',
+  'plugin/list',
+  'mcpServerStatus/list',
+  'thread/realtime/listVoices',
+]);
+
 export class CodexAppServerProvider {
-  constructor({ connection = null, connectionFor = null, prepareConnection = null } = {}) {
+  constructor({ connection = null, connectionFor = null, prepareConnection = null, extensionAllowlist = null } = {}) {
     if (!connection && typeof connectionFor !== 'function') {
       throw new TypeError('Codex provider requires connection or connectionFor.');
     }
@@ -15,6 +59,9 @@ export class CodexAppServerProvider {
     this.connectionFor = connectionFor;
     this.prepareConnection = prepareConnection ? createCodexConnectionPreparation(prepareConnection) : null;
     this.connectionPreparations = new WeakMap();
+    this.extensionAllowlist = extensionAllowlist == null
+      ? null
+      : new Set([...extensionAllowlist].map((method) => assertExtensionMethodName(method)));
   }
 
   capabilities() {
@@ -38,7 +85,26 @@ export class CodexAppServerProvider {
       cwd,
       settings,
       prepareConnection: (candidate) => this.#prepare(candidate),
+      extensionScope: (method) => this.extensionScope(method),
     });
+  }
+
+  extensionScope(method) {
+    if (CODEX_KERNEL_OWNED_METHODS.has(method)) return null;
+    if (this.extensionAllowlist && !this.extensionAllowlist.has(method)) return null;
+    if (CODEX_THREAD_SCOPED_EXTENSIONS.has(method)) return 'thread';
+    if (CODEX_GLOBAL_EXTENSIONS.has(method)) return 'global';
+    return null;
+  }
+
+  async requestExtension(method, params = {}, { host = null } = {}) {
+    if (this.extensionScope(method) == null) {
+      throw providerError('RUNTIME_EXTENSION_UNSUPPORTED', `Unsupported Codex extension method: ${method}.`);
+    }
+    const connection = this.connectionFor ? this.connectionFor(host) : this.connection;
+    await connection.start();
+    await this.#prepare(connection);
+    return connection.request(method, structuredClone(params));
   }
 
   async listModels({ host = null } = {}) {
@@ -64,7 +130,7 @@ export class CodexAppServerProvider {
 }
 
 export class CodexRuntimeSession extends EventEmitter {
-  constructor({ connection, cwd = null, settings = {}, prepareConnection = null } = {}) {
+  constructor({ connection, cwd = null, settings = {}, prepareConnection = null, extensionScope = null } = {}) {
     super();
     if (!connection?.request || !connection?.on) throw new TypeError('Codex connection is required.');
     this.providerId = 'codex';
@@ -72,10 +138,12 @@ export class CodexRuntimeSession extends EventEmitter {
     this.cwd = cwd;
     this.settings = structuredClone(settings);
     this.prepareConnection = prepareConnection;
+    this.extensionScope = typeof extensionScope === 'function' ? extensionScope : (method) => defaultExtensionScope(method);
     this.runtimeSessionId = null;
     this.activeTurnId = null;
     this.completedTurnIds = new Set();
     this.runtimeProfile = null;
+    this.initialResult = null;
     this.started = false;
     this.closed = false;
     this.bound = false;
@@ -109,6 +177,7 @@ export class CodexRuntimeSession extends EventEmitter {
     this.activeTurnId = null;
     this.completedTurnIds.clear();
     this.runtimeProfile = profileFromResult(result);
+    this.initialResult = structuredClone(result);
     return this.describe();
   }
 
@@ -132,6 +201,7 @@ export class CodexRuntimeSession extends EventEmitter {
       this.runtimeProfile = profileFromResult(result);
       const activeTurnId = findActiveTurnId(result);
       this.activeTurnId = this.completedTurnIds.has(activeTurnId) ? null : activeTurnId;
+      this.initialResult = structuredClone(result);
       return this.describe();
     } catch (error) {
       this.#restore(previous);
@@ -244,6 +314,21 @@ export class CodexRuntimeSession extends EventEmitter {
     };
   }
 
+  async requestExtension(method, params = {}) {
+    this.#assertStarted();
+    const scope = this.extensionScope(method);
+    if (scope == null) {
+      throw providerError('RUNTIME_EXTENSION_UNSUPPORTED', `Unsupported Codex extension method: ${method}.`);
+    }
+    const payload = scope === 'thread'
+      ? { threadId: this.runtimeSessionId, ...structuredClone(params) }
+      : structuredClone(params);
+    if (scope === 'thread' && !payload.threadId) {
+      throw providerError('RUNTIME_SESSION_MISSING', 'Runtime Session has not been created.');
+    }
+    return this.connection.request(method, payload);
+  }
+
   async unsubscribe() {
     this.#assertSession();
     if (this.activeTurnId) throw providerError('RUNTIME_TURN_ACTIVE', 'Cannot unsubscribe an active turn.');
@@ -260,6 +345,7 @@ export class CodexRuntimeSession extends EventEmitter {
       activeTurnId: this.activeTurnId,
       cwd: this.cwd,
       runtimeProfile: this.runtimeProfile ? structuredClone(this.runtimeProfile) : null,
+      initialResult: this.initialResult ? structuredClone(this.initialResult) : null,
     };
   }
 
@@ -356,6 +442,7 @@ export class CodexRuntimeSession extends EventEmitter {
       runtimeSessionId: this.runtimeSessionId,
       activeTurnId: this.activeTurnId,
       runtimeProfile: this.runtimeProfile ? structuredClone(this.runtimeProfile) : null,
+      initialResult: this.initialResult ? structuredClone(this.initialResult) : null,
       completedTurnIds: new Set(this.completedTurnIds),
     };
   }
@@ -363,6 +450,18 @@ export class CodexRuntimeSession extends EventEmitter {
   #restore(state) {
     Object.assign(this, state);
   }
+}
+
+function defaultExtensionScope(method) {
+  if (CODEX_KERNEL_OWNED_METHODS.has(method)) return null;
+  if (CODEX_THREAD_SCOPED_EXTENSIONS.has(method)) return 'thread';
+  if (CODEX_GLOBAL_EXTENSIONS.has(method)) return 'global';
+  return null;
+}
+
+function assertExtensionMethodName(method) {
+  if (typeof method !== 'string' || !method.trim()) throw new TypeError('Extension method names must be non-empty strings.');
+  return method.trim();
 }
 
 function codexSessionParams(cwd, settings) {
