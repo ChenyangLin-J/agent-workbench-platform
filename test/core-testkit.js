@@ -230,6 +230,12 @@ export class FakeRuntimeSession extends EventEmitter {
     return { runtimeSessionId: this.runtimeSessionId };
   }
 
+  async requestExtension(method, params = {}) {
+    this.extensionCalls = this.extensionCalls || [];
+    this.extensionCalls.push({ method, params: structuredClone(params) });
+    return { ok: true, method };
+  }
+
   describe() {
     return {
       runtimeProvider: this.providerId,

@@ -88,6 +88,12 @@ Platform never reads a product database, chooses a package manager, stores crede
 - Products own full-text search backends, navigation and any content rendered through extension slots.
 - Host file actions receive the original authorized reference. Platform renders and normalizes metadata but does not grant filesystem access.
 
+### Runtime kernel
+
+- `AgentSessionKernel` owns provider-neutral Session lifecycle over a `bindingStore` the consumer persists. Attach on a `released` binding returns a deferred description without starting a Runtime; the provider thread resumes only on the first real operation (lazy resume). Submit during an in-flight first Turn buffers into the queue instead of failing, and a steer rejected because the Turn already ended preserves its input and starts a new Turn.
+- A Runtime lease bounds idle retention. Only meaningful operations — Turn submission, interrupt, request response, settings change, fork, or an explicit consumer `renewRuntimeLease` — extend it; passive attach, subscribe and snapshot reads do not. An active Turn, starting Turn, queued Turn or pending request defers expiry. Release keeps the persisted binding, records `released`/`releaseReason`/`releasedAt`, publishes `runtime_released`, and leaves subscribers connected.
+- `detach` retains the Runtime for a separate detached lease so a reconnecting client reuses it without a resume round trip; expiry releases it with `detached-ttl`. On `connection_exited` the kernel marks the active Turn `interrupted`, expires pending requests, and reattaches to drain any queued Turns, rejecting them only if resume fails.
+
 ### Side Chat and Subagent
 
 - Side Chat is an explicit fork with its own lifecycle and persistence adapter. Closing, switching Session, refreshing, Runtime expiry, and explicit deletion remain different actions. Platform supplies the lifecycle controller and React panel; consumers translate provider events and bind stores.

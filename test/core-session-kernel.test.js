@@ -18,7 +18,9 @@ test('Session Kernel binds product Sessions without exposing provider protocol m
   assert.match(attached.runtimeSessionId, /^pi-shape-session-/);
   const binding = await store.load('product-session');
   assert.deepEqual(Object.keys(binding).sort(), [
-    'activeTurnId', 'cwd', 'lastError', 'runtimeProvider', 'runtimeSessionId', 'status',
+    'activeTurnId', 'cwd', 'detachedAt', 'lastError', 'lastMeaningfulActivityAt',
+    'releaseReason', 'released', 'releasedAt', 'runtimeLeaseExpiresAt',
+    'runtimeProvider', 'runtimeSessionId', 'status',
   ]);
   assert.equal(JSON.stringify(binding).includes('threadId'), false);
 });
