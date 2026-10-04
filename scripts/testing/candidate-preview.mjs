@@ -1,0 +1,30 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { AgentSessionKernel } from '../../src/runtime/core/index.js';
+import { EnvironmentSessionStore, buildMinimalHostAssets, createMinimalHost } from '../../src/environment/index.js';
+import { FakeRuntimeProvider } from '../../test/core-testkit.js';
+const root = process.env.CANDIDATE_PREVIEW_ROOT;
+if (!root || !path.isAbsolute(root)) throw new Error('Set an absolute isolated CANDIDATE_PREVIEW_ROOT.');
+await mkdir(root, { recursive: true });
+const provider = new FakeRuntimeProvider({ capabilities: { fork:true, steer:true }, models:[{ id:'codex', name:'Codex', supportedReasoningEfforts:[{ reasoningEffort:'medium' },{ reasoningEffort:'high' }], defaultReasoningEffort:'medium', serviceTiers:['priority'] }] });
+const create = provider.createSession.bind(provider);
+provider.createSession = (options) => {
+ const runtime = create(options); const start = runtime.startTurn.bind(runtime);
+ runtime.startTurn = async (input) => {
+  const turn = await start(input);
+  const emit = (item) => runtime.emit('event', { type:'item_completed', runtimeSessionId:runtime.runtimeSessionId, runtimeTurnId:turn.runtimeTurnId, payload:{ item } });
+  setTimeout(() => emit({ id:'commentary-'+turn.runtimeTurnId, type:'agentMessage', phase:'commentary', text:'正在检查附件预览和输入布局。', status:'completed' }), 250);
+  setTimeout(() => emit({ id:'command-'+turn.runtimeTurnId, type:'commandExecution', command:'node inspect.js', aggregatedOutput:Array.from({length:90},(_,i)=>`输出 ${i+1}: 合成验收数据`).join('\n'), status:'completed' }), 550);
+  setTimeout(() => { emit({ id:'answer-'+turn.runtimeTurnId, type:'agentMessage', phase:'final_answer', text:'已检查布局。\n\n'+Array.from({length:25},(_,i)=>`第 ${i+1} 段：这是完整展开的最终回复，用于确认正文没有内部滚动条。`).join('\n\n'), status:'completed' }); runtime.complete(turn.runtimeTurnId); }, 7500);
+  return turn;
+ };
+ return runtime;
+};
+const store = new EnvironmentSessionStore({ stateRoot:path.join(root,'state') });
+const kernel = new AgentSessionKernel({ provider, bindingStore:store, validateRequest:()=>{} });
+const manifest = { schema:'agent-workbench.environment/v1', kind:'run', id:'candidate', environmentId:'candidate', status:'running', runtime:{ provider:'fake' }, features:{ sessionWorkspace:true, attachments:true, steer:true, queuedTurns:true }, versions:{ platform:'candidate', runtime:'fake' }, profile:{ id:'candidate', hash:'fixture', source:{type:'inline'} }, capabilities:{ lock:{capabilities:[]}, hash:'fixture' }, isolation:{ requestedLevel:'ephemeral-machine', effectiveLevel:'ephemeral-machine', enforcement:{externalEffects:{enforced:true, mode:'no-external-effects'}} }, paths:Object.fromEntries(['root','runtime','state','resources','workspace','temporary','credentials'].map(k=>[k,k==='root'?root:path.join(root,k)])), process:{pid:process.pid,port:0,providerState:{}},extensions:{},lifecycle:{createdAt:new Date().toISOString()} };
+await buildMinimalHostAssets({ outputDirectory:path.join(root,'assets') });
+const host = createMinimalHost({ manifest,kernel,sessionStore:store,assetsRoot:path.join(root,'assets'),accessToken:'candidate-local-only' });
+const listening = await host.start();
+console.log(JSON.stringify(listening)); await writeFile(path.join(root,'url.txt'), listening.url);
+for(const signal of ['SIGINT','SIGTERM']) process.on(signal,async()=>{await host.stop();await store.close();process.exit(0);});

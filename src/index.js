@@ -186,3 +186,5 @@ export {
   resolveContainedPath,
   satisfiesIsolationLevel,
 } from './environment/index.js';
+
+export { createSessionHostController, mergeSessionHostSnapshot, mergeSessionSummaries } from './session-host.js';

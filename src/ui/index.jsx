@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import rehypeKatex from 'rehype-katex';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -40,6 +40,7 @@ import {
 } from './model.js';
 import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
 import { normalizeSessionFeatures } from '../capabilities.js';
+import { createSessionUiStateStore } from './session-ui-state.js';
 import { normalizeAttachmentPolicy, normalizeSessionAttachment } from '../attachments.js';
 import {
   MAX_SESSION_REFERENCES,
@@ -411,6 +412,12 @@ export function SessionBrowser({
   listOnly = false,
 }) {
   const view = useMemo(() => normalizeSessionBrowserViewModel(browser), [browser]);
+  const sessionUiState = useRef(null);
+  if (!sessionUiState.current) {
+    let storage = null;
+    try { storage = globalThis.sessionStorage; } catch { /* Storage is optional. */ }
+    sessionUiState.current = createSessionUiStateStore(storage);
+  }
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [archivingIds, setArchivingIds] = useState(() => new Set());
@@ -432,6 +439,9 @@ export function SessionBrowser({
   const [creating, setCreating] = useState(false);
   const [expandedGroupIds, setExpandedGroupIds] = useState(() => new Set());
   const [narrowListOpen, setNarrowListOpen] = useState(false);
+  const listRef = useRef(null);
+  const listToggleRef = useRef(null);
+  const drawerTouchRef = useRef(null);
   const loadMoreRef = useRef(null);
   const loadMoreLockedRef = useRef(false);
   const [isNarrow, setIsNarrow] = useState(() => (
@@ -460,6 +470,27 @@ export function SessionBrowser({
 
   const listCollapsed = listOnly ? false : isNarrow && detail ? !narrowListOpen : view.listCollapsed;
   const browserDocumentPreview = detail?.documentPreview || null;
+  const drawerMode = isNarrow || browser.listMode === 'drawer';
+  useEffect(() => {
+    if (!drawerMode || listCollapsed || browserDocumentPreview) return;
+    const listElement = listRef.current;
+    const selectedButton = listElement?.querySelector('.is-active .cwu-browser-row-main');
+    (selectedButton || listToggleRef.current)?.focus();
+    function onKey(event) {
+      if (event.key === 'Escape') { event.preventDefault(); closeSessionList(); return; }
+      if (event.key !== 'Tab') return;
+      const targets = [listToggleRef.current, ...listElement.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),summary')].filter(Boolean);
+      const first = targets[0], last = targets.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); listToggleRef.current?.focus(); };
+  }, [drawerMode, listCollapsed, browserDocumentPreview]);
+  function closeSessionList() {
+    if (isNarrow && detail) setNarrowListOpen(false);
+    else actions.onToggleList?.(true);
+  }
 
   function toggleSessionList() {
     if (isNarrow && detail) {
@@ -581,7 +612,15 @@ export function SessionBrowser({
         aria-hidden={listOnly ? undefined : Boolean(browserDocumentPreview) || listCollapsed}
         aria-label={labels.listAriaLabel || 'Session 列表'}
         className={`cwu-browser-list ${listOnly ? 'is-standalone' : ''}`}
-        inert={browserDocumentPreview ? true : undefined}
+        inert={browserDocumentPreview || listCollapsed ? true : undefined}
+        ref={listRef}
+        onTouchStart={(event) => { drawerTouchRef.current = { x: event.touches[0].clientX, y: event.touches[0].clientY }; }}
+        onTouchEnd={(event) => {
+          const start = drawerTouchRef.current;
+          const touch = event.changedTouches[0];
+          if (drawerMode && start && touch && touch.clientX - start.x < -70 && Math.abs(touch.clientY - start.y) < 40) closeSessionList();
+          drawerTouchRef.current = null;
+        }}
       >
         <header className="cwu-browser-summary">
           <span>{view.loading && !view.sessions.length
@@ -631,14 +670,15 @@ export function SessionBrowser({
             </div>
           ) : <span className="cwu-browser-toolbar-label">{view.groupOptions[0]?.label || labels.listLabel || '当前 Session'}</span>}
           <div className="cwu-browser-toolbar-actions">
+            {extensions.renderListHeaderActions?.({ browser: view, closeList: closeSessionList }) || null}
             <button
               aria-expanded={searchOpen}
               aria-label={labels.searchAriaLabel || '搜索 Sessions'}
               className={searchOpen ? 'is-active' : ''}
-              onClick={() => setSearchOpen((current) => !current)}
+              onClick={() => { if (actions.onOpenSessionFinder) { if (drawerMode) closeSessionList(); actions.onOpenSessionFinder(); } else setSearchOpen((current) => !current); }}
               title={labels.searchAriaLabel || '搜索 Sessions'}
               type="button"
-            >⌕</button>
+            ><svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button>
             {actions.onOpenHistory ? (
               <button onClick={actions.onOpenHistory} title={labels.history || '历史'} type="button">{labels.history || '历史'}</button>
             ) : null}
@@ -761,17 +801,6 @@ export function SessionBrowser({
                       </small>
                     </span>
                   </button>
-                  {actions.onFavorite && session.canFavorite ? (
-                    <button
-                      aria-label={`${session.favorited ? (labels.unfavorite || '取消置顶') : (labels.favorite || '置顶')}：${session.title}`}
-                      aria-pressed={session.favorited}
-                      className="cwu-browser-row-action cwu-browser-row-favorite"
-                      disabled={favoritingIds.has(session.id)}
-                      onClick={() => setFavorited(session, !session.favorited)}
-                      title={session.favorited ? (labels.unfavorite || '取消置顶') : (labels.favorite || '置顶')}
-                      type="button"
-                    >{favoritingIds.has(session.id) ? '…' : session.favorited ? '★' : '☆'}</button>
-                  ) : null}
                   {actions.onEnd && session.canEnd ? (
                     <details className="cwu-browser-row-menu">
                       <summary aria-label={`${labels.manage || '管理'}：${session.title}`} title={labels.manage || '管理'}>⋮</summary>
@@ -789,7 +818,7 @@ export function SessionBrowser({
                   ) : actions.onArchive && session.canArchive ? (
                     <button
                       aria-label={`${session.archived ? (labels.restore || '恢复') : (labels.archive || '归档')}：${session.title}`}
-                      className="cwu-browser-row-action"
+                      className="cwu-browser-row-action cwu-browser-row-archive"
                       disabled={archivingIds.has(session.id)}
                       onClick={() => setArchived(session, !session.archived)}
                       title={session.archived ? (labels.restore || '恢复') : (labels.archive || '归档')}
@@ -806,6 +835,17 @@ export function SessionBrowser({
                         <path d="M9 11v5M15 11v5M9 4h6l1 3H8l1-3Z" />
                       </svg>
                     )}</button>
+                  ) : null}
+                  {actions.onFavorite && session.canFavorite ? (
+                    <button
+                      aria-label={`${session.favorited ? (labels.unfavorite || '取消置顶') : (labels.favorite || '置顶')}：${session.title}`}
+                      aria-pressed={session.favorited}
+                      className="cwu-browser-row-action cwu-browser-row-favorite"
+                      disabled={favoritingIds.has(session.id)}
+                      onClick={() => setFavorited(session, !session.favorited)}
+                      title={session.favorited ? (labels.unfavorite || '取消置顶') : (labels.favorite || '置顶')}
+                      type="button"
+                    >{favoritingIds.has(session.id) ? '…' : session.favorited ? '★' : '☆'}</button>
                   ) : null}
                 </div>
                 );
@@ -842,27 +882,31 @@ export function SessionBrowser({
   if (listOnly) return <div className="cwu-session-list-standalone">{list}</div>;
 
   return (
-    <div className={`cwu-browser ${listCollapsed ? 'is-list-collapsed' : ''}${browserDocumentPreview ? ' has-document-preview' : ''}`}>
+    <div className={`cwu-browser ${listCollapsed ? 'is-list-collapsed' : ''}${browserDocumentPreview ? ' has-document-preview' : ''}${drawerMode ? ' is-drawer-mode' : ''}`}>
+      {drawerMode && !listCollapsed && !browserDocumentPreview ? <button aria-label="关闭会话列表" className="cwu-browser-scrim" onClick={closeSessionList} tabIndex={-1} type="button"/> : null}
+      <div className="cwu-browser-sidebar" role={drawerMode && !listCollapsed ? 'dialog' : undefined} aria-modal={drawerMode && !listCollapsed ? true : undefined} aria-label={labels.listAriaLabel || 'Session 列表'}>
       {list}
 
       {(isNarrow && detail) || actions.onToggleList ? <button
         aria-expanded={!listCollapsed}
         aria-label={listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
         className="cwu-browser-list-toggle"
+        ref={listToggleRef}
         disabled={Boolean(browserDocumentPreview)}
         inert={browserDocumentPreview ? true : undefined}
         onClick={toggleSessionList}
         title={listCollapsed ? (labels.expandList || '展开列表') : (labels.collapseList || '收起列表')}
         type="button"
-      >{listCollapsed ? '›' : '‹'}</button> : null}
+      ><svg aria-hidden="true" viewBox="0 0 24 24" fill="none">{drawerMode && !listCollapsed ? <path d="m6 6 12 12M18 6 6 18"/> : <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M5.5 8h1M5.5 12h1M5.5 16h1"/></>}</svg></button> : null}
+      </div>
 
       <section
-        aria-hidden={browserDocumentPreview ? true : undefined}
+        aria-hidden={browserDocumentPreview || drawerMode && !listCollapsed ? true : undefined}
         aria-label={labels.detailAriaLabel || 'Session 详情'}
         className="cwu-browser-detail"
-        inert={browserDocumentPreview ? true : undefined}
+        inert={browserDocumentPreview || drawerMode && !listCollapsed ? true : undefined}
       >
-        {detail ? <SessionWorkspace key={detail.session?.sessionId || 'session-detail'} {...detail} documentPreview={null} /> : (
+        {detail ? <SessionWorkspace key={detail.session?.sessionId || 'session-detail'} {...detail} uiStateStore={sessionUiState.current} documentPreview={null} /> : (
           <div className="cwu-browser-detail-empty">
             <span>{labels.detailEyebrow || 'Session 详情'}</span>
             <h2>{labels.detailEmptyTitle || '从左侧选择一个 Session'}</h2>
@@ -918,6 +962,8 @@ function CommentaryGroup({ children, initiallyOpen = false, messageCount }) {
 
 export function SessionWorkspace({
   session,
+  compactComposer = false,
+  uiStateStore = null,
   attachmentPolicy = {},
   documentPreview = null,
   actions = {},
@@ -925,7 +971,14 @@ export function SessionWorkspace({
   features = {},
   labels = {},
 }) {
-  const view = useMemo(() => normalizeSessionViewModel(session), [session]);
+  const view = useMemo(() => {
+    const normalized = normalizeSessionViewModel(session);
+    if (!compactComposer) return normalized;
+    const commentary = normalized.messages.filter((message) => message.phase === 'commentary');
+    return { ...normalized, messages: normalized.messages.filter((message) => message.phase !== 'commentary'),
+      technicalItems: [...commentary.map((message) => ({ ...message, type: 'assistant', title: 'Codex', text: message.content })), ...normalized.technicalItems]
+        .sort((a, b) => { const left = Date.parse(a.startedAt || a.createdAt), right = Date.parse(b.startedAt || b.createdAt); return Number.isFinite(left) && Number.isFinite(right) ? left - right : 0; }) };
+  }, [session, compactComposer]);
   const messageEntries = useMemo(() => groupSessionMessages(view.messages), [view.messages]);
   const latestCommentaryGroupId = [...messageEntries]
     .reverse()
@@ -939,9 +992,20 @@ export function SessionWorkspace({
   const transcriptScrollTopRef = useRef(0);
   const transcriptTouchYRef = useRef(null);
   const messageActivityRef = useRef({ sessionId: view.sessionId, key: '' });
-  const [draft, setDraft] = useState(view.draft);
-  const [attachments, setAttachments] = useState([]);
-  const [references, setReferences] = useState([]);
+  const [composerOptionsOpen, setComposerOptionsOpen] = useState(false);
+  const [mobileSubmitMode, setMobileSubmitMode] = useState('steer');
+  const composerOptionsRef = useRef(null);
+  const composerOptionsButtonRef = useRef(null);
+  const composerFooterRef = useRef(null);
+  const composerActionsRef = useRef(null);
+  const composerAttachmentRef = useRef(null);
+  const composerWidthProbeRef = useRef(null);
+  const [inlineExecutionControls, setInlineExecutionControls] = useState(false);
+  const cachedUi = uiStateStore?.get(view.sessionId);
+  const [draft, setDraft] = useState(cachedUi?.draft ?? view.draft);
+  const [processOpenByTurn, setProcessOpenByTurn] = useState(cachedUi?.processOpenByTurn || {});
+  const [attachments, setAttachments] = useState(cachedUi?.attachments || []);
+  const [references, setReferences] = useState(cachedUi?.references || []);
   const [referenceMention, setReferenceMention] = useState(null);
   const [referenceOptions, setReferenceOptions] = useState([]);
   const [referenceActiveIndex, setReferenceActiveIndex] = useState(0);
@@ -995,10 +1059,52 @@ export function SessionWorkspace({
     && !uploading
     && actions.onSubmit
     && composer.primaryMode);
+  const compactInputMode = compactComposer && running && mobileSubmitMode === 'queue' ? 'queue' : composer.primaryMode;
+  const compactInputLabel = compactInputMode === 'queue' ? '下一轮' : composer.primaryLabel;
+  useEffect(() => {
+    if (inlineExecutionControls && composerOptionsOpen) setComposerOptionsOpen(false);
+  }, [inlineExecutionControls, composerOptionsOpen]);
+  useEffect(() => {
+    if (!compactComposer) return;
+    const footer = composerFooterRef.current;
+    const probe = composerWidthProbeRef.current;
+    const actionRow = composerActionsRef.current;
+    if (!footer || !probe || !actionRow) return;
+    function measure() {
+      const controls = [...actionRow.children];
+      const actionGap = Number.parseFloat(getComputedStyle(actionRow).columnGap) || 0;
+      const footerGap = Number.parseFloat(getComputedStyle(footer).columnGap) || 0;
+      const metaGap = Number.parseFloat(getComputedStyle(footer.firstElementChild).columnGap) || 0;
+      const actionWidth = controls.reduce((width, control) => width + control.getBoundingClientRect().width, 0) + actionGap * Math.max(0, controls.length - 1);
+      const attachmentWidth = composerAttachmentRef.current?.getBoundingClientRect().width || 0;
+      const requiredWidth = probe.getBoundingClientRect().width + attachmentWidth + (attachmentWidth ? metaGap : 0) + actionWidth + footerGap;
+      setInlineExecutionControls(previous => footer.clientWidth >= requiredWidth + (previous ? 0 : 12));
+    }
+    measure();
+    const observer = new ResizeObserver(measure);
+    for (const element of [footer, probe, ...actionRow.children, composerAttachmentRef.current].filter(Boolean)) observer.observe(element);
+    return () => observer.disconnect();
+  }, [compactComposer, view.sessionId, running, submitting, enabledFeatures.attachments]);
+  useEffect(() => {
+    if (!composerOptionsOpen) return;
+    const panel = composerOptionsRef.current;
+    panel?.focus();
+    function keydown(event) {
+      if (event.key === 'Escape') setComposerOptionsOpen(false);
+      if (event.key !== 'Tab') return;
+      const controls = [...panel.querySelectorAll('button:not(:disabled),select:not(:disabled)')];
+      const first = controls[0], last = controls.at(-1);
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel)) { event.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('keydown', keydown);
+    return () => { document.removeEventListener('keydown', keydown); (composerOptionsButtonRef.current || composerFooterRef.current?.querySelector('select:not(:disabled),button:not(:disabled)'))?.focus(); };
+  }, [composerOptionsOpen]);
   const latestMessage = view.messages.at(-1);
-  const latestMessageActivityKey = latestMessage
+  const latestMessageActivityKey = (latestMessage
     ? `${latestMessage.id}:${latestMessage.content.length}:${latestMessage.content.slice(-32)}`
-    : '';
+    : '') + view.technicalItems.map(item => `|${item.id}:${String(item.text || '').length}:${String(item.output || '').length}:${String(item.detail || '').length}`).join('');
   const technicalByTurn = new Map();
   const technicalMetadataByTurn = new Map(view.turnMetadata.map((turn) => [turn.turnKey, turn]));
   const lastMessageByTurn = new Map();
@@ -1015,13 +1121,15 @@ export function SessionWorkspace({
   }
 
   useEffect(() => {
-    followLatestRef.current = true;
+    const restored = uiStateStore?.get(view.sessionId);
+    followLatestRef.current = !restored?.awayFromLatest;
     submitFollowRef.current = false;
-    transcriptScrollTopRef.current = 0;
+    transcriptScrollTopRef.current = restored?.scrollTop || 0;
+    if (restored?.awayFromLatest) requestAnimationFrame(() => { if (transcriptRef.current) transcriptRef.current.scrollTop = restored.scrollTop; });
     transcriptTouchYRef.current = null;
-    setDraft(view.draft);
-    setAttachments([]);
-    setReferences([]);
+    setDraft(restored?.draft ?? view.draft);
+    setAttachments(restored?.attachments || []);
+    setReferences(restored?.references || []);
     setReferenceMention(null);
     setReferenceOptions([]);
     setReferenceActiveIndex(0);
@@ -1029,7 +1137,7 @@ export function SessionWorkspace({
     setAttachmentUploadState({ status: 'idle', error: '' });
     setAttachmentDragActive(false);
     setAttachmentDragKind('files');
-    setAwayFromLatest(false);
+    setAwayFromLatest(Boolean(restored?.awayFromLatest));
     setHasNewMessagesBelow(false);
     setExecutionSettingsOpen(false);
     setExecutionSettingsSaving(false);
@@ -1047,6 +1155,18 @@ export function SessionWorkspace({
       if (focusFrame != null) cancelAnimationFrame(focusFrame);
     };
   }, [view.sessionId]);
+
+  const uiSnapshot = useRef(null);
+  uiSnapshot.current = { draft, attachments, references, processOpenByTurn, awayFromLatest };
+  useEffect(() => {
+    if (!uiStateStore) return undefined;
+    const save = () => {
+      uiStateStore.set(view.sessionId, { ...uiSnapshot.current, scrollTop: transcriptRef.current?.scrollTop || 0 });
+    };
+    window.addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', save);
+    return () => { save(); window.removeEventListener('pagehide', save); document.removeEventListener('visibilitychange', save); };
+  }, [view.sessionId, uiStateStore]);
 
   useEffect(() => {
     if (!executionSettingsOpen) return undefined;
@@ -1358,7 +1478,7 @@ export function SessionWorkspace({
       setDraft(submittedDraft);
       setAttachments((current) => [...submittedAttachments, ...current].slice(0, uploadPolicy.maxCount));
       setReferences(submittedReferences);
-      throw error;
+      actions.onError?.(error);
     } finally {
       setSubmitting(false);
     }
@@ -1680,7 +1800,7 @@ export function SessionWorkspace({
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      submit(composer.primaryMode);
+      submit(compactInputMode);
     }
   }
 
@@ -1745,9 +1865,72 @@ export function SessionWorkspace({
       });
   }
 
+  const QueuedContainer = compactComposer ? 'details' : 'section';
+  function renderExecutionControls() { return (<div className="cwu-execution-controls" aria-label={labels.executionSettings || '执行设置'}>
+                    <label title={labels.model || '模型'}>
+                      <span>{labels.model || '模型'}</span>
+                      <select
+                        aria-label={labels.model || '模型'}
+                        disabled={executionControlsDisabled}
+                        onChange={(event) => {
+                          const model = view.models.find((candidate) => candidate.id === event.target.value);
+                          const supportedEfforts = model?.reasoningEfforts || [];
+                          updateExecutionProfile({
+                            model: event.target.value,
+                            reasoningEffort: supportedEfforts.includes(view.executionProfile.reasoningEffort)
+                              ? view.executionProfile.reasoningEffort
+                              : model?.defaultReasoningEffort || 'medium',
+                            serviceTier: model?.serviceTiers.some((tier) => tier.id === view.executionProfile.serviceTier)
+                              ? view.executionProfile.serviceTier
+                              : model?.defaultServiceTier || null,
+                          });
+                        }}
+                        value={view.executionProfile.model}
+                      >
+                        {!view.models.length ? <option value="">默认模型</option> : null}{view.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+                      </select>
+                    </label>
+                    <label title={labels.reasoning || '思考强度'}>
+                      <span>{labels.reasoning || '思考'}</span>
+                      <select
+                        aria-label={labels.reasoning || '思考强度'}
+                        disabled={executionControlsDisabled}
+                        onChange={(event) => updateExecutionProfile({ reasoningEffort: event.target.value })}
+                        value={view.executionProfile.reasoningEffort}
+                      >
+                        {executionEfforts.map((effort) => <option key={effort} value={effort}>{reasoningEffortLabel(effort)}</option>)}
+                      </select>
+                    </label>
+                    <label title={labels.permissions || '权限'}>
+                      <span>{labels.permissions || '权限'}</span>
+                      <select
+                        aria-label={labels.permissions || '权限'}
+                        disabled={executionControlsDisabled}
+                        onChange={(event) => updateExecutionProfile({ accessMode: event.target.value })}
+                        value={view.executionProfile.accessMode}
+                      >
+                        {view.accessModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+                      </select>
+                    </label>
+                    <button
+                      aria-label={labels.fastMode || 'Fast 模式'}
+                      aria-pressed={view.executionProfile.serviceTier === 'priority'}
+                      className="cwu-execution-fast"
+                      disabled={executionControlsDisabled || !fastTier}
+                      onClick={() => updateExecutionProfile({
+                        serviceTier: view.executionProfile.serviceTier === 'priority' ? null : 'priority',
+                      })}
+                      title={fastTier?.description || labels.fastUnavailable || '当前模型不支持 Fast'}
+                      type="button"
+                    >⚡ Fast</button>
+                  </div>); }
+  function renderInlineExecutionControls() {
+    return <div className="cwu-inline-controls-row">{renderExecutionControls()}{running && composer.showSecondary ? <label className="cwu-inline-submit-mode" title="发送方式"><span>发送方式</span><select aria-label="发送方式" value={mobileSubmitMode} onChange={event => setMobileSubmitMode(event.target.value)}><option value="steer">追加当前</option><option value="queue">下一轮</option></select></label> : null}</div>;
+  }
+
   return (
     <div
-      className="cwu-session-shell"
+      className={`cwu-session-shell ${compactComposer ? 'is-compact-composer' : ''} ${inlineExecutionControls ? 'has-inline-controls' : ''}`}
       data-status={view.status}
       onDragEnter={handleWorkspaceAttachmentDrag}
       onDragLeave={handleWorkspaceAttachmentDragLeave}
@@ -1788,6 +1971,7 @@ export function SessionWorkspace({
         </div>
       </header>
 
+      {extensions.renderSessionMorePanel?.({ session: view, sourceSession: session }) || null}
       <main className="cwu-session-main">
         <agent-session-stream
           className="cwu-transcript"
@@ -1824,6 +2008,7 @@ export function SessionWorkspace({
                   <Message
                     message={message}
                     onEditMessage={enabledFeatures.messageEdit ? actions.onEditMessage : null}
+                    onFinalResultVisible={actions.onFinalResultVisible}
                     onForkMessage={enabledFeatures.messageFork ? actions.onForkMessage : null}
                     onOpenAttachment={actions.onOpenAttachment}
                     onOpenLink={actions.onOpenLink}
@@ -1839,19 +2024,15 @@ export function SessionWorkspace({
                   {extensions.renderAfterMessage?.({ message, session: view }) || null}
                 </React.Fragment>
               ));
-              return (
-                <React.Fragment key={entry.id}>
-                  {entry.kind === 'commentary-group' ? (
-                    <CommentaryGroup
-                      initiallyOpen={entry.id === latestCommentaryGroupId}
-                      messageCount={messages.length}
-                    >{renderedMessages}</CommentaryGroup>
-                  ) : renderedMessages}
-                  {enabledFeatures.technicalDetails
+              const technicalDetails = enabledFeatures.technicalDetails
                     && trailingTurnKey
                     && lastMessageByTurn.get(trailingTurnKey) === trailingMessage.id
                     && (technicalByTurn.get(trailingTurnKey)?.length || technicalDetailsAvailable.has(trailingTurnKey)) ? (
                       <TechnicalDetails
+                        compactPresentation={compactComposer}
+                        key={`${view.sessionId}:${trailingTurnKey}`}
+                        manualOpen={processOpenByTurn[`${view.sessionId}:${trailingTurnKey}`] ?? null}
+                        onOpenChange={(open) => setProcessOpenByTurn(current => ({ ...current, [`${view.sessionId}:${trailingTurnKey}`]: open }))}
                         available={technicalDetailsAvailable.has(trailingTurnKey)}
                         itemCount={trailingTurnMetadata?.technicalItemCount}
                         items={technicalByTurn.get(trailingTurnKey) || []}
@@ -1867,9 +2048,19 @@ export function SessionWorkspace({
                         completedAt={trailingTurnMetadata?.completedAt}
                         running={trailingMessage.turnStatus === 'inProgress'
                           || (running && trailingTurnKey === view.turnMetadata.at(-1)?.turnKey)}
+                        turnStatus={trailingMessage.turnStatus}
                         turnOrdinal={trailingTurnMetadata?.ordinal}
                       />
-                    ) : null}
+                    ) : null;
+              return (
+                <React.Fragment key={entry.id}>
+                  {entry.kind === 'commentary-group' ? (
+                    <CommentaryGroup
+                      initiallyOpen={entry.id === latestCommentaryGroupId}
+                      messageCount={messages.length}
+                    >{renderedMessages}</CommentaryGroup>
+                  ) : renderedMessages}
+                  {technicalDetails}
                 </React.Fragment>
               );
             }) : (
@@ -1897,6 +2088,7 @@ export function SessionWorkspace({
 
             {enabledFeatures.technicalDetails && technicalByTurn.get('unassigned')?.length ? (
               <TechnicalDetails
+                compactPresentation={compactComposer}
                 items={technicalByTurn.get('unassigned')}
                 onOpenArtifact={actions.onOpenArtifact}
                 onRevealArtifact={actions.onRevealArtifact}
@@ -1922,8 +2114,8 @@ export function SessionWorkspace({
             </button>
           ) : null}
           {enabledFeatures.queuedTurns && view.queuedTurns.length ? (
-            <section aria-label={labels.queuedTitle || '下一轮待发送'} className="cwu-queued-turns">
-              <header><strong>{labels.queuedTitle || '下一轮待发送'}</strong><span>{view.queuedTurns.length} 条</span></header>
+            <QueuedContainer aria-label={labels.queuedTitle || '下一轮待发送'} className="cwu-queued-turns">
+              {compactComposer ? <summary>下一轮 · {view.queuedTurns.length} 条待发送</summary> : <header><strong>{labels.queuedTitle || '下一轮待发送'}</strong><span>{view.queuedTurns.length} 条</span></header>}
               <div className="cwu-queued-turn-list">
                 {view.queuedTurns.map((item) => (
                   <article key={item.id}>
@@ -1942,7 +2134,7 @@ export function SessionWorkspace({
                   </article>
                 ))}
               </div>
-            </section>
+            </QueuedContainer>
           ) : null}
           {extensions.renderComposerReplacement ? null : <agent-session-composer
             className={`cwu-composer ${attachmentDragActive ? 'is-dragging' : ''}`}
@@ -1964,7 +2156,7 @@ export function SessionWorkspace({
                   : (labels.attachmentDrop || '松开以上传附件')
             }</div>
           ) : null}
-          <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); if (composer.primaryMode) submit(composer.primaryMode); }}>
+          <form className="cwu-composer-form" onSubmit={(event) => { event.preventDefault(); if (compactInputMode) submit(compactInputMode); }}>
             {extensions.renderComposerOverlay?.({ draft, session: view, setDraft }) || null}
             {referenceMention ? (
               <div aria-label={labels.sessionReferencePicker || '选择 Session'} className="cwu-reference-picker" role="listbox">
@@ -2072,15 +2264,16 @@ export function SessionWorkspace({
               onPaste={handleComposerPaste}
               placeholder={labels.composerPlaceholder || '补充需求、反馈问题，或者继续修改…'}
               ref={composerRef}
-              rows={3}
+              rows={compactComposer ? 2 : 3}
               value={draft}
             />
-            <div className="cwu-composer-footer">
+            <div className="cwu-composer-footer" ref={composerFooterRef}>
               <div className="cwu-composer-meta">
                 {enabledFeatures.attachments === 'visible' && actions.onUploadAttachments ? (
                   <label
                     aria-disabled={submitting || uploading || attachments.length >= uploadPolicy.maxCount}
                     className="cwu-attach-button"
+                    ref={composerAttachmentRef}
                     title={attachments.length >= uploadPolicy.maxCount ? `单次最多 ${uploadPolicy.maxCount} 个附件` : '添加图片或附件'}
                   >
                     <input
@@ -2091,68 +2284,11 @@ export function SessionWorkspace({
                       onInput={uploadAttachments}
                       type="file"
                     />
-                    <span aria-hidden="true">＋</span>附件
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14"/></svg>附件
                   </label>
                 ) : null}
-                {!executionSettingsLocked && view.models.length && actions.onExecutionProfileChange ? (
-                  <div className="cwu-execution-controls" aria-label={labels.executionSettings || '执行设置'}>
-                    <label title={labels.model || '模型'}>
-                      <span>{labels.model || '模型'}</span>
-                      <select
-                        aria-label={labels.model || '模型'}
-                        disabled={executionControlsDisabled}
-                        onChange={(event) => {
-                          const model = view.models.find((candidate) => candidate.id === event.target.value);
-                          const supportedEfforts = model?.reasoningEfforts || [];
-                          updateExecutionProfile({
-                            model: event.target.value,
-                            reasoningEffort: supportedEfforts.includes(view.executionProfile.reasoningEffort)
-                              ? view.executionProfile.reasoningEffort
-                              : model?.defaultReasoningEffort || 'medium',
-                            serviceTier: model?.serviceTiers.some((tier) => tier.id === view.executionProfile.serviceTier)
-                              ? view.executionProfile.serviceTier
-                              : model?.defaultServiceTier || null,
-                          });
-                        }}
-                        value={view.executionProfile.model}
-                      >
-                        {view.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-                      </select>
-                    </label>
-                    <label title={labels.reasoning || '思考强度'}>
-                      <span>{labels.reasoning || '思考'}</span>
-                      <select
-                        aria-label={labels.reasoning || '思考强度'}
-                        disabled={executionControlsDisabled}
-                        onChange={(event) => updateExecutionProfile({ reasoningEffort: event.target.value })}
-                        value={view.executionProfile.reasoningEffort}
-                      >
-                        {executionEfforts.map((effort) => <option key={effort} value={effort}>{reasoningEffortLabel(effort)}</option>)}
-                      </select>
-                    </label>
-                    <label title={labels.permissions || '权限'}>
-                      <span>{labels.permissions || '权限'}</span>
-                      <select
-                        aria-label={labels.permissions || '权限'}
-                        disabled={executionControlsDisabled}
-                        onChange={(event) => updateExecutionProfile({ accessMode: event.target.value })}
-                        value={view.executionProfile.accessMode}
-                      >
-                        {view.accessModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
-                      </select>
-                    </label>
-                    <button
-                      aria-label={labels.fastMode || 'Fast 模式'}
-                      aria-pressed={view.executionProfile.serviceTier === 'priority'}
-                      className="cwu-execution-fast"
-                      disabled={executionControlsDisabled || !fastTier}
-                      onClick={() => updateExecutionProfile({
-                        serviceTier: view.executionProfile.serviceTier === 'priority' ? null : 'priority',
-                      })}
-                      title={fastTier?.description || labels.fastUnavailable || '当前模型不支持 Fast'}
-                      type="button"
-                    >⚡ Fast</button>
-                  </div>
+                {compactComposer ? inlineExecutionControls ? renderInlineExecutionControls() : <button aria-label="输入选项" aria-expanded={composerOptionsOpen} className="cwu-composer-options-button" ref={composerOptionsButtonRef} type="button" onClick={() => setComposerOptionsOpen(true)}><span>{executionModelLabel || '输入选项'}</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="m7 10 5 5 5-5"/></svg></button> : !executionSettingsLocked && view.models.length && actions.onExecutionProfileChange ? (
+                  renderExecutionControls()
                 ) : executionSettingsLocked ? (
                   <>
                     <button
@@ -2170,7 +2306,8 @@ export function SessionWorkspace({
                   </>
                 ) : view.executionProfile.label ? <span className="cwu-execution-profile">{view.executionProfile.label}</span> : null}
               </div>
-              <div className="cwu-composer-actions">
+              <div className="cwu-composer-actions" ref={composerActionsRef}>
+                {extensions.renderComposerActions?.({ session: view, draft, setDraft, disabled: composerDisabled }) || null}
                 {running && actions.onInterrupt ? (
                   <button
                     aria-label="停止当前处理"
@@ -2178,22 +2315,24 @@ export function SessionWorkspace({
                     onClick={actions.onInterrupt}
                     title="停止当前处理"
                     type="button"
-                  >停止</button>
+                  >{compactComposer ? <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> : '停止'}</button>
                 ) : null}
-                {composer.showSecondary ? (
+                {!compactComposer && composer.showSecondary ? (
                   <button className="cwu-button" disabled={!canSubmit} onClick={() => submit(composer.secondaryMode)} type="button">
                     {composer.secondaryLabel}
                   </button>
                 ) : null}
-                <button className="cwu-send" disabled={!canSubmit} title={composer.primaryLabel} type="submit">
-                  {composer.primaryLabel}
+                <button className="cwu-send" disabled={!canSubmit} title={compactInputLabel} type="submit">
+                  {compactInputLabel}
                 </button>
               </div>
             </div>
+            {compactComposer ? <div aria-hidden="true" inert className="cwu-composer-width-probe" ref={composerWidthProbeRef}>{renderInlineExecutionControls()}</div> : null}
           </form>
           </agent-session-composer>}
         </footer>
       </main>
+      {composerOptionsOpen ? <div className="cwu-composer-options-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOptionsOpen(false); }}><section className="cwu-composer-options-sheet" role="dialog" aria-modal="true" aria-label="输入选项" tabIndex={-1} ref={composerOptionsRef}><div className="cwu-sheet-handle"/><header><strong>输入选项</strong><button aria-label="关闭输入选项" type="button" onClick={() => setComposerOptionsOpen(false)}>×</button></header>{renderExecutionControls()}{extensions.renderComposerOptions?.({ session: view, draft, setDraft, disabled: composerDisabled, close: () => setComposerOptionsOpen(false) }) || null}{running ? <div className="cwu-mobile-submit-mode"><span>发送方式</span><div>{[['steer', '追加当前'], ['queue', '下一轮']].map(([mode, label]) => <button key={mode} type="button" aria-pressed={mobileSubmitMode === mode} onClick={() => setMobileSubmitMode(mode)}>{label}</button>)}</div></div> : null}<button className="cwu-send" type="button" onClick={() => setComposerOptionsOpen(false)}>完成</button></section></div> : null}
       {executionSettingsOpen ? (
         <div
           aria-label="当前执行设置"
@@ -2810,9 +2949,42 @@ function SpreadsheetPreview({ file }) {
   );
 }
 
+function ScrollRegion({ className, bounded = false, ariaLabel, children, id }) {
+  const scrollRef = useRef(null);
+  const contentRef = useRef(null);
+  const hintId = useId();
+  const [edges, setEdges] = useState({ overflow: false, above: false, below: false });
+  const updateEdges = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const contentHeight = contentRef.current?.getBoundingClientRect().height || 0;
+    const remaining = Math.max(contentHeight, element.scrollHeight) - element.clientHeight;
+    const overflow = remaining > 4;
+    if (!overflow) element.scrollTop = 0;
+    const next = { overflow, above: overflow && element.scrollTop > 4, below: overflow && remaining - element.scrollTop > 4 };
+    setEdges(previous => previous.overflow === next.overflow && previous.above === next.above && previous.below === next.below ? previous : next);
+  }, []);
+  useEffect(() => {
+    if (!bounded) return;
+    updateEdges();
+    const observer = new ResizeObserver(updateEdges);
+    for (const element of [scrollRef.current, contentRef.current].filter(Boolean)) observer.observe(element);
+    return () => observer.disconnect();
+  }, [bounded, updateEdges]);
+  if (!bounded) return <div className={className} id={id} aria-label={ariaLabel}>{children}</div>;
+  return <div className={`cwu-scroll-region ${className}`} id={id} data-overflow={edges.overflow ? 'true' : undefined}>
+    <div className="cwu-scroll-content" ref={scrollRef} onScroll={edges.overflow ? updateEdges : undefined} tabIndex={edges.overflow ? 0 : undefined} role={edges.overflow ? 'region' : undefined} aria-label={edges.overflow ? ariaLabel : undefined} aria-describedby={edges.below ? hintId : undefined}>
+      <div className="cwu-scroll-copy" ref={contentRef}>{children}</div>
+    </div>
+    {edges.above ? <div className="cwu-scroll-fade-top" aria-hidden="true"/> : null}
+    {edges.below ? <button className="cwu-scroll-hint" id={hintId} type="button" title="向下滚动查看更多" onClick={() => scrollRef.current?.scrollBy({ top: Math.min(scrollRef.current.clientHeight * .75, 240), behavior: 'smooth' })}><span className="cwu-scroll-hint-label">向下滚动查看更多</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M12 5v14m-5-5 5 5 5-5"/></svg></button> : null}
+  </div>;
+}
+
 function Message({
   message,
   onEditMessage,
+  onFinalResultVisible,
   onForkMessage,
   onOpenAttachment,
   onOpenLink,
@@ -2827,6 +2999,9 @@ function Message({
 }) {
   const isUser = message.role === 'user';
   const isCommentary = message.phase === 'commentary';
+  const isFinalResult = message.role === 'assistant' && !isCommentary && message.turnStatus !== 'inProgress';
+  const messageRef = useRef(null);
+  const finalResultReportedRef = useRef(false);
   const publishesMedia = sessionMessagePublishesMedia(message);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(message.content);
@@ -2890,13 +3065,36 @@ function Message({
     message,
     session,
   });
+  useEffect(() => {
+    if (!isFinalResult || !onFinalResultVisible || typeof IntersectionObserver === 'undefined') return undefined;
+    let intersecting = false;
+    function notify() {
+      if (!intersecting || finalResultReportedRef.current || document.visibilityState !== 'visible') return;
+      finalResultReportedRef.current = true;
+      onFinalResultVisible({
+        sessionId,
+        turnId: message.turnKey || message.turnId || null,
+        messageId: message.id,
+      });
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      intersecting = Boolean(entry?.isIntersecting);
+      notify();
+    }, { threshold: 0.1 });
+    observer.observe(messageRef.current);
+    document.addEventListener('visibilitychange', notify);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', notify);
+    };
+  }, [isFinalResult, message.id, message.turnId, message.turnKey, onFinalResultVisible, sessionId]);
 
   async function saveEdit() {
     const prompt = editDraft.trim();
     if (!prompt || savingEdit || !canEdit) return;
     setSavingEdit(true);
     try {
-      await onEditMessage({ messageId: message.id, turnId: message.turnId, prompt, references: message.references });
+      await onEditMessage({ messageId: message.id, turnId: message.turnId, prompt, references: message.references, attachments: message.attachments });
       setEditing(false);
     } finally {
       setSavingEdit(false);
@@ -2935,14 +3133,14 @@ function Message({
       </div>
     </div>
   ) : (
-    <div className="cwu-message-body">
+    <ScrollRegion className="cwu-message-body" bounded={isUser} ariaLabel={isUser ? '用户消息' : undefined}>
       {customContent === undefined ? defaultContent : customContent}
       {!isUser ? <RemarkDirectives directives={directiveContent.directives} onOpenLink={onOpenLink} /> : null}
-    </div>
+    </ScrollRegion>
   );
 
   return (
-    <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'} ${editing ? 'is-editing' : ''}`} data-message-id={message.id} phase={message.phase} role={message.role}>
+    <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'} ${!isUser && message.turnStatus === 'inProgress' ? 'is-streaming' : ''} ${editing ? 'is-editing' : ''}`} data-message-id={message.id} ref={messageRef} phase={message.phase} role={message.role}>
       {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
       {isUser && message.references?.length ? (
         <div aria-label="引用的 Sessions" className="cwu-message-references">
@@ -3164,92 +3362,58 @@ function LazyMediaItem({ item, onOpenAttachment, onResolveMedia, sessionId }) {
   );
 }
 
+function TechnicalProcessItem({ item, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }) {
+  const [expanded, setExpanded] = useState(null);
+  const panelId = `process-${sessionId}-${item.id}`;
+  const typeLabels = { assistant: 'Codex', command: '运行命令', tool: '工具调用', plan: '执行计划', file: '文件变更' };
+  function toggle(kind) { setExpanded(current => current === kind ? null : kind); }
+  return <article className={`cwu-process-card type-${item.type}`}>
+    <header>
+      <strong>{item.label || typeLabels[item.type] || item.title}</strong>
+      <div className="cwu-process-inline-actions">
+        {item.detail ? <button type="button" aria-label={`查看详情：${item.title}`} aria-expanded={expanded === 'detail'} aria-controls={expanded === 'detail' ? panelId : undefined} onClick={() => toggle('detail')}>详情</button> : null}
+        {item.output ? <button type="button" aria-label={`查看输出：${item.title}`} title={`${item.output.split('\n').length} 行输出`} aria-expanded={expanded === 'output'} aria-controls={expanded === 'output' ? panelId : undefined} onClick={() => toggle('output')}>输出</button> : null}
+      </div>
+    </header>
+    {item.text ? item.type === 'command' ? <pre className="cwu-process-command">{item.text}</pre> : <div className="cwu-process-copy"><ReactMarkdown remarkPlugins={MARKDOWN_REMARK_PLUGINS}>{item.text}</ReactMarkdown></div> : <p className="cwu-process-copy">{item.title}</p>}
+    {expanded ? <ScrollRegion className="cwu-process-detail" id={panelId} bounded ariaLabel={expanded === 'output' ? '命令或工具输出' : '调用详情'}><pre>{item[expanded]}</pre></ScrollRegion> : null}
+    {item.media?.length ? <MediaGallery items={item.media} onResolveMedia={onResolveMedia} sessionId={sessionId}/> : null}
+    {item.artifacts?.length ? <div className="cwu-technical-artifacts">{item.artifacts.map(artifact => <article key={artifact.id}><button disabled={!onOpenArtifact} type="button" onClick={() => onOpenArtifact?.(artifact, item)}><span><strong>{artifact.name}</strong><small>{artifact.status || '文件产物'}</small></span></button>{onRevealArtifact ? <button type="button" className="cwu-artifact-reveal" aria-label={`在文件夹中显示 ${artifact.name}`} onClick={() => onRevealArtifact(artifact, item)}><RevealFolderIcon/></button> : null}</article>)}</div> : null}
+  </article>;
+}
+
 function TechnicalDetails({
-  items,
-  itemCount = null,
-  available = false,
-  loading = false,
-  onLoad = null,
-  onOpenArtifact = null,
-  onResolveMedia = null,
-  onRevealArtifact = null,
-  sessionId = null,
-  startedAt = null,
-  completedAt = null,
-  running = false,
-  turnOrdinal = null,
+  items, itemCount = null, available = false, loading = false, onLoad = null,
+  onOpenArtifact = null, onResolveMedia = null, onRevealArtifact = null,
+  sessionId = null, startedAt = null, completedAt = null, running = false,
+  turnStatus = null, manualOpen = null, onOpenChange = null, turnOrdinal = null, compactPresentation = false,
 }) {
-  const [open, setOpen] = useState(false);
+  const open = manualOpen ?? running;
   const [durationNow, setDurationNow] = useState(() => Date.now());
-  const normalizedItemCount = optionalInteger(itemCount, { minimum: 0 });
-  const normalizedTurnOrdinal = optionalInteger(turnOrdinal, { minimum: 1 });
+  const count = Math.max(optionalInteger(itemCount, { minimum: 0 }) ?? 0, items.length);
+  const ordinal = optionalInteger(turnOrdinal, { minimum: 1 });
   const duration = turnDurationLabel({ startedAt, completedAt, running, now: durationNow });
+  const current = items.findLast(item => item.status === 'inProgress') || items.at(-1);
   useEffect(() => {
-    if (!running || completedAt != null) return undefined;
-    setDurationNow(Date.now());
-    const timer = globalThis.setInterval(() => setDurationNow(Date.now()), 1_000);
+    if (!running || completedAt != null) return;
+    const timer = globalThis.setInterval(() => setDurationNow(Date.now()), 1000);
     return () => globalThis.clearInterval(timer);
   }, [running, completedAt, startedAt]);
   async function toggle() {
-    const next = !open;
-    setOpen(next);
-    if (next && !items.length && available && onLoad && !loading) await onLoad();
+    onOpenChange?.(!open);
+    if (!open && available && onLoad && !loading) {
+      try { await onLoad(); } catch { /* The Host owns the visible read error; retain the current record. */ }
+    }
   }
-  return (
-    <section className="cwu-technical">
-      <button
-        aria-expanded={open}
-        className="cwu-technical-toggle"
-        onClick={toggle}
-        type="button"
-      >
-        <span>本轮执行详情</span>
-        <small>{[
-          normalizedItemCount != null || items.length ? `${normalizedItemCount ?? items.length} 项` : '',
-          normalizedTurnOrdinal != null ? `第 ${normalizedTurnOrdinal} 轮` : '',
-          duration,
-          loading && open ? '读取中…' : open ? '收起' : '展开',
-        ].filter(Boolean).join(' · ')}</small>
-      </button>
-      {open ? (
-        <div className="cwu-technical-list">
-          {items.length ? items.map((item) => (
-            <details key={item.id} open={item.status === 'inProgress'}>
-              <summary><span>{item.title}</span><em>{item.status}</em></summary>
-              {item.detail ? <pre>{item.detail}</pre> : null}
-              {item.media?.length ? <MediaGallery items={item.media} onResolveMedia={onResolveMedia} sessionId={sessionId} /> : null}
-              {item.artifacts?.length ? (
-                <div className="cwu-technical-artifacts" aria-label="文件产物">
-                  {item.artifacts.map((artifact) => (
-                    <article key={artifact.id}>
-                      <button
-                        disabled={!onOpenArtifact}
-                        onClick={() => onOpenArtifact?.(artifact, item)}
-                        title={onOpenArtifact ? `打开 ${artifact.name}` : artifact.name}
-                        type="button"
-                      >
-                        <i aria-hidden="true">{artifact.kind === 'image' ? '▧' : artifact.kind === 'audio' ? '♪' : '▤'}</i>
-                        <span><strong>{artifact.name}</strong><small>{artifact.status || '文件产物'}</small></span>
-                      </button>
-                      {onRevealArtifact ? (
-                        <button
-                          aria-label={`在文件夹中显示 ${artifact.name}`}
-                          className="cwu-artifact-reveal"
-                          onClick={() => onRevealArtifact(artifact, item)}
-                          title="在文件夹中显示"
-                          type="button"
-                        ><RevealFolderIcon /></button>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
-              ) : null}
-            </details>
-          )) : <p className="cwu-technical-loading">{loading ? '正在读取执行详情…' : '没有可展示的执行详情。'}</p>}
-        </div>
-      ) : null}
-    </section>
-  );
+  return <section className={`cwu-technical ${running ? 'is-running' : ''}`}>
+    <button className="cwu-technical-toggle" type="button" aria-expanded={open} onClick={toggle}>
+      {compactPresentation ? <span className="cwu-process-heading"><strong>{running ? '正在执行' : turnStatus === 'interrupted' ? '执行已中断' : '执行记录'}</strong><span>{current?.title || '公开执行过程'}</span></span> : <span>本轮执行详情</span>}
+      <small>{[count ? `${count} 项` : '', ordinal ? `第 ${ordinal} 轮` : '', duration, loading && open ? '读取中…' : open ? '收起' : '展开'].filter(Boolean).join(' · ')}</small>
+    </button>
+    {open ? <ScrollRegion className="cwu-technical-list" bounded={!running} ariaLabel={running ? '当前公开执行过程' : '执行记录'}>
+      {items.length ? items.map(item => <TechnicalProcessItem key={item.id} item={item} onOpenArtifact={onOpenArtifact} onResolveMedia={onResolveMedia} onRevealArtifact={onRevealArtifact} sessionId={sessionId}/>) : <p className="cwu-technical-loading">{loading ? '正在读取执行详情…' : '没有可展示的执行详情。'}</p>}
+    </ScrollRegion> : null}
+  </section>;
 }
 
 function optionalInteger(value, { minimum }) {
@@ -3420,3 +3584,7 @@ export {
   normalizeSideChatPanelViewModel,
   sessionStatusTone,
 } from './model.js';
+
+export { SessionApplication, useSessionHost } from './session-application.jsx';
+export { SessionComposerUtilities } from './composer-utilities.jsx';
+export { RealtimePanel as SessionRealtimePanel };

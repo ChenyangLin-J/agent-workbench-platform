@@ -57,6 +57,7 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 - `@agent-workbench/platform`
 - `@agent-workbench/platform/session`
 - `@agent-workbench/platform/session-client`
+- `@agent-workbench/platform/session-host`
 - `@agent-workbench/platform/subagents`
 - `@agent-workbench/platform/attachments`
 - `@agent-workbench/platform/resources`
@@ -79,6 +80,8 @@ Consumers provide React and their own compatible Codex CLI version. This lets in
 - `@agent-workbench/platform/styles.css`
 
 ## UI ownership
+
+`SessionApplication` and `createSessionHostController` provide the common full-page Session UI and client orchestration. Minimal Host and Agent Web supply thin transport adapters and product extension slots. See [`docs/session-application.md`](docs/session-application.md) for the ownership table and assembly contract. Consumers keep their authorization, resources, accounts, memory, integrations and deployment policies.
 
 `@agent-workbench/platform/session-client` is the headless browser Host Kit boundary. `SessionClientOperationController` retains one idempotency key for an unchanged mutation target and JSON-safe payload until the caller confirms acceptance or explicitly discards it. The same entry exports authoritative-snapshot/optimistic-item reconciliation and `createSessionEventController`, which owns active-Turn, queue, request, delta, reconnect and polling state while accepting consumer callbacks for transport, product events, extensions and error presentation. Platform's Minimal Host uses the operation controller for Session creation and Turn submission; full consumers can adopt the state and event slices without importing product objects or Platform DOM internals.
 

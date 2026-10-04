@@ -23,6 +23,13 @@ function session() {
   };
 }
 
+test('Minimal Host exposes command text and output separately in the public live process',()=>{
+ const state=applyMinimalHostSessionEvent(session(),{sessionId:'session-a',type:'item_completed',runtimeTurnId:'turn-a',payload:{item:{id:'command-a',type:'commandExecution',command:'node inspect.js',aggregatedOutput:'verified',status:'completed'}}}).session;
+ assert.equal(state.technicalItems[0].type,'command');
+ assert.equal(state.technicalItems[0].text,'node inspect.js');
+ assert.equal(state.technicalItems[0].output,'verified');
+});
+
 test('Minimal Host applies streamed deltas directly to one selected Session and its summary', () => {
   let detail = session();
   const started = parseMinimalHostSessionEvent({

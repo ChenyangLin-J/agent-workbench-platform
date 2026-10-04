@@ -27,7 +27,6 @@ const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42
 
 test('Minimal Host creates and runs project-free Sessions through the Core Kernel', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider({ capabilities: { steer: true } });
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
@@ -38,7 +37,7 @@ test('Minimal Host creates and runs project-free Sessions through the Core Kerne
     accessToken: 'test-token',
   });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json', 'x-agent-workbench-token': 'test-token' };
   assert.equal((await fetch(`${listening.url}/api/health`, { headers })).status, 200);
   assert.equal((await fetch(`${listening.url}/api/health`)).status, 401);
@@ -79,7 +78,6 @@ test('Minimal Host creates and runs project-free Sessions through the Core Kerne
 
 test('Minimal Host validates, persists, and applies Session execution settings', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-execution-profile-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider({
     models: [{
@@ -99,7 +97,7 @@ test('Minimal Host validates, persists, and applies Session execution settings',
   manifest.runtime = { provider: 'fake', model: 'gpt-sol', accessModes: ['restricted', 'full'] };
   const host = createMinimalHost({ manifest, kernel, sessionStore: store, accessToken: 'test-token' });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json', 'x-agent-workbench-token': 'test-token' };
   const created = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST', headers, body: JSON.stringify({ title: 'Settings' }),
@@ -155,7 +153,6 @@ test('Minimal Host validates, persists, and applies Session execution settings',
 
 test('Minimal Host persists native generated images and publishes authorized message media', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-result-image-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider({ capabilities: { fork: true } });
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
@@ -166,7 +163,7 @@ test('Minimal Host persists native generated images and publishes authorized mes
     accessToken: 'result-image-token',
   });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json', 'x-agent-workbench-token': 'result-image-token' };
   const created = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST', headers, body: JSON.stringify({ title: 'Result image' }),
@@ -237,7 +234,6 @@ test('Minimal Host persists native generated images and publishes authorized mes
 
 test('Minimal Host promotes explicitly delivered Codex file changes into durable Agent artifacts', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-result-file-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'workspace'), { recursive: true });
   const manifest = runManifest(root, 'run-result-file');
   manifest.features.agentArtifacts = true;
@@ -246,7 +242,7 @@ test('Minimal Host promotes explicitly delivered Codex file changes into durable
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
   const host = createMinimalHost({ manifest, kernel, sessionStore: store, accessToken: 'result-file-token' });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json', 'x-agent-workbench-token': 'result-file-token' };
   const session = await fetch(`${listening.url}/api/sessions`, { method: 'POST', headers, body: '{}' })
     .then((response) => response.json()).then((body) => body.session);
@@ -457,7 +453,6 @@ test('Minimal Host creates an idempotent Session with an unsent draft', async (t
 
 test('Minimal Host accepts one Turn for an idempotency key and replays its response', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-turn-idempotent-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider();
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
@@ -468,7 +463,7 @@ test('Minimal Host accepts one Turn for an idempotency key and replays its respo
     sessionOwnerHeader: 'x-session-owner',
   });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = {
     'content-type': 'application/json',
     'x-session-owner': 'user-a',
@@ -664,7 +659,6 @@ test('Minimal Host reads portable Sessions across Runs without reusing stale Run
 
 test('Minimal Host transparently continues an owned portable Session on its first new Turn', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-portable-continuation-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const sharedState = join(root, 'shared-state');
   const sharedResources = new FilesystemResourceStore({ root: join(root, 'shared-resources') });
   const sourceStore = new EnvironmentSessionStore({ stateRoot: sharedState, runId: 'run-a' });
@@ -706,7 +700,7 @@ test('Minimal Host transparently continues an owned portable Session on its firs
     sessionOwnerHeader: 'x-session-owner',
   });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop();  await rm(root, { recursive: true, force: true }); });
   const headers = {
     'content-type': 'application/json',
     'x-session-owner': 'user-a',
@@ -788,7 +782,6 @@ test('Minimal Host transparently continues an owned portable Session on its firs
 
 test('Minimal Host assets build without consumer source', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-assets-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const assets = await buildMinimalHostAssets({ outputDirectory: root });
   const [indexResponse, scriptResponse, stylesheetResponse] = await Promise.all([
     readFile(assets.index, 'utf8'),
@@ -824,7 +817,7 @@ test('Minimal Host assets build without consumer source', async (t) => {
     assetsRoot: root,
   });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const servedIndex = await fetch(listening.url);
   assert.match(servedIndex.headers.get('content-security-policy'), /style-src 'self' 'unsafe-inline'/);
   assert.equal(servedIndex.headers.get('cache-control'), 'no-store');
@@ -837,14 +830,13 @@ test('Minimal Host assets build without consumer source', async (t) => {
 
 test('Minimal Host uploads Session attachments, passes them to Runtime, and derives the initial title', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-attachments-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider();
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
   const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
   const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store, resourceStore });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json' };
 
   const created = await fetch(`${listening.url}/api/sessions`, {
@@ -907,14 +899,13 @@ test('Minimal Host uploads Session attachments, passes them to Runtime, and deri
 
 test('Minimal Host gives Runtime the exact managed-file path without exposing it to browser projections', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-managed-file-path-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
   const provider = new FakeRuntimeProvider();
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
   const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store, resourceStore });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json' };
   const created = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST', headers, body: '{}',
@@ -953,13 +944,12 @@ test('Minimal Host gives Runtime the exact managed-file path without exposing it
 
 test('Minimal Host previews Markdown, SQL, CSV and TXT resources in-site with bounded safe modes', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-text-preview-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
   const kernel = new AgentSessionKernel({ provider: new FakeRuntimeProvider(), bindingStore: store, validateRequest: () => {} });
   const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store, resourceStore });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json' };
   const session = await fetch(`${listening.url}/api/sessions`, { method: 'POST', headers, body: '{}' })
     .then((response) => response.json()).then((body) => body.session);
@@ -1022,14 +1012,13 @@ test('Minimal Host previews Markdown, SQL, CSV and TXT resources in-site with bo
 
 test('Minimal Host leaves failed Turn attachments staged and rejects cross-Session reuse', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-resource-failure-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
   const provider = new FakeRuntimeProvider();
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
   const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store, resourceStore });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json' };
 
   const first = await fetch(`${listening.url}/api/sessions`, {
@@ -1082,7 +1071,6 @@ test('Minimal Host leaves failed Turn attachments staged and rejects cross-Sessi
 
 test('Minimal Host registers authorized directories as persistent external Resources', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-directories-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const workspace = join(root, 'workspace');
   const referencedDirectory = join(workspace, '资料');
   const unauthorizedDirectory = await mkdtemp(join(tmpdir(), 'awb-host-outside-'));
@@ -1094,7 +1082,7 @@ test('Minimal Host registers authorized directories as persistent external Resou
   const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
   const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store, resourceStore });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json' };
   const created = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST', headers, body: '{}',
@@ -1159,7 +1147,6 @@ test('Minimal Host registers authorized directories as persistent external Resou
 
 test('Minimal Host inserts accepted user input before synchronously completed Runtime output', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-fast-turn-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider();
   const originalCreateSession = provider.createSession.bind(provider);
@@ -1183,7 +1170,7 @@ test('Minimal Host inserts accepted user input before synchronously completed Ru
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
   const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json' };
   const created = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST', headers, body: '{}',
@@ -1203,13 +1190,12 @@ test('Minimal Host inserts accepted user input before synchronously completed Ru
 
 test('Minimal Host persists a queued Turn and starts it after the active Turn completes', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-queue-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider({ capabilities: { steer: true } });
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
   const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json' };
   const created = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST', headers, body: '{}',
@@ -1240,7 +1226,6 @@ test('Minimal Host persists a queued Turn and starts it after the active Turn co
 
 test('Minimal Host Edit archives the source after creating an independent replacement Session', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-branch-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider({ capabilities: { fork: true } });
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
@@ -1251,7 +1236,7 @@ test('Minimal Host Edit archives the source after creating an independent replac
     sessionObserverHeader: 'x-test-observer',
   });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json' };
   const created = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST', headers, body: '{}',
@@ -1306,13 +1291,12 @@ test('Minimal Host Edit archives the source after creating an independent replac
 
 test('Minimal Host Fork keeps the source and branch in the active Session list', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-fork-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const provider = new FakeRuntimeProvider({ capabilities: { fork: true } });
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
   const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json' };
   const created = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST', headers, body: '{}',
@@ -1349,14 +1333,13 @@ test('Minimal Host Fork keeps the source and branch in the active Session list',
 
 test('Minimal Host Edit and Fork clone Dashboard attachments into each replacement Session', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-dashboard-branch-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
   const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
   const provider = new FakeRuntimeProvider({ capabilities: { fork: true } });
   const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
   const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store, resourceStore });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const headers = { 'content-type': 'application/json' };
   const created = await fetch(`${listening.url}/api/sessions`, {
     method: 'POST', headers, body: '{}',
@@ -1678,7 +1661,6 @@ test('Minimal Host isolates Sessions by a verified owner header', async (t) => {
 
 test('Minimal Host Observer joins portable Sessions with current Run state', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-observer-portable-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'portable-state'), runId: 'run-portable' });
   const runtimeStore = new EnvironmentSessionRuntimeStore({ stateRoot: join(root, 'runtime-state') });
   const provider = new FakeRuntimeProvider();
@@ -1698,7 +1680,7 @@ test('Minimal Host Observer joins portable Sessions with current Run state', asy
     sessionObserverHeader: 'x-observer',
   });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
 
   const detail = await fetch(`${listening.url}/api/observer/sessions/${created.sessionId}`, {
     headers: { 'x-observer': 'true' },
@@ -1710,7 +1692,6 @@ test('Minimal Host Observer joins portable Sessions with current Run state', asy
 
 test('Minimal Host projects scoped shared Sessions and continues them into a fresh owner Runtime', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'awb-host-shared-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state'), runId: 'run-shared' });
   const runtimeStore = new EnvironmentSessionRuntimeStore({ stateRoot: join(root, 'runtime-state') });
   const resourceStore = new FilesystemResourceStore({ root: join(root, 'resources') });
@@ -1726,7 +1707,7 @@ test('Minimal Host projects scoped shared Sessions and continues them into a fre
     sessionAccessHeader: 'x-session-access',
   });
   const listening = await host.start();
-  t.after(() => host.stop());
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
   const accessEnvelope = (principalId, sharedSessions = []) => Buffer.from(JSON.stringify({
     v: 1,
     principalId,

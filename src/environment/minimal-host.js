@@ -235,11 +235,13 @@ export function createMinimalHost({
     limit = 50,
     includeOwned = true,
     includeShared = true,
+    includeArchived = false,
+    query = '',
   } = {}) {
     const ownedPage = includeOwned
       ? (typeof sessionStore.listPage === 'function'
-          ? await sessionStore.listPage({ ownerId: access.ownerId, cursor, limit })
-          : { sessions: await sessionStore.list({ ownerId: access.ownerId }), nextCursor: null })
+          ? await sessionStore.listPage({ ownerId: access.ownerId, cursor, limit, includeArchived, query })
+          : { sessions: await sessionStore.list({ ownerId: access.ownerId, includeArchived, query }), nextCursor: null })
       : { sessions: [], nextCursor: null };
     const ownedIds = ownedPage.sessions.map((session) => session.id || session.sessionId);
     const runtimeBindings = typeof sessionRuntimeStore.loadMany === 'function'
@@ -416,6 +418,8 @@ export function createMinimalHost({
         limit: url.searchParams.get('limit'),
         includeOwned: url.searchParams.get('owned') !== '0',
         includeShared: url.searchParams.get('shared') !== '0',
+        includeArchived: url.searchParams.get('includeArchived') === '1',
+        query: url.searchParams.get('query') || '',
       });
       return sendJson(response, 200, {
         sessions: listed.sessions,
@@ -459,6 +463,19 @@ export function createMinimalHost({
       return sendJson(response, 201, {
         session: await readSession(creation.session.sessionId, { ownerId }),
       });
+    }
+    const preferenceRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(archive|favorite)$/);
+    if (preferenceRoute && request.method === 'PATCH') {
+      const sessionId = decodeURIComponent(preferenceRoute[1]);
+      // Preferences are writes to an owned Session, never a grant to edit a shared Session.
+      await readSession(sessionId, { ownerId });
+      const body = await readJsonBody(request);
+      const archive = preferenceRoute[2] === 'archive';
+      const method = archive ? 'setArchived' : 'setFavorited';
+      if (typeof sessionStore[method] !== 'function') throw hostError('HOST_PREFERENCE_UNSUPPORTED', 'Session preferences are not configured.', 501);
+      const value = body[archive ? 'archived' : 'favorited'];
+      if (typeof value !== 'boolean') throw hostError('HOST_PREFERENCE_INVALID', 'Session preference must be a boolean.', 400);
+      return sendJson(response, 200, { session: await sessionStore[method](sessionId, value, { ownerId }) });
     }
     const continueRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/continue$/);
     if (continueRoute && request.method === 'POST') {
@@ -1523,6 +1540,8 @@ function observerSessionView(session, manifest) {
     technicalItems: (session.technicalItems || []).map((item) => ({
       ...item,
       detail: redactDiagnosticLog(item.detail, manifest.paths.root),
+      text: redactDiagnosticLog(item.text, manifest.paths.root),
+      output: redactDiagnosticLog(item.output, manifest.paths.root),
     })),
     runtimeBinding: binding ? {
       runtimeProvider: binding.runtimeProvider || null,

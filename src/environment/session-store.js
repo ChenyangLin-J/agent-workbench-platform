@@ -66,6 +66,7 @@ export class EnvironmentSessionStore {
     ownerId = null,
     includeOwnerId = false,
     includeArchived = false,
+    query = '',
     cursor = null,
     limit = SESSION_LIST_PAGE_SIZE,
   } = {}) {
@@ -79,6 +80,15 @@ export class EnvironmentSessionStore {
       values.push(nonEmptyString(ownerId, 'Session owner'));
     }
     if (!includeArchived) conditions.push('archived_at IS NULL');
+    const search = String(query || '').trim().slice(0, 500);
+    if (search) {
+      const pattern = `%${search.replace(/[\\%_]/g, '\\$&')}%`;
+      conditions.push(`(title LIKE ? ESCAPE '\\' OR EXISTS (
+        SELECT 1 FROM session_turns AS turn, json_each(turn.messages_json) AS message
+        WHERE turn.session_id = sessions.id AND json_extract(message.value, '$.content') LIKE ? ESCAPE '\\'
+      ))`);
+      values.push(pattern, pattern);
+    }
     if (after) {
       conditions.push('(updated_at < ? OR (updated_at = ? AND id < ?))');
       values.push(after.updatedAt, after.updatedAt, after.id);
@@ -295,9 +305,18 @@ export class EnvironmentSessionStore {
   }
 
   async archive(sessionId, { ownerId = null } = {}) {
+    return this.setArchived(sessionId, true, { ownerId });
+  }
+
+  async setArchived(sessionId, archived, { ownerId = null } = {}) {
     await this.#mutateSession(sessionId, { ownerId }, (session) => {
-      session.archivedAt ||= this.#time();
+      session.archivedAt = archived ? session.archivedAt || this.#time() : null;
     });
+    return this.get(sessionId, { ownerId });
+  }
+
+  async setFavorited(sessionId, favorited, { ownerId = null } = {}) {
+    await this.#mutateSession(sessionId, { ownerId }, (session) => { session.favorited = Boolean(favorited); });
     return this.get(sessionId, { ownerId });
   }
 
@@ -1041,6 +1060,7 @@ function indexRowSession(row) {
     updatedAt: row.updated_at,
     completedAt: row.completed_at ?? null,
     ...(row.archived_at ? { archivedAt: row.archived_at } : {}),
+    favorited: JSON.parse(row.ui_metadata_json || '{}').favorited === true,
   };
 }
 
@@ -1048,6 +1068,7 @@ function sessionViewMetadata(session, metadata, { includeOwnerId = false } = {})
   return {
     ...publicSession(session, { includeOwnerId }),
     sessionId: session.id,
+    lastEventId: session.lastEventId ?? metadata?.lastEventId ?? 0,
     draft: typeof metadata.draft === 'string' ? metadata.draft : '',
     plan: Array.isArray(metadata.plan) ? structuredClone(metadata.plan) : [],
     pendingRequests: [],
@@ -1094,6 +1115,8 @@ function writeSessionProjection(database, session, sequence) {
     draft: typeof session.draft === 'string' ? session.draft : '',
     plan: Array.isArray(session.plan) ? session.plan : [],
     executionProfile: session.executionProfile ? structuredClone(session.executionProfile) : null,
+    favorited: session.favorited === true,
+    lastEventId: session.lastEventId ?? 0,
   });
   database.exec('BEGIN IMMEDIATE');
   try {
@@ -1340,6 +1363,7 @@ function persistentSessionEvent(event) {
 }
 
 function applySessionEvent(session, event, binding) {
+  if (Number.isFinite(Number(event.eventId))) session.lastEventId = Number(event.eventId);
   const timestamp = new Date(event.createdAt || Date.now()).toISOString();
   if (event.type === 'turn_started') {
     session.status = 'running';
@@ -1474,9 +1498,11 @@ function publicSession(session, { includeOwnerId = false } = {}) {
     updatedAt: session.updatedAt,
     completedAt: session.completedAt,
     archived: Boolean(session.archivedAt),
-    canArchive: false,
+    canArchive: true,
     canEnd: false,
-    canFavorite: false,
+    favorited: session.favorited === true,
+    lastEventId: session.lastEventId ?? 0,
+    canFavorite: true,
   };
 }
 
@@ -1610,6 +1636,7 @@ function sessionView(session, binding = null, { includeOwnerId = false } = {}) {
   return {
     ...publicSession(session, { includeOwnerId }),
     sessionId: session.id,
+    lastEventId: session.lastEventId ?? 0,
     draft: typeof session.draft === 'string' ? session.draft : '',
     messages: structuredClone(session.messages),
     technicalItems: structuredClone(session.technicalItems),
@@ -1712,6 +1739,9 @@ function applyRuntimeItem(session, event) {
     id,
     turnId: event.runtimeTurnId,
     kind: String(item.type || 'runtimeItem'),
+    type: item.type === 'commandExecution' ? 'command' : item.type === 'fileChange' ? 'file' : 'tool',
+    text: item.type === 'commandExecution' ? String(item.command || '') : runtimeItemText(item),
+    output: String(item.aggregatedOutput || item.output || ''),
     title: runtimeItemTitle(item),
     status,
     detail: runtimeItemDetail(item),
