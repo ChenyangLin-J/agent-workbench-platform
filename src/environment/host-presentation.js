@@ -12,6 +12,10 @@ export function selectMinimalHostSession(
 export function minimalHostSessionPresentation(session = {}) {
   return {
     ...session,
+    ...(session.sessionId || session.id ? { reference: session.access?.kind === 'shared' ? null : {
+      hostId: 'minimal-host', threadId: session.sessionId || session.id,
+      label: session.title, updatedAt: session.updatedAt, archived: Boolean(session.archived || session.archivedAt),
+    } } : {}),
     title: session.title === 'New Session' ? '新对话' : session.title,
     contextLabel: session.contextId && !['environment', 'owned'].includes(session.contextId)
       ? session.contextLabel

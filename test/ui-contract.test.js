@@ -71,7 +71,7 @@ test('Session UI delegates message links and read-only document previews to its 
   assert.match(styles, /\.cwu-browser\.is-list-collapsed \{ grid-template-columns: 0 0 minmax\(0, 1fr\); \}/);
   assert.match(styles, /\.cwu-browser\.is-list-collapsed \.cwu-browser-list-toggle \{[^}]*position: absolute/);
   assert.match(source, /function SessionDocumentPreview\(\{ actions = \{\}, documentPreview, labels = \{\} \}\)/);
-  assert.match(source, /<SessionWorkspace key=\{detail\.session\?\.sessionId \|\| 'session-detail'\} \{\.\.\.detail\} documentPreview=\{null\} \/>/);
+  assert.match(source, /<SessionWorkspace key=\{detail\.session\?\.sessionId \|\| 'session-detail'\} \{\.\.\.detail\} uiStateStore=\{sessionUiState\.current\} documentPreview=\{null\} \/>/);
   assert.match(source, /<SessionDocumentPreview\s+actions=\{detail\?\.actions\}\s+documentPreview=\{browserDocumentPreview\}\s+labels=\{detail\?\.labels\}/);
   assert.match(source, /inert=\{browserDocumentPreview \? true : undefined\}/);
   assert.match(styles, /\.cwu-browser > \.cwu-document-backdrop:not\(\.is-image\) \{ position: absolute; inset: -1px; overflow: hidden; border-radius: inherit; \}/);
@@ -79,12 +79,11 @@ test('Session UI delegates message links and read-only document previews to its 
 
 test('Minimal Host browser mutations use reusable idempotency operations', async () => {
   const source = await readFile(new URL('../src/environment/host-client.jsx', import.meta.url), 'utf8');
-  assert.match(source, /new SessionClientOperationController\(\)/);
-  assert.match(source, /scope: 'session-create'/);
-  assert.match(source, /scope: 'turn'/);
-  assert.match(source, /'idempotency-key': operation\.idempotencyKey/);
-  assert.match(source, /result\.idempotent && result\.pending/);
-  assert.match(source, /operationController\.current\.complete\(operation\)/);
+  assert.match(source, /createSessionHostController/);
+  assert.match(source, /hostController\.execute\('create'/);
+  assert.match(source, /hostController\.execute\('turn'/);
+  const adapter = await readFile(new URL('../src/environment/host-adapter.js', import.meta.url), 'utf8');
+  assert.match(adapter, /idempotency-key/);
   assert.match(source, /bootstrap\.sessionStart === 'new'/);
   assert.match(source, /automaticSessionCreationAttempted/);
   assert.match(source, /shouldAutoCreateMinimalHostSession/);
@@ -99,7 +98,7 @@ test('Minimal Host browser mutations use reusable idempotency operations', async
   assert.match(source, /paginationMode: 'incremental'/);
   assert.match(source, /onLoadEarlier: loadEarlierTurns/);
   assert.match(source, /onLoadTechnicalDetails: loadTechnicalDetails/);
-  assert.match(source, /requestAnimationFrame\(flushEvents\)/);
+  assert.match(adapter, /maintainMinimalHostEventStream/);
   assert.doesNotMatch(source, /for \(let page = 0; cursor/);
 });
 
@@ -190,8 +189,9 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
   assert.match(source, /className="cwu-technical-artifacts"/);
   assert.match(source, /onOpenArtifact/);
   assert.match(source, /onRevealArtifact/);
-  assert.match(source, /normalizedTurnOrdinal != null \? `第 \$\{normalizedTurnOrdinal\} 轮`/);
-  assert.match(source, /globalThis\.setInterval\(\(\) => setDurationNow\(Date\.now\(\)\), 1_000\)/);
+  assert.match(source, /manualOpen \?\? running/);
+  assert.match(source, /turnStatus === 'interrupted'/);
+  assert.match(source, /globalThis\.setInterval\(\(\) => setDurationNow\(Date\.now\(\)\), 1000\)/);
   assert.match(source, /globalThis\.clearInterval\(timer\)/);
   assert.match(styles, /\.cwu-attachment-progress/);
   assert.match(styles, /\.cwu-technical-artifacts/);
@@ -440,7 +440,7 @@ test('Minimal Host keeps owned portable Session Edit and Fork actions available'
   assert.match(source, /const sessionBranchable = !sharedReadOnly;/);
   assert.match(source, /onEditMessage: messageEditEnabled && sessionBranchable/);
   assert.match(source, /onForkMessage: messageForkEnabled && sessionBranchable/);
-  assert.match(source, /intent === 'edit' \? \{ prompt \} : \{\}/);
+  assert.match(source, /intent === 'edit' \? \{ prompt, references \} : \{\}/);
   assert.match(ui, /onForkMessage\(\{ messageId: message\.id, turnId: message\.turnId, prompt: message\.content, references: message\.references \}\)/);
   assert.match(source, /const branchable = session\.access\?\.kind !== 'shared';/);
   assert.match(source, /模型服务暂时不可用，本轮已结束。你可以编辑这条消息后重试/);
@@ -611,7 +611,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(styles, /\.cwu-sql-keyword/);
   assert.match(source, /const submittedDraft = draft/);
   assert.match(source, /setDraft\(submittedDraft\)/);
-  assert.match(source, /useState\(view\.draft\)/);
+  assert.match(source, /useState\(cachedUi\?\.draft \?\? view\.draft\)/);
   assert.match(source, /target\.setSelectionRange\(view\.draft\.length, view\.draft\.length\)/);
   assert.match(source, /actions\.onDraftChange\?\.\(event\.target\.value\)/);
   assert.match(source, /handleAttachmentDrop/);
@@ -796,4 +796,34 @@ test('completed consecutive commentary keeps the latest process visible without 
   assert.match(styles, /\.cwu-message \.cwu-message-body img \{[^}]*max-width: min\(100%, 640px\);[^}]*max-height: min\(420px, 50vh\);/);
   assert.match(styles, /\.cwu-message \.cwu-message-body a:has\(> img\) \{[^}]*cursor: zoom-in;/);
   assert.doesNotMatch(source, /cwu-commentary-collapse/);
+});
+
+test('shared Session UI keeps the reviewed drawer, execution record, and one-row Composer contracts', async () => {
+  const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
+  assert.match(source, /const drawerMode = isNarrow \|\| browser\.listMode === 'drawer'/);
+  assert.match(source, /className="cwu-browser-scrim"/);
+  assert.match(source, /event\.key === 'Escape'/);
+  assert.match(source, /touch\.clientX - start\.x < -70/);
+  assert.match(source, /onOpenSessionFinder/);
+  assert.match(source, /className="cwu-browser-row-action cwu-browser-row-archive"/);
+  assert.match(source, /className="cwu-browser-row-action cwu-browser-row-favorite"/);
+  assert.match(source, /ResizeObserver\(measure\)/);
+  assert.match(source, /composerWidthProbeRef/);
+  assert.match(source, /className="cwu-composer-options-sheet"/);
+  assert.match(source, /function ScrollRegion/);
+  assert.match(source, /remaining > 4/);
+  assert.match(source, /function TechnicalProcessItem/);
+  assert.match(source, /item\.output/);
+  assert.match(source, /processOpenByTurn/);
+  assert.match(source, /onFinalResultVisible/);
+  assert.match(source, /document\.visibilityState !== 'visible'/);
+  assert.match(source, /threshold: 0\.1/);
+  assert.match(styles, /\.cwu-browser-scrim/);
+  assert.match(styles, /\.cwu-browser\.is-drawer-mode/);
+  assert.match(styles, /\.cwu-scroll-region\[data-overflow='true'\]/);
+  assert.match(styles, /--cwu-scroll-max-height: min\(640px, 65dvh\)/);
+  assert.match(styles, /--cwu-scroll-max-height: min\(400px, 48dvh\)/);
+  assert.match(styles, /--cwu-scroll-max-height: min\(320px, 40dvh\)/);
+  assert.match(styles, /\.is-compact-composer \.cwu-composer-footer \{ flex-wrap: nowrap/);
+  assert.match(styles, /\.is-compact-composer \.cwu-attach-button \{ width: 56px/);
 });

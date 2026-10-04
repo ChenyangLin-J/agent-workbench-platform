@@ -3,6 +3,9 @@ import { createServer } from 'node:http';
 import { chmod, open as openFile, readFile, rm } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 
+import { createSessionReferenceEnvelopeInput, requireSessionReferences, sessionReferenceKey } from '../session-references.js';
+import { minimalHostSessionPresentation } from './host-presentation.js';
+
 import { MAX_SESSION_ATTACHMENT_BYTES } from '../attachments.js';
 import { SessionBranchController } from '../features/session-branch.js';
 import { SessionTurnQueue, createQueuedTurnDispatcher } from '../features/turn-queue.js';
@@ -119,6 +122,7 @@ export function createMinimalHost({
           : [];
         await sessionStore.recordUserInput(sessionId, queuedTurn.prompt || '请查看附件并按其内容处理。', {
           attachments,
+          references: queuedTurn.context?.references || [],
           ownerId: queuedTurn.context?.ownerId ?? null,
           turnId: result.runtimeTurnId,
         });
@@ -138,6 +142,21 @@ export function createMinimalHost({
   async function readSession(sessionId, { ownerId = null, includeOwnerId = false } = {}) {
     const session = await sessionStore.get(sessionId, { ownerId, includeOwnerId });
     return decorateSessionForCurrentRun(session);
+  }
+
+  async function resolveReferences(sourceId, values, ownerId) {
+    const requested = requireSessionReferences(values);
+    const targets = await Promise.all(requested.map(async (reference) => {
+      if (reference.hostId !== 'minimal-host' || reference.threadId === sourceId) return null;
+      const target = await sessionStore.get(reference.threadId, { ownerId }).catch(() => null);
+      return target && !target.archived ? target : null;
+    }));
+    return targets.filter(Boolean).map((session) => ({
+      reference: minimalHostSessionPresentation(session).reference,
+      // Only this owner's recent public messages are provided as untrusted data.
+      context: (session.messages || []).filter(message => message.phase !== 'commentary').slice(-6)
+        .map(message => `${message.role}: ${String(message.content || '').slice(-1000)}`).join('\n'),
+    }));
   }
 
   async function runtimeModelCatalog({ refresh = false } = {}) {
@@ -235,11 +254,13 @@ export function createMinimalHost({
     limit = 50,
     includeOwned = true,
     includeShared = true,
+    includeArchived = false,
+    query = '',
   } = {}) {
     const ownedPage = includeOwned
       ? (typeof sessionStore.listPage === 'function'
-          ? await sessionStore.listPage({ ownerId: access.ownerId, cursor, limit })
-          : { sessions: await sessionStore.list({ ownerId: access.ownerId }), nextCursor: null })
+          ? await sessionStore.listPage({ ownerId: access.ownerId, cursor, limit, includeArchived, query })
+          : { sessions: await sessionStore.list({ ownerId: access.ownerId, includeArchived, query }), nextCursor: null })
       : { sessions: [], nextCursor: null };
     const ownedIds = ownedPage.sessions.map((session) => session.id || session.sessionId);
     const runtimeBindings = typeof sessionRuntimeStore.loadMany === 'function'
@@ -416,6 +437,8 @@ export function createMinimalHost({
         limit: url.searchParams.get('limit'),
         includeOwned: url.searchParams.get('owned') !== '0',
         includeShared: url.searchParams.get('shared') !== '0',
+        includeArchived: url.searchParams.get('includeArchived') === '1',
+        query: url.searchParams.get('query') || '',
       });
       return sendJson(response, 200, {
         sessions: listed.sessions,
@@ -459,6 +482,19 @@ export function createMinimalHost({
       return sendJson(response, 201, {
         session: await readSession(creation.session.sessionId, { ownerId }),
       });
+    }
+    const preferenceRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/(archive|favorite)$/);
+    if (preferenceRoute && request.method === 'PATCH') {
+      const sessionId = decodeURIComponent(preferenceRoute[1]);
+      // Preferences are writes to an owned Session, never a grant to edit a shared Session.
+      await readSession(sessionId, { ownerId });
+      const body = await readJsonBody(request);
+      const archive = preferenceRoute[2] === 'archive';
+      const method = archive ? 'setArchived' : 'setFavorited';
+      if (typeof sessionStore[method] !== 'function') throw hostError('HOST_PREFERENCE_UNSUPPORTED', 'Session preferences are not configured.', 501);
+      const value = body[archive ? 'archived' : 'favorited'];
+      if (typeof value !== 'boolean') throw hostError('HOST_PREFERENCE_INVALID', 'Session preference must be a boolean.', 400);
+      return sendJson(response, 200, { session: await sessionStore[method](sessionId, value, { ownerId }) });
     }
     const continueRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/continue$/);
     if (continueRoute && request.method === 'POST') {
@@ -531,6 +567,9 @@ export function createMinimalHost({
       const sourceMessage = (source.messages || []).find((message) => (
         message.role === 'user' && message.turnId === body.replaceTurnId
       ));
+      const requestedReferences = requireSessionReferences(body.references ?? sourceMessage?.references);
+      const resolvedReferences = intent === 'edit' ? await resolveReferences(sourceSessionId, requestedReferences, ownerId) : [];
+      if (intent === 'edit' && resolvedReferences.length !== requestedReferences.length) throw hostError('HOST_REFERENCE_UNAVAILABLE', '有 Session 引用已不可用，请移除后再发送。', 409);
       const result = await branchController.branch({
         sourceSessionId,
         replaceTurnId: body.replaceTurnId,
@@ -539,6 +578,7 @@ export function createMinimalHost({
         context: {
           ownerId,
           portableHistory,
+          resolvedReferences,
           sourceAttachments: Array.isArray(sourceMessage?.attachments) ? sourceMessage.attachments : [],
         },
       });
@@ -550,6 +590,17 @@ export function createMinimalHost({
         session: await readSession(result.session.sessionId, { ownerId }),
         turn: result.turn,
       });
+    }
+    const referenceRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/session-references$/);
+    if (referenceRoute && ['GET', 'POST'].includes(request.method)) {
+      const sourceId = decodeURIComponent(referenceRoute[1]);
+      await requireOwnedSessionAccess(sourceId, sessionAccess);
+      if (request.method === 'GET') {
+        const page = await sessionStore.listPage({ ownerId, query: String(url.searchParams.get('q') || '').slice(0, 200), limit: 30 });
+        return sendJson(response, 200, { references: page.sessions.filter(item => (item.sessionId || item.id) !== sourceId).map(item => minimalHostSessionPresentation(item).reference) });
+      }
+      const body = await readJsonBody(request);
+      return sendJson(response, 200, { references: (await resolveReferences(sourceId, body.references, ownerId)).map(item => item.reference) });
     }
     const directoryRoute = url.pathname.match(/^\/api\/sessions\/([^/]+)\/directory-references$/);
     if (directoryRoute) {
@@ -772,6 +823,10 @@ export function createMinimalHost({
                   store: sessionResourceStore,
                 })
               : [];
+            const resolved = await resolveReferences(sessionId, turn.references, ownerId);
+            if (resolved.length !== turn.references.length) throw hostError('HOST_REFERENCE_UNAVAILABLE', '有 Session 引用已不可用，请移除后再发送。', 409);
+            const references = resolved.map(item => item.reference);
+            const referenceInput = createSessionReferenceEnvelopeInput(references, { contextByKey: new Map(resolved.map(item => [sessionReferenceKey(item.reference), item.context])) });
             const binding = await prepareOwnedSessionRuntime(currentSession);
             const runtimeState = await sessionRuntimeStore.load(sessionId);
             const continuationContext = runtimeState?.continuationContext;
@@ -787,7 +842,7 @@ export function createMinimalHost({
                 })
               : [];
             const input = runtimeTurnInputWithContinuation(
-              runtimeTurnInput(turn, [...continuationAttachmentInputs, ...attachmentInputs]),
+              runtimeTurnInput(turn, [...continuationAttachmentInputs, ...attachmentInputs, ...(referenceInput ? [referenceInput] : [])]),
               continuationContext,
             );
             const queue = await turnQueueReady;
@@ -806,7 +861,7 @@ export function createMinimalHost({
                 prompt: turn.displayText,
                 attachments: turn.attachments,
                 afterTurnId: binding.activeTurnId || latestTurnId(await sessionStore.get(sessionId, { ownerId })),
-                context: { ownerId },
+                context: { ownerId, references },
               });
               turnAccepted = true;
               if (!binding.activeTurnId) {
@@ -829,6 +884,7 @@ export function createMinimalHost({
                 : [];
               await sessionStore.recordUserInput(sessionId, turn.displayText, {
                 attachments: committedAttachments,
+                references,
                 ownerId,
                 turnId: result.runtimeTurnId,
               });
@@ -1303,7 +1359,10 @@ function createMinimalHostBranchController({
         const turn = await kernel.submit(
           session.sessionId,
           runtimeTurnInputWithContinuation(
-            runtimeTurnInput({ directInput: null, prompt: input }, attachmentInputs),
+            runtimeTurnInput({ directInput: null, prompt: input }, [
+              ...attachmentInputs,
+              ...((context?.resolvedReferences || []).length ? [createSessionReferenceEnvelopeInput(context.resolvedReferences.map(item => item.reference), { contextByKey: new Map(context.resolvedReferences.map(item => [sessionReferenceKey(item.reference), item.context])) })] : []),
+            ]),
             context?.portableHistory ? portableBranchContext(session) : null,
           ),
           {
@@ -1371,6 +1430,7 @@ function createMinimalHostBranchController({
       }),
       recordInput: ({ session, turn, input, reservation, context }) => sessionStore.recordUserInput(session.sessionId, input, {
         attachments: reservation?.branchInputAttachments || [],
+        references: (context?.resolvedReferences || []).map(item => item.reference),
         ownerId: context?.ownerId ?? null,
         turnId: turn.runtimeTurnId,
       }),
@@ -1441,6 +1501,7 @@ function normalizeTurnRequest(body) {
   if (!prompt && !attachments.length) throw hostError('HOST_INPUT_REQUIRED', 'Turn input is required.', 400);
   return {
     attachments,
+    references: requireSessionReferences(body.references),
     directInput,
     displayText: prompt || '请查看附件并按其内容处理。',
     prompt,
@@ -1523,6 +1584,8 @@ function observerSessionView(session, manifest) {
     technicalItems: (session.technicalItems || []).map((item) => ({
       ...item,
       detail: redactDiagnosticLog(item.detail, manifest.paths.root),
+      text: redactDiagnosticLog(item.text, manifest.paths.root),
+      output: redactDiagnosticLog(item.output, manifest.paths.root),
     })),
     runtimeBinding: binding ? {
       runtimeProvider: binding.runtimeProvider || null,
@@ -1630,6 +1693,7 @@ function turnIdempotencyFingerprint(turn, mode) {
   return createHash('sha256').update(JSON.stringify({
     prompt: turn.displayText,
     attachments: turn.attachments,
+    references: turn.references,
     mode,
   })).digest('hex');
 }

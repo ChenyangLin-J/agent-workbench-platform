@@ -1,3 +1,4 @@
+import { parseSessionReferenceEnvelopes } from '../session-references.js';
 const TERMINAL_TURN_STATUSES = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'canceled']);
 
 export function parseMinimalHostSessionEvent(envelope) {
@@ -133,7 +134,8 @@ function applyRuntimeItem(session, event) {
   if (!item || typeof item !== 'object') return;
   if (['userMessage', 'agentMessage'].includes(item.type)) {
     const role = item.type === 'userMessage' ? 'user' : 'assistant';
-    const content = runtimeItemText(item);
+    const parsedReference = role === 'user' ? parseSessionReferenceEnvelopes(runtimeItemText(item)) : null;
+    const content = parsedReference ? parsedReference.text : runtimeItemText(item);
     const id = String(item.id || `${role}-${event.runtimeTurnId || 'unknown'}`);
     const existing = session.messages.find((candidate) => candidate.id === id);
     const existingUserTurn = role === 'user'
@@ -144,6 +146,7 @@ function applyRuntimeItem(session, event) {
       role,
       phase: item.phase === 'commentary' ? 'commentary' : 'answer',
       content,
+      ...(parsedReference ? { references: parsedReference.references } : {}),
       turnId: event.runtimeTurnId || null,
       turnKey: event.runtimeTurnId || null,
       turnStatus: item.status || (event.type === 'item_completed' ? 'completed' : 'inProgress'),
@@ -179,6 +182,9 @@ function applyRuntimeItem(session, event) {
     turnId: event.runtimeTurnId || null,
     turnKey: event.runtimeTurnId || null,
     kind: String(item.type || 'runtimeItem'),
+    type: item.type === 'commandExecution' ? 'command' : item.type === 'fileChange' ? 'file' : 'tool',
+    text: item.type === 'commandExecution' ? String(item.command || '') : runtimeItemText(item),
+    output: String(item.aggregatedOutput || item.output || ''),
     title: runtimeItemTitle(item),
     status: String(item.status || (event.type === 'item_completed' ? 'completed' : 'running')),
     detail: runtimeItemText(item).slice(0, 16_000),

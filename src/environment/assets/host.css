@@ -1,7 +1,7 @@
 html, body, #root { width: 100%; height: 100%; margin: 0; }
 body { overflow: hidden; background: var(--cwu-bg); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 button, input, textarea, select { font-family: inherit; }
-.awb-minimal-host { height: 100%; padding: 12px; box-sizing: border-box; }
+.awb-minimal-host { height: 100%; padding: 0; box-sizing: border-box; }
 .awb-host-error { position: fixed; z-index: 100; right: 18px; bottom: 18px; max-width: min(460px, calc(100vw - 36px)); border: 1px solid color-mix(in srgb, var(--cwu-error) 60%, var(--cwu-border)); border-radius: 10px; background: var(--cwu-surface); color: var(--cwu-error); padding: 10px 12px; box-shadow: 0 12px 36px rgba(40, 34, 28, .18); font-size: 12px; }
 .awb-host-notice { position: fixed; z-index: 100; right: 18px; bottom: 18px; max-width: min(460px, calc(100vw - 36px)); border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; color: #1d4ed8; padding: 10px 12px; box-shadow: 0 12px 36px rgba(40, 34, 28, .14); font-size: 12px; }
 .awb-shared-badge { display: inline-flex; min-height: 28px; align-items: center; border: 1px solid #d8dee8; border-radius: 999px; background: #f8fafc; color: #64748b; padding: 0 10px; font-size: 11px; font-weight: 650; }

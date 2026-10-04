@@ -155,6 +155,7 @@ export function normalizeSessionViewModel(value = {}) {
   }
   return {
     sessionId: stringOrNull(value.sessionId),
+    threadId: stringOrNull(value.threadId),
     isDraft: Boolean(value.isDraft),
     draft: String(value.draft || ''),
     composerDisabled: Boolean(value.composerDisabled),
@@ -171,6 +172,7 @@ export function normalizeSessionViewModel(value = {}) {
           ...sessionMessagePresentation(message),
           id: String(message?.id || `message-${index}`),
           content: String(message?.content || ''),
+          createdAt: message?.createdAt || null,
           turnId: stringOrNull(message?.turnId),
           turnKey: stringOrNull(message?.turnKey ?? message?.turnId),
           turnStatus: stringOrNull(message?.turnStatus),
@@ -203,8 +205,13 @@ export function normalizeSessionViewModel(value = {}) {
       ? value.technicalItems.map((item, index) => ({
           id: String(item?.id || `technical-${index}`),
           title: String(item?.title || '执行步骤'),
+          type: String(item?.type || 'tool'),
+          label: String(item?.label || ''),
+          text: String(item?.text || ''),
+          output: String(item?.output || ''),
           status: String(item?.status || ''),
           detail: String(item?.detail || ''),
+          startedAt: item?.startedAt || item?.createdAt || null,
           turnId: stringOrNull(item?.turnId),
           turnKey: stringOrNull(item?.turnKey ?? item?.turnId),
           media: normalizeMedia(item?.media, `technical-${index}`),

@@ -6,6 +6,7 @@ export async function maintainMinimalHostEventStream({
   onEvent,
   onState = () => {},
   signal,
+  initialEventId = 0,
   retryMinMs = DEFAULT_RETRY_MIN_MS,
   retryMaxMs = DEFAULT_RETRY_MAX_MS,
   wait = waitForRetry,
@@ -18,7 +19,7 @@ export async function maintainMinimalHostEventStream({
   const maximum = positiveDelay(retryMaxMs, 'maximum retry delay');
   if (maximum < minimum) throw new TypeError('maximum retry delay must be at least the minimum retry delay');
 
-  let afterEventId = 0;
+  let afterEventId = Number.isSafeInteger(Number(initialEventId)) ? Math.max(0, Number(initialEventId)) : 0;
   let retryDelayMs = minimum;
   while (!signal.aborted) {
     let receivedEvents = 0;

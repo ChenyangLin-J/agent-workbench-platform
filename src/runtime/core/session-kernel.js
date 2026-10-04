@@ -327,6 +327,15 @@ export class AgentSessionKernel extends EventEmitter {
     }
   }
 
+  cancelQueuedTurn(sessionId, clientUserMessageId) {
+    const queue = this.turnQueues.get(sessionId) || [];
+    const index = queue.findIndex((entry) => entry.params?.clientUserMessageId === clientUserMessageId);
+    if (index < 0) throw kernelError('QUEUED_TURN_NOT_FOUND', 'The queued Turn is no longer pending.', 409);
+    const [removed] = queue.splice(index, 1);
+    removed.reject(kernelError('QUEUED_TURN_CANCELLED', 'The queued Turn was cancelled.', 409));
+    return { clientUserMessageId, remaining: queue.length };
+  }
+
   async interrupt(sessionId, expectedTurnId) {
     const runtimeSession = await this.#ensureRuntime(sessionId);
     this.#renewLease(sessionId);

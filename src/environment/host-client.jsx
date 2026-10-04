@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { SessionClientOperationController } from '../session-client.js';
-import { SessionBrowser } from '../ui/index.jsx';
+import { createSessionHostController } from '../session-host.js';
+import { SessionApplication, useSessionHost } from '../ui/session-application.jsx';
+import { createMinimalHostAdapter } from './host-adapter.js';
 import { sessionMessageBranchEligibility } from '../features/session-branch.js';
 import { maintainMinimalHostEventStream } from './host-event-stream.js';
 import {
@@ -40,19 +41,27 @@ function hostUrl(path) {
 }
 
 function MinimalHostApp() {
-  const [sessions, setSessions] = useState([]);
-  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const hostControllerRef = useRef(null);
+  hostControllerRef.current ||= createSessionHostController({
+    initialSessionId,
+    adapter: createMinimalHostAdapter({
+      request: requestMinimalHost,
+      presentSession: (value) => messageActionPresentation(minimalHostSessionPresentation(value)),
+      openEvents: (id, { afterEventId, signal }) => fetch(hostUrl(`api/sessions/${encodeURIComponent(id)}/events?after=${encodeURIComponent(afterEventId)}`), { headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' }, signal }),
+    }),
+  });
+  const hostController = hostControllerRef.current;
+  const hostState = useSessionHost(hostController);
+  const { sessions, session, selectedId, loaded: sessionsLoaded } = hostState;
+  const setSessions = useCallback((updater) => hostController.updateSessions(updater), [hostController]);
+  const setSession = useCallback((updater) => hostController.updateSession(updater), [hostController]);
   const [sessionsLoadingMore, setSessionsLoadingMore] = useState(false);
   const [listPagination, setListPagination] = useState({ ownedCursor: null, sharedOffset: null });
-  const [selectedId, setSelectedId] = useState(initialSessionId);
   const selectedIdRef = useRef(initialSessionId);
-  const [session, setSession] = useState(null);
   const activeSessionRef = useRef(null);
   const terminalRecheckTimer = useRef(null);
-  const [listCollapsed, setListCollapsed] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [streamNotice, setStreamNotice] = useState('');
   const [continuing, setContinuing] = useState(false);
   const [documentPreview, setDocumentPreview] = useState(null);
   const continuationKey = useRef(null);
@@ -60,14 +69,9 @@ function MinimalHostApp() {
   const documentPreviewRequest = useRef(null);
   const sessionMediaUrls = useRef({ sessionId: null, entries: new Map() });
   const openedShares = useRef(new Set());
-  const detailRequest = useRef({ controller: null, generation: 0 });
   const technicalRequests = useRef(new Map());
-  const listRequestGeneration = useRef(0);
-  const eventFrame = useRef(null);
-  const pendingEvents = useRef([]);
-  const operationController = useRef(null);
   const automaticSessionCreationAttempted = useRef(false);
-  operationController.current ||= new SessionClientOperationController();
+  selectedIdRef.current = selectedId;
 
   const closeDocumentPreview = useCallback(() => {
     documentPreviewRequest.current?.abort();
@@ -133,28 +137,13 @@ function MinimalHostApp() {
 
   const presentSession = useCallback((value) => minimalHostSessionPresentation(value), []);
 
-  const request = useCallback(async (path, options = {}) => {
-    const response = await fetch(hostUrl(path), {
-      ...options,
-      headers: {
-        'content-type': 'application/json',
-        'x-agent-workbench-token': bootstrap.accessToken || '',
-        ...(options.headers || {}),
-      },
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error?.message || `Request failed (${response.status})`);
-    return body;
-  }, []);
+  const request = useCallback(requestMinimalHost, []);
 
   const selectSessionId = useCallback((nextValue) => {
-    const next = typeof nextValue === 'function'
-      ? nextValue(selectedIdRef.current)
-      : nextValue;
+    const next = typeof nextValue === 'function' ? nextValue(selectedIdRef.current) : nextValue;
     selectedIdRef.current = next;
-    setSession((current) => (current?.sessionId === next ? current : null));
-    setSelectedId(next);
-  }, []);
+    void hostController.select(next).catch((error) => setError(error.message));
+  }, [hostController]);
 
   const productRequest = useCallback(async (path, options = {}) => {
     if (!sessionSharing?.apiBase) throw new Error('共享服务未配置。');
@@ -171,19 +160,13 @@ function MinimalHostApp() {
   }, []);
 
   const refreshSessions = useCallback(async () => {
-    const generation = ++listRequestGeneration.current;
-    const first = await request(`api/sessions?limit=${SESSION_LIST_PAGE_SIZE}`);
-    if (generation !== listRequestGeneration.current) return null;
-    const nextSessions = mergeSessionSummaries([], first.sessions || []);
-    setSessions(nextSessions);
-    setListPagination({
-      ownedCursor: first.nextCursor || null,
-      sharedOffset: first.sharedNextOffset ?? null,
-    });
-    setSessionsLoaded(true);
-    selectSessionId((current) => selectMinimalHostSession(nextSessions, current, { fallback: 'newest' }));
+    const nextSessions = await hostController.refreshSessions();
+    const page = hostController.getSnapshot().listPage || {};
+    setListPagination({ ownedCursor: page.nextCursor || null, sharedOffset: page.sharedNextOffset ?? null });
+    const selected = selectMinimalHostSession(nextSessions || [], selectedIdRef.current, { fallback: 'newest' });
+    if (selected !== selectedIdRef.current) selectSessionId(selected);
     return nextSessions;
-  }, [request, selectSessionId]);
+  }, [hostController, selectSessionId]);
 
   const loadMoreSessions = useCallback(async () => {
     if (sessionsLoadingMore || (!listPagination.ownedCursor && listPagination.sharedOffset == null)) return;
@@ -219,28 +202,7 @@ function MinimalHostApp() {
     }
   }, [listPagination, request, sessionsLoadingMore]);
 
-  const refreshSession = useCallback(async (sessionId = selectedIdRef.current) => {
-    if (!sessionId) return null;
-    detailRequest.current.controller?.abort();
-    const controller = new AbortController();
-    const generation = detailRequest.current.generation + 1;
-    detailRequest.current = { controller, generation };
-    const body = await request(
-      `api/sessions/${encodeURIComponent(sessionId)}?view=conversation&turnLimit=${INITIAL_CONVERSATION_TURNS}`,
-      { signal: controller.signal },
-    );
-    if (detailRequest.current.generation !== generation) return null;
-    if (selectedIdRef.current !== sessionId) return null;
-    const nextSession = messageActionPresentation(presentSession(body.session));
-    if (detailRequest.current.generation !== generation || selectedIdRef.current !== sessionId) {
-      clearSessionMediaUrls(sessionId);
-      return null;
-    }
-    setSession((current) => current?.sessionId === sessionId
-      ? messageActionPresentation(mergeConversationRefresh(current, nextSession))
-      : nextSession);
-    return nextSession;
-  }, [clearSessionMediaUrls, presentSession, request]);
+  const refreshSession = useCallback((sessionId = selectedIdRef.current) => hostController.refreshSession(sessionId), [hostController]);
 
   const loadEarlierTurns = useCallback(async () => {
     const current = session;
@@ -333,150 +295,30 @@ function MinimalHostApp() {
     : sessions.find((candidate) => candidate.id === selectedId)?.access?.kind === 'shared';
 
   useEffect(() => {
-    if (!selectedId || !selectedSessionLoaded || selectedShared
-      || !['running', 'waiting'].includes(session?.status)) return undefined;
+    if (!selectedId || !selectedSessionLoaded
+      || (!selectedShared && !['running', 'waiting'].includes(session?.status))) return undefined;
     const timer = setInterval(() => {
       refreshSession(selectedId).catch((nextError) => {
         if (nextError.name !== 'AbortError') setError(nextError.message);
       });
-    }, OWNED_ACTIVE_SESSION_POLL_MS);
+    }, selectedShared ? SHARED_SESSION_POLL_MS : OWNED_ACTIVE_SESSION_POLL_MS);
     return () => clearInterval(timer);
   }, [refreshSession, selectedId, selectedSessionLoaded, selectedShared, session?.status]);
 
   useEffect(() => {
-    refreshSessions().catch((nextError) => setError(nextError.message));
-  }, [refreshSessions]);
+    void hostController.start().then(() => {
+      const current = hostController.getSnapshot();
+      const next = selectMinimalHostSession(current.sessions, current.selectedId);
+      if (next !== current.selectedId) return hostController.select(next);
+      return null;
+    }).catch((nextError) => setError(nextError.message));
+    return () => hostController.dispose();
+  }, [hostController]);
 
   useEffect(() => {
-    if (!selectedId) {
-      setSession(null);
-      return undefined;
-    }
-    if (!selectedSessionLoaded) {
-      refreshSession(selectedId).catch((nextError) => {
-        if (nextError.name !== 'AbortError') setError(nextError.message);
-      });
-      return () => detailRequest.current.controller?.abort();
-    }
-    if (selectedShared) {
-      const timer = setInterval(() => {
-        refreshSession(selectedId).catch((nextError) => {
-          if (nextError.name !== 'AbortError') setError(nextError.message);
-        });
-      }, SHARED_SESSION_POLL_MS);
-      return () => {
-        clearInterval(timer);
-        detailRequest.current.controller?.abort();
-      };
-    }
-    const controller = new AbortController();
-    let recoveryRefreshTimer = null;
-    let recoveryRefreshRunning = false;
-    let lastRecoveryRefreshAt = 0;
-    const scheduleRecoveryRefresh = () => {
-      if (recoveryRefreshTimer || recoveryRefreshRunning) return;
-      const wait = Math.max(0, 2_000 - (Date.now() - lastRecoveryRefreshAt));
-      recoveryRefreshTimer = setTimeout(async () => {
-        recoveryRefreshTimer = null;
-        recoveryRefreshRunning = true;
-        try {
-          await refreshSession(selectedId);
-          lastRecoveryRefreshAt = Date.now();
-        } catch (nextError) {
-          if (nextError.name !== 'AbortError') setError(nextError.message);
-        } finally {
-          recoveryRefreshRunning = false;
-        }
-      }, wait);
-    };
-    void maintainMinimalHostEventStream({
-      open: ({ afterEventId, signal }) => fetch(hostUrl(
-        `api/sessions/${encodeURIComponent(selectedId)}/events?after=${encodeURIComponent(afterEventId)}`,
-      ), {
-        headers: { 'x-agent-workbench-token': bootstrap.accessToken || '' },
-        signal,
-      }),
-      onEvent: (envelope) => {
-        const event = parseMinimalHostSessionEvent(envelope);
-        if (!event || event.sessionId !== selectedIdRef.current) return;
-        if (event.type === 'replay_gap' || event.payload?.snapshotRequired === true) {
-          setStreamNotice('正在恢复此对话…');
-          refreshSession(event.sessionId)
-            .then(() => setStreamNotice(''))
-            .catch((nextError) => {
-              if (nextError.name !== 'AbortError') setError(nextError.message);
-            });
-          return;
-        }
-        const flushEvents = () => {
-          eventFrame.current = null;
-          const projectedEvents = pendingEvents.current.splice(0);
-          if (!projectedEvents.length) return;
-          setSession((current) => {
-            let next = current;
-            for (const projectedEvent of projectedEvents) {
-              const applied = applyMinimalHostSessionEvent(next, projectedEvent);
-              if (applied.session) next = applied.session;
-            }
-            return next === current ? current : messageActionPresentation(next);
-          });
-          setSessions((currentSessions) => {
-            let next = currentSessions;
-            for (const projectedEvent of projectedEvents) {
-              const currentSummary = next.find((candidate) => (
-                (candidate.id || candidate.sessionId) === projectedEvent.sessionId
-              ));
-              if (!currentSummary) continue;
-              const applied = applyMinimalHostSessionEvent(currentSummary, projectedEvent);
-              if (applied.session) next = patchMinimalHostSessionSummary(next, applied.session);
-            }
-            return next;
-          });
-        };
-        const publishedMedia = event.payload?.item?.publishedMedia;
-        pendingEvents.current.push(publishedMedia?.resourceId ? {
-          ...event,
-          payload: { ...event.payload, item: {
-            ...event.payload.item,
-            publishedMedia: {
-              ...publishedMedia,
-              id: publishedMedia.resourceId,
-              kind: 'image',
-              alt: publishedMedia.name || '图片',
-              attachmentId: publishedMedia.resourceId,
-            },
-          } },
-        } : event);
-        if (eventFrame.current == null) {
-          eventFrame.current = typeof requestAnimationFrame === 'function'
-            ? requestAnimationFrame(flushEvents)
-            : setTimeout(flushEvents, 16);
-        }
-      },
-      onState: ({ status }) => {
-        if (status === 'connected') {
-          setStreamNotice('');
-          return;
-        }
-        setStreamNotice('正在重连…');
-        scheduleRecoveryRefresh();
-      },
-      signal: controller.signal,
-    }).catch((nextError) => {
-      if (nextError.name !== 'AbortError') setError(nextError.message);
-    });
-    return () => {
-      controller.abort();
-      detailRequest.current.controller?.abort();
-      if (eventFrame.current != null) {
-        if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(eventFrame.current);
-        else clearTimeout(eventFrame.current);
-        eventFrame.current = null;
-      }
-      pendingEvents.current = [];
-      clearTimeout(recoveryRefreshTimer);
-    };
-  }, [refreshSession, selectedId, selectedSessionLoaded, selectedShared]);
+    const page = hostState.listPage || {};
+    setListPagination({ ownedCursor: page.nextCursor || null, sharedOffset: page.sharedNextOffset ?? null });
+  }, [hostState.listPage]);
 
   useEffect(() => {
     const shareId = session?.access?.kind === 'shared' ? session.access.shareId : null;
@@ -489,23 +331,10 @@ function MinimalHostApp() {
 
   async function createSession() {
     setError('');
-    const operation = operationController.current.begin({
-      scope: 'session-create',
-      targetId: 'new',
-      payload: {},
-    });
     try {
-      const body = await request('api/sessions', {
-        method: 'POST',
-        headers: { 'idempotency-key': operation.idempotencyKey },
-        body: JSON.stringify(operation.payload),
-      });
-      operationController.current.complete(operation);
-      selectSessionId(body.session.sessionId);
+      await hostController.execute('create', {});
       await refreshSessions();
-    } catch (nextError) {
-      setError(nextError.message);
-    }
+    } catch (nextError) { setError(nextError.message); }
   }
 
   useEffect(() => {
@@ -553,36 +382,16 @@ function MinimalHostApp() {
     }
   }
 
-  async function submit({ prompt, mode, attachments = [] }) {
+  async function submit({ prompt, mode, attachments = [], references = [] }) {
     setError('');
-    const operation = operationController.current.begin({
-      scope: 'turn',
-      targetId: selectedId,
-      payload: { prompt, mode, attachments },
-    });
+    const targetId = selectedId;
     try {
-      const result = await request(`api/sessions/${encodeURIComponent(selectedId)}/turns`, {
-        method: 'POST',
-        headers: { 'idempotency-key': operation.idempotencyKey },
-        body: JSON.stringify(operation.payload),
-      });
-      if (result.idempotent && result.pending) {
-        throw new Error('这条消息仍在确认中，请稍后重试。');
-      }
-      operationController.current.complete(operation);
+      const result = await hostController.execute('turn', { prompt, mode, attachments, references }, { sessionId: targetId });
       if (result.queued && result.queuedTurn) {
-        setSession((current) => current ? {
-          ...current,
-          queuedTurns: [...(current.queuedTurns || []), result.queuedTurn],
-        } : current);
-      } else {
-        await refreshSession(selectedId);
+        setSession((current) => current?.sessionId === targetId && !current.queuedTurns?.some((turn) => turn.id === result.queuedTurn.id)
+          ? { ...current, queuedTurns: [...(current.queuedTurns || []), result.queuedTurn] } : current);
       }
-      setSession((current) => current ? { ...current, status: 'running', statusLabel: '正在处理' } : current);
-    } catch (nextError) {
-      setError(nextError.message);
-      throw nextError;
-    }
+    } catch (nextError) { setError(nextError.message); throw nextError; }
   }
 
   async function uploadAttachments(files, options = {}) {
@@ -689,14 +498,14 @@ function MinimalHostApp() {
     });
   }
 
-  async function branchMessage({ turnId, prompt }, intent) {
+  async function branchMessage({ turnId, prompt, references }, intent) {
     setError('');
     try {
       const body = await request(`api/sessions/${encodeURIComponent(selectedId)}/branches`, {
         method: 'POST',
         body: JSON.stringify({
           replaceTurnId: turnId,
-          ...(intent === 'edit' ? { prompt } : {}),
+          ...(intent === 'edit' ? { prompt, references } : {}),
           intent,
         }),
       });
@@ -752,6 +561,7 @@ function MinimalHostApp() {
   const detail = useMemo(() => session ? {
     session,
     documentPreview,
+    compactComposer: true,
     features: {
       attachments: attachmentsEnabled ? 'visible' : 'hidden',
       externalLink: false,
@@ -767,6 +577,9 @@ function MinimalHostApp() {
     },
     actions: {
       onSubmit: sessionMutable ? submit : null,
+      onSearchSessionReferences: sessionMutable ? ({ query }) => request(`api/sessions/${encodeURIComponent(selectedId)}/session-references?q=${encodeURIComponent(query)}`) : null,
+      onResolveSessionReferences: sessionMutable ? ({ references }) => request(`api/sessions/${encodeURIComponent(selectedId)}/session-references`, { method: 'POST', body: JSON.stringify({ references }) }) : null,
+      onOpenSessionReference: (reference) => hostController.select(reference.threadId),
       onUploadAttachments: attachmentsEnabled && sessionMutable ? uploadAttachments : null,
       onResolveDroppedDirectories: attachmentsEnabled && sessionMutable ? resolveDroppedDirectories : null,
       onOpenAttachment: attachmentsEnabled ? openAttachment : null,
@@ -810,21 +623,23 @@ function MinimalHostApp() {
   const runtimeError = session?.status === 'error'
     ? userFacingRuntimeError(session.runtimeBinding?.lastError)
     : '';
-  const visibleError = error || runtimeError;
+  const visibleError = error || hostState.error || runtimeError;
 
   return (
     <main className="awb-minimal-host">
-      <SessionBrowser
+      <SessionApplication
+        controller={hostController}
+        start={false}
         actions={{
           onCreate: createSession,
           onSelect: (nextSession) => selectSessionId(nextSession.id),
-          onToggleList: setListCollapsed,
           onLoadMore: loadMoreSessions,
+          onFavorite: async (value, favorited) => { await hostController.execute('favorite', { favorited }, { sessionId: value.id }); await refreshSessions(); },
+          onArchive: async (value, archived) => { await hostController.execute('archive', { archived }, { sessionId: value.id }); await refreshSessions(); },
         }}
         browser={{
           sessions,
           selectedSessionId: selectedId,
-          listCollapsed,
           hasMore: Boolean(listPagination.ownedCursor || listPagination.sharedOffset != null),
           loadingMore: sessionsLoadingMore,
           paginationMode: 'incremental',
@@ -843,11 +658,11 @@ function MinimalHostApp() {
           collapseList: '收起对话列表',
           expandList: '展开对话列表',
           listAriaLabel: '对话列表',
-          searchAriaLabel: '搜索对话',
-          searchPlaceholder: '搜索对话',
+          searchAriaLabel: '搜索与历史',
+          searchPlaceholder: '搜索标题或正文',
         }}
       />
-      {notice || streamNotice ? <div className="awb-host-notice" role="status">{notice || streamNotice}</div> : null}
+      {notice || hostState.connection === 'recovering' || hostState.connection === 'disconnected' ? <div className="awb-host-notice" role="status">{notice || '正在恢复此对话…'}</div> : null}
       {visibleError ? <div className="awb-host-error" role="alert">{visibleError}</div> : null}
     </main>
   );
@@ -1441,27 +1256,6 @@ function mergeTurnMetadata(current = [], incoming = []) {
   ));
 }
 
-function mergeConversationRefresh(current, latest) {
-  const retainEarlierPaging = Boolean(current.turnsCursor)
-    && Number(current.loadedTurnCount) > Number(latest.loadedTurnCount);
-  const turnMetadata = mergeTurnMetadata(current.turnMetadata, latest.turnMetadata);
-  return {
-    ...current,
-    ...latest,
-    messages: mergeById(current.messages, latest.messages),
-    technicalItems: mergeById(current.technicalItems, latest.technicalItems),
-    turnMetadata,
-    technicalDetailsAvailable: [...new Set([
-      ...(current.technicalDetailsAvailable || []),
-      ...(latest.technicalDetailsAvailable || []),
-    ])],
-    hasEarlierTurns: retainEarlierPaging ? current.hasEarlierTurns : latest.hasEarlierTurns,
-    turnsCursor: retainEarlierPaging ? current.turnsCursor : latest.turnsCursor,
-    loadedTurnCount: turnMetadata.length,
-    historyLoading: false,
-  };
-}
-
 function mergeEarlierConversation(current, earlier) {
   const turnMetadata = mergeTurnMetadata(earlier.turnMetadata, current.turnMetadata);
   return {
@@ -1542,4 +1336,14 @@ function uploadAttachmentRequest(sessionId, payload, onProgress = null) {
     request.addEventListener('error', () => reject(new Error('附件上传网络中断')), { once: true });
     request.send(JSON.stringify(payload));
   });
+}
+
+async function requestMinimalHost(path, options = {}) {
+  const response = await fetch(hostUrl(path), {
+    ...options,
+    headers: { 'content-type': 'application/json', 'x-agent-workbench-token': bootstrap.accessToken || '', ...(options.headers || {}) },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error?.message || `Request failed (${response.status})`);
+  return body;
 }
