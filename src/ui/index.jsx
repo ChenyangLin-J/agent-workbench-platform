@@ -623,9 +623,9 @@ export function SessionBrowser({
         }}
       >
         <header className="cwu-browser-summary">
-          <span>{view.loading && !view.sessions.length
+          {browser.showSessionCount !== false ? <span>{view.loading && !view.sessions.length
             ? (labels.loading || '正在读取 Sessions…')
-            : `${view.sessions.length}${view.hasMore ? '+' : ''} ${labels.countSuffix || '个 Session'}`}</span>
+            : `${view.sessions.length}${view.hasMore ? '+' : ''}${labels.countSuffix || '个 Session'}`}</span> : null}
           {view.createTargets.length && actions.onCreate ? (
             <div className="cwu-browser-create">
               {view.showCreateTargetSelect && view.createTargets.length > 1 ? <select

@@ -32,7 +32,7 @@ function ControlledApplication({ controller, browser, detail, actions, extension
   const effectiveDetail = suppliedDetail ? { compactComposer: true, ...suppliedDetail } : null;
   return <div className="cwu-session-application"><SessionBrowser
     {...props}
-    browser={{ sessions: state.sessions, selectedSessionId: state.selectedId, groupMode: 'time', listCollapsed, ...suppliedBrowser }}
+    browser={{ sessions: state.sessions, selectedSessionId: state.selectedId, groupMode: 'time', listCollapsed, showSessionCount: false, ...suppliedBrowser }}
     detail={effectiveDetail}
     actions={{ onSelect: select, onCreate: () => controller.execute('create'), onToggleList: toggleList, ...actions, onOpenHistory: null,
       onOpenSessionFinder: () => setFinderOpen(true) }}

@@ -10,6 +10,13 @@ export default async function({page,evidence,baseUrl,profile}) {
  await create.click();
  const composer=page.locator('.cwu-composer textarea');
  await composer.waitFor();
+ assert.equal(await page.locator('.cwu-browser-summary > span').count(),0);
+ const togglePosition=()=>page.locator('.cwu-browser-list-toggle').evaluate(el=>{const rect=el.getBoundingClientRect();return {x:rect.x,y:rect.y};});
+ const beforeToggle=await togglePosition();
+ await page.locator('.cwu-browser-list-toggle').click();
+ assert.deepEqual(await togglePosition(),beforeToggle);
+ await page.locator('.cwu-browser-list-toggle').click();
+ assert.deepEqual(await togglePosition(),beforeToggle);
  await evidence.checkpoint('默认最近列表与单行输入栏');
  const marker=profile+'-'+Date.now();
  const long='请检查附件预览 '+marker+'。\n\n'+Array.from({length:65},(_,i)=>`第 ${i+1} 段要求：检查布局和执行记录。`).join('\n\n');

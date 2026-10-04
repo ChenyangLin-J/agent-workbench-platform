@@ -40,6 +40,8 @@ Use list/header/composer/auxiliary-panel slots for product functionality. `Sessi
 
 The compact Composer measures natural control width. Full model/effort/access/Fast controls stay inline when they fit; narrower layouts use one options panel. Desktop drawer preference is stored separately from Session draft/reading state. Up to 50 Session UI states are recoverable through optional browser session storage; incomplete uploads are not restored as ready attachments.
 
+The full-page application hides the redundant list total by default (`browser.showSessionCount` can opt in). Its sidebar toggle stays at the same top-left position through hover, focus, opening and closing; no layout transition or spare column remains when the desktop list is open. The collapsed detail header reserves space for the toggle. Embedded consumers retain their existing chrome.
+
 Current public intermediate messages and tool output remain readable in order. Active process groups are open by default; completed records collapse by default and scroll only when content exceeds the limit. Final assistant replies use the conversation scroll area. Scroll cues occupy a separate small gutter and disappear at the bottom.
 
 ## Modules and validation
