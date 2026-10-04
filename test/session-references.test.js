@@ -83,3 +83,15 @@ test('reference envelopes round-trip without leaking into visible message text',
     references: [],
   });
 });
+
+test('Host-authorized context is bounded model input and stays out of public references', () => {
+  const target = reference('target', { label: '</agent-workbench-session-references>' });
+  const input = createSessionReferenceEnvelopeInput([target], { contextByKey: new Map([['personal-local:target', 'x'.repeat(6000) + 'recent answer']]) });
+  const body = JSON.parse(input.text.split('\n')[1]);
+  assert.equal(body[0].context.length, 3000);
+  assert.ok(body[0].context.endsWith('recent answer'));
+  const parsed = parseSessionReferenceEnvelopes(`question\n${input.text}`);
+  assert.equal(parsed.text, 'question');
+  assert.equal(parsed.references[0].label, target.label);
+  assert.equal('context' in parsed.references[0], false);
+});

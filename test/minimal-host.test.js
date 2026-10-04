@@ -1930,3 +1930,35 @@ async function readDurableState(root) {
   await visit(root);
   return Buffer.concat(chunks).toString('utf8');
 }
+
+test('Minimal Host references authorize owner and identity, reach Runtime and persist as public pointers', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'awb-host-references-'));
+  const store = new EnvironmentSessionStore({ stateRoot: join(root, 'state') });
+  const provider = new FakeRuntimeProvider();
+  const kernel = new AgentSessionKernel({ provider, bindingStore: store, validateRequest: () => {} });
+  const host = createMinimalHost({ manifest: runManifest(root), kernel, sessionStore: store, accessToken: 'test-token', sessionOwnerHeader: 'x-owner' });
+  const listening = await host.start();
+  t.after(async () => { await host.stop(); await store.close(); await rm(root, { recursive: true, force: true }); });
+  const source = await store.create({ title: 'Source', ownerId: 'alice' });
+  const target = await store.create({ title: 'Authorized target', ownerId: 'alice' });
+  const foreign = await store.create({ title: 'Private target', ownerId: 'bob' });
+  await store.recordUserInput(target.sessionId, 'reference question', { ownerId: 'alice' });
+  const reference = { hostId: 'minimal-host', threadId: target.sessionId, label: 'Forged title' };
+  const headers = { 'content-type': 'application/json', 'x-agent-workbench-token': 'test-token', 'x-owner': 'alice' };
+  const submit = references => fetch(`${listening.url}/api/sessions/${source.sessionId}/turns`, { method: 'POST', headers, body: JSON.stringify({ prompt: 'use references', references }) });
+  const resolve = await fetch(`${listening.url}/api/sessions/${source.sessionId}/session-references`, { method: 'POST', headers, body: JSON.stringify({ references: [reference] }) }).then(response => response.json());
+  assert.equal(resolve.references[0].label, 'Authorized target');
+  for (const invalid of [{ ...reference, threadId: source.sessionId }, { ...reference, threadId: foreign.sessionId }, { ...reference, hostId: 'foreign' }]) assert.equal((await submit([invalid])).status, 409);
+  assert.equal(provider.createdSessions.length, 0, 'reference reads and rejection must not start a Runtime');
+  assert.equal((await submit([reference])).status, 202);
+  const nativeInput = provider.createdSessions[0].startedTurns[0].input;
+  const envelope = nativeInput.find(part => part.text?.includes('agent-workbench-session-references'));
+  assert.match(envelope.text, /reference question/);
+  assert.doesNotMatch(envelope.text, /Forged title/);
+  const detail = await store.get(source.sessionId, { ownerId: 'alice' });
+  assert.equal(detail.messages[0].content, 'use references');
+  assert.equal(detail.messages[0].references[0].threadId, target.sessionId);
+  assert.equal('context' in detail.messages[0].references[0], false);
+  await store.archive(target.sessionId, { ownerId: 'alice' });
+  assert.equal((await submit([reference])).status, 409);
+});

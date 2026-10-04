@@ -24,7 +24,7 @@ const store = new EnvironmentSessionStore({ stateRoot:path.join(root,'state') })
 const kernel = new AgentSessionKernel({ provider, bindingStore:store, validateRequest:()=>{} });
 const manifest = { schema:'agent-workbench.environment/v1', kind:'run', id:'candidate', environmentId:'candidate', status:'running', runtime:{ provider:'fake' }, features:{ sessionWorkspace:true, attachments:true, steer:true, queuedTurns:true }, versions:{ platform:'candidate', runtime:'fake' }, profile:{ id:'candidate', hash:'fixture', source:{type:'inline'} }, capabilities:{ lock:{capabilities:[]}, hash:'fixture' }, isolation:{ requestedLevel:'ephemeral-machine', effectiveLevel:'ephemeral-machine', enforcement:{externalEffects:{enforced:true, mode:'no-external-effects'}} }, paths:Object.fromEntries(['root','runtime','state','resources','workspace','temporary','credentials'].map(k=>[k,k==='root'?root:path.join(root,k)])), process:{pid:process.pid,port:0,providerState:{}},extensions:{},lifecycle:{createdAt:new Date().toISOString()} };
 await buildMinimalHostAssets({ outputDirectory:path.join(root,'assets') });
-const host = createMinimalHost({ manifest,kernel,sessionStore:store,assetsRoot:path.join(root,'assets'),accessToken:'candidate-local-only' });
+const host = createMinimalHost({ manifest,kernel,sessionStore:store,port:Number(process.env.AGENT_PREVIEW_PORT||0),assetsRoot:path.join(root,'assets'),accessToken:'candidate-local-only' });
 const listening = await host.start();
 console.log(JSON.stringify(listening)); await writeFile(path.join(root,'url.txt'), listening.url);
 for(const signal of ['SIGINT','SIGTERM']) process.on(signal,async()=>{await host.stop();await store.close();process.exit(0);});

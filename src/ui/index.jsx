@@ -1239,7 +1239,7 @@ export function SessionWorkspace({
         const values = Array.isArray(result) ? result : result?.references || result?.items;
         const selectedKeys = new Set(references.map(sessionReferenceKey));
         const options = normalizeSessionReferences(values, { maximum: MAX_SESSION_REFERENCES })
-          .filter((reference) => reference.threadId !== view.sessionId && !selectedKeys.has(sessionReferenceKey(reference)));
+          .filter((reference) => reference.threadId !== (view.threadId || view.sessionId) && !selectedKeys.has(sessionReferenceKey(reference)));
         setReferenceOptions(options);
         setReferenceActiveIndex(0);
         setReferenceSearchState({ loading: false, error: '' });
@@ -1384,7 +1384,7 @@ export function SessionWorkspace({
   }
 
   function addSessionReference(reference) {
-    if (!reference || reference.threadId === view.sessionId) {
+    if (!reference || reference.threadId === (view.threadId || view.sessionId)) {
       setReferenceSearchState({ loading: false, error: '不能引用当前 Session。' });
       return false;
     }

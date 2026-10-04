@@ -155,6 +155,7 @@ export function normalizeSessionViewModel(value = {}) {
   }
   return {
     sessionId: stringOrNull(value.sessionId),
+    threadId: stringOrNull(value.threadId),
     isDraft: Boolean(value.isDraft),
     draft: String(value.draft || ''),
     composerDisabled: Boolean(value.composerDisabled),

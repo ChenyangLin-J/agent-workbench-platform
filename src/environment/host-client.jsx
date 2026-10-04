@@ -382,11 +382,11 @@ function MinimalHostApp() {
     }
   }
 
-  async function submit({ prompt, mode, attachments = [] }) {
+  async function submit({ prompt, mode, attachments = [], references = [] }) {
     setError('');
     const targetId = selectedId;
     try {
-      const result = await hostController.execute('turn', { prompt, mode, attachments }, { sessionId: targetId });
+      const result = await hostController.execute('turn', { prompt, mode, attachments, references }, { sessionId: targetId });
       if (result.queued && result.queuedTurn) {
         setSession((current) => current?.sessionId === targetId && !current.queuedTurns?.some((turn) => turn.id === result.queuedTurn.id)
           ? { ...current, queuedTurns: [...(current.queuedTurns || []), result.queuedTurn] } : current);
@@ -498,14 +498,14 @@ function MinimalHostApp() {
     });
   }
 
-  async function branchMessage({ turnId, prompt }, intent) {
+  async function branchMessage({ turnId, prompt, references }, intent) {
     setError('');
     try {
       const body = await request(`api/sessions/${encodeURIComponent(selectedId)}/branches`, {
         method: 'POST',
         body: JSON.stringify({
           replaceTurnId: turnId,
-          ...(intent === 'edit' ? { prompt } : {}),
+          ...(intent === 'edit' ? { prompt, references } : {}),
           intent,
         }),
       });
@@ -577,6 +577,9 @@ function MinimalHostApp() {
     },
     actions: {
       onSubmit: sessionMutable ? submit : null,
+      onSearchSessionReferences: sessionMutable ? ({ query }) => request(`api/sessions/${encodeURIComponent(selectedId)}/session-references?q=${encodeURIComponent(query)}`) : null,
+      onResolveSessionReferences: sessionMutable ? ({ references }) => request(`api/sessions/${encodeURIComponent(selectedId)}/session-references`, { method: 'POST', body: JSON.stringify({ references }) }) : null,
+      onOpenSessionReference: (reference) => hostController.select(reference.threadId),
       onUploadAttachments: attachmentsEnabled && sessionMutable ? uploadAttachments : null,
       onResolveDroppedDirectories: attachmentsEnabled && sessionMutable ? resolveDroppedDirectories : null,
       onOpenAttachment: attachmentsEnabled ? openAttachment : null,

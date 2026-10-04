@@ -440,7 +440,7 @@ test('Minimal Host keeps owned portable Session Edit and Fork actions available'
   assert.match(source, /const sessionBranchable = !sharedReadOnly;/);
   assert.match(source, /onEditMessage: messageEditEnabled && sessionBranchable/);
   assert.match(source, /onForkMessage: messageForkEnabled && sessionBranchable/);
-  assert.match(source, /intent === 'edit' \? \{ prompt \} : \{\}/);
+  assert.match(source, /intent === 'edit' \? \{ prompt, references \} : \{\}/);
   assert.match(ui, /onForkMessage\(\{ messageId: message\.id, turnId: message\.turnId, prompt: message\.content, references: message\.references \}\)/);
   assert.match(source, /const branchable = session\.access\?\.kind !== 'shared';/);
   assert.match(source, /模型服务暂时不可用，本轮已结束。你可以编辑这条消息后重试/);

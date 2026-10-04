@@ -3,6 +3,8 @@ import { chmod, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, sta
 import { basename, dirname, join, relative } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { normalizeSessionReferences, parseSessionReferenceEnvelopes } from '../session-references.js';
+
 import { normalizeSessionAttachment } from '../attachments.js';
 
 const LEGACY_STORE_VERSION = 1;
@@ -456,7 +458,7 @@ export class EnvironmentSessionStore {
     return this.runtimeStore.saveQueuedTurns(entries);
   }
 
-  async recordUserInput(sessionId, input, { attachments = [], ownerId = null, turnId = null } = {}) {
+  async recordUserInput(sessionId, input, { attachments = [], references = [], ownerId = null, turnId = null } = {}) {
     const content = inputText(input);
     if (!content) throw new TypeError('Session input cannot be empty');
     const normalizedAttachments = Array.isArray(attachments)
@@ -473,6 +475,7 @@ export class EnvironmentSessionStore {
         phase: 'answer',
         content,
         attachments: normalizedAttachments,
+        references: normalizeSessionReferences(references),
         turnId: turnId == null ? null : nonEmptyString(turnId, 'Runtime Turn id'),
         turnStatus: null,
         createdAt: this.#time(),
@@ -1692,7 +1695,8 @@ function applyRuntimeItem(session, event) {
   const timestamp = new Date(event.createdAt || Date.now()).toISOString();
   if (['userMessage', 'agentMessage'].includes(item.type)) {
     const role = item.type === 'userMessage' ? 'user' : 'assistant';
-    const content = runtimeItemText(item);
+    const parsedReference = role === 'user' ? parseSessionReferenceEnvelopes(runtimeItemText(item)) : null;
+    const content = parsedReference ? parsedReference.text : runtimeItemText(item);
     const id = String(item.id || `${role}-${event.runtimeTurnId || 'unknown'}`);
     const existing = session.messages.find((candidate) => candidate.id === id);
     const existingUserTurn = role === 'user'
@@ -1705,6 +1709,7 @@ function applyRuntimeItem(session, event) {
       role,
       phase: item.phase === 'commentary' ? 'commentary' : 'answer',
       content,
+      ...(parsedReference ? { references: parsedReference.references } : {}),
       turnId: event.runtimeTurnId,
       turnStatus: item.status || 'inProgress',
       createdAt: timestamp,
