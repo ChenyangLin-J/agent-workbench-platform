@@ -181,6 +181,7 @@ export function SideChatPanel({
   panel,
   actions = {},
   labels = {},
+  singleChat = false,
 }) {
   const view = useMemo(() => normalizeSideChatPanelViewModel(panel), [panel]);
   const selected = view.selected;
@@ -241,7 +242,7 @@ export function SideChatPanel({
 
   return (
     <section className="cwu-side-chat" aria-label={labels.ariaLabel || 'Side Chats'}>
-      <div className="cwu-side-chat-tabs" role="tablist" aria-label={labels.tabsAriaLabel || 'Side Chats'}>
+      {singleChat ? (selected && actions.onDelete ? <div className="cwu-side-chat-single-actions"><button type="button" disabled={busy || running} onClick={() => run(() => actions.onDelete(selected.id))}>{labels.delete || '删除 Side Chat'}</button></div> : null) : <div className="cwu-side-chat-tabs" role="tablist" aria-label={labels.tabsAriaLabel || 'Side Chats'}>
         {view.sideChats.map((sideChat) => (
           <div className="cwu-side-chat-tab-wrap" key={sideChat.id}>
             <button
@@ -270,7 +271,7 @@ export function SideChatPanel({
           onClick={() => actions.onSelect?.(null)}
           type="button"
         >＋</button>
-      </div>
+      </div>}
 
       {!selected ? (
         <div className="cwu-side-chat-empty">
@@ -2406,7 +2407,7 @@ export function SessionStatus({ label = '空闲', state = 'idle', tone = 'idle' 
   return <agent-session-status label={label} state={state} tone={tone} />;
 }
 
-function RealtimePanel({ enabled, event, initialState, labels, onFallback, onSend }) {
+function RealtimePanel({ enabled, event, initialState, labels = {}, onFallback, onSend, inline = false }) {
   const launchRef = useRef(null);
   const dialogRef = useRef(null);
   const dismissRef = useRef(null);
@@ -2433,7 +2434,7 @@ function RealtimePanel({ enabled, event, initialState, labels, onFallback, onSen
     let controller;
     controller = factory({
       launchButton: launchRef.current,
-      dialog: dialogRef.current,
+      dialog: inline ? { open: true, showModal() {}, close() {}, addEventListener: (...args) => dialogRef.current.addEventListener(...args) } : dialogRef.current,
       dismissButton: dismissRef.current,
       startButton: startRef.current,
       stopButton: stopRef.current,
@@ -2455,28 +2456,33 @@ function RealtimePanel({ enabled, event, initialState, labels, onFallback, onSen
     controller.install();
     if (initialState) controller.handleMessage('realtime-state', initialState);
     return () => {
-      controller.handleMessage('realtime-state', { status: 'idle', transcript: [] });
+      controller.dispose();
       controllerRef.current = null;
     };
-  }, []);
+  }, [inline]);
 
   useEffect(() => {
     controllerRef.current?.setEnabled(enabled);
   }, [enabled]);
 
   useEffect(() => {
+    if (inline) controllerRef.current?.open();
+  }, [inline]);
+
+  useEffect(() => {
     if (!event?.type) return;
     controllerRef.current?.handleMessage(event.type, event.payload || {});
   }, [event]);
 
+  const Surface = inline ? 'section' : 'dialog';
   return (
     <>
-      <button className="cwu-button cwu-realtime-launch" ref={launchRef} title="Realtime V3" type="button">
+      <button className="cwu-button cwu-realtime-launch" hidden={inline} ref={launchRef} title="Realtime V3" type="button">
         {labels.realtimeButton || '语音'}
       </button>
-      <dialog className="cwu-realtime-dialog" ref={dialogRef}>
+      <Surface className={`cwu-realtime-dialog${inline ? ' is-inline' : ''}`} aria-label="实时语音对话" ref={dialogRef}>
         <section className="cwu-realtime-shell">
-          <header>
+          <header hidden={inline}>
             <div><span>Experimental · Realtime V3</span><h2>{labels.realtimeTitle || '实时语音对话'}</h2></div>
             <button aria-label="收起" className="cwu-realtime-close" ref={dismissRef} type="button">×</button>
           </header>
@@ -2493,7 +2499,7 @@ function RealtimePanel({ enabled, event, initialState, labels, onFallback, onSen
             <button className="cwu-send" ref={startRef} type="button">开始实时对话</button>
           </div>
         </section>
-      </dialog>
+      </Surface>
     </>
   );
 }

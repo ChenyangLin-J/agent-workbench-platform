@@ -38,6 +38,8 @@ Snapshots and events carry monotonically comparable `revision` values when the H
 
 Use list/header/composer/auxiliary-panel slots for product functionality. `SessionComposerUtilities` accepts Host-owned `voice.start()` and context read/compact callbacks; recording returns text into the draft and never submits automatically. Side Chat, Subagent, and Realtime use the public panels with Host actions.
 
+`SideChatPanel.singleChat` omits its internal chat selector for Hosts that support one Side Chat and already provide an outer tab. `SessionRealtimePanel` supplies default labels and accepts `inline` to show controls inside a Host-owned dialog. Opening the panel reads voice choices; microphone capture begins only when the user starts. Unmounting disposes media and requests a stop for an active realtime conversation.
+
 The compact Composer measures natural control width. Full model/effort/access/Fast controls stay inline when they fit; narrower layouts use one options panel. Desktop drawer preference is stored separately from Session draft/reading state. Up to 50 Session UI states are recoverable through optional browser session storage; incomplete uploads are not restored as ready attachments.
 
 The full-page application hides the redundant list total by default (`browser.showSessionCount` can opt in). Its sidebar toggle stays at the same top-left position through hover, focus, opening and closing; no layout transition or spare column remains when the desktop list is open. The collapsed detail header reserves space for the toggle. Embedded consumers retain their existing chrome.

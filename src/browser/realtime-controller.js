@@ -33,6 +33,7 @@
 
     return {
       install,
+      dispose,
       open,
       handleMessage,
       setEnabled,
@@ -53,6 +54,14 @@
       stopButton.addEventListener("click", stop);
       fallbackButton.addEventListener("click", useFallback);
       renderState();
+    }
+
+    function dispose() {
+      if (startSent) send({ type: "realtime-stop" });
+      startSent = false;
+      enabled = false;
+      state.status = "idle";
+      void stopMedia();
     }
 
     function open() {

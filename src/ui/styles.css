@@ -798,3 +798,8 @@
 }
 
 .cwu-host-error { position:fixed;z-index:100;right:16px;bottom:16px;max-width:min(440px,calc(100vw - 32px));margin:0;padding:12px 16px;border:1px solid var(--cwu-error);border-radius:10px;background:var(--cwu-surface);color:var(--cwu-error); }
+.cwu-realtime-dialog.is-inline { display:block;width:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;border-radius:0;box-shadow:none;background:transparent;color:inherit; }
+.cwu-realtime-dialog.is-inline .cwu-realtime-shell { padding:0; }
+.cwu-realtime-dialog.is-inline .cwu-realtime-shell > header[hidden],
+.cwu-realtime-launch[hidden] { display:none; }
+.cwu-side-chat-single-actions { display:flex;justify-content:flex-end;margin-bottom:8px; }
