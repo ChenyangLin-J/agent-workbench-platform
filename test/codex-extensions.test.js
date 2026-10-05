@@ -87,3 +87,37 @@ test('kernel routes global extensions without resuming a released Runtime', asyn
   assert.equal(provider.createdSessions.length, 1, 'thread extension resumes a released Runtime');
   assert.equal(runtime.method, 'thread/read');
 });
+
+test('review extensions update the Runtime and kernel active Turn', async (t) => {
+  const api = createFakeAppServer({
+    onRequest(message, server) {
+      if (message.method === 'initialize') return server.respond(message, { userAgent: 'fake' });
+      if (message.method === 'thread/start') {
+        return server.respond(message, { thread: { id: 'thread-review', turns: [] } });
+      }
+      if (message.method === 'review/start') {
+        return server.respond(message, { turn: { id: 'turn-review' } });
+      }
+      server.respond(message, {});
+    },
+  });
+  const store = new InMemoryBindingStore();
+  const kernel = new AgentSessionKernel({ provider: codexProvider(api), bindingStore: store });
+  t.after(() => kernel.close());
+
+  await kernel.attach('session-review');
+  const result = await kernel.extensionRequest('session-review', 'review/start', {
+    target: { type: 'uncommittedChanges' },
+    delivery: 'inline',
+  });
+
+  assert.equal(result.turn.id, 'turn-review');
+  assert.equal(kernel.describeRuntime('session-review').activeTurnId, 'turn-review');
+  assert.equal((await store.load('session-review')).activeTurnId, 'turn-review');
+  assert.equal(
+    kernel.replay('session-review').events.some(
+      (event) => event.type === 'turn_accepted' && event.runtimeTurnId === 'turn-review',
+    ),
+    true,
+  );
+});

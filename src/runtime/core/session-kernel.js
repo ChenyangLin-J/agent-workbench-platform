@@ -16,6 +16,7 @@ export class AgentSessionKernel extends EventEmitter {
     requestTimeoutMs = 15 * 60_000,
     runtimeLeaseMs = 30 * 60_000,
     detachedLeaseMs = null,
+    hasHostActiveWork = () => false,
     now = () => Date.now(),
   } = {}) {
     super();
@@ -31,12 +32,15 @@ export class AgentSessionKernel extends EventEmitter {
       ? this.runtimeLeaseMs
       : positiveNumber(detachedLeaseMs, 'detachedLeaseMs');
     this.now = typeof now === 'function' ? now : () => Date.now();
+    if (typeof hasHostActiveWork !== 'function') throw new TypeError('hasHostActiveWork must be a function.');
+    this.hasHostActiveWork = hasHostActiveWork;
     this.sessions = new Map();
     this.detachedSessions = new Map();
     this.deferredSessions = new Map();
     this.leases = new Map();
     this.attachPromises = new Map();
     this.resumePromises = new Map();
+    this.releasePromises = new Map();
     this.startingTurns = new Set();
     this.turnQueues = new Map();
     this.pendingRequests = new Map();
@@ -67,11 +71,60 @@ export class AgentSessionKernel extends EventEmitter {
     if (typeof runtimeSession.requestExtension !== 'function') {
       throw kernelError('RUNTIME_EXTENSION_UNSUPPORTED', 'Provider does not expose extension requests.', 501);
     }
-    return runtimeSession.requestExtension(method, params);
+    const result = await runtimeSession.requestExtension(method, params);
+    const startedTurnId = method === 'review/start' ? String(result?.turn?.id || '') || null : null;
+    if (startedTurnId) {
+      const completedBeforeResponse = runtimeSession.activeTurnId !== startedTurnId;
+      await this.#saveBinding(sessionId, {
+        activeTurnId: runtimeSession.activeTurnId,
+        lastTurnId: completedBeforeResponse ? startedTurnId : null,
+        status: completedBeforeResponse ? 'completed' : 'running',
+        lastError: null,
+      });
+      this.#publish(sessionId, {
+        type: 'turn_accepted',
+        runtimeSessionId: runtimeSession.runtimeSessionId,
+        runtimeTurnId: startedTurnId,
+        payload: { status: completedBeforeResponse ? 'completed' : 'running', extensionMethod: method },
+      });
+    }
+    return result;
+  }
+
+  describeRuntime(sessionId) {
+    assertSessionId(sessionId);
+    const live = this.sessions.get(sessionId);
+    if (live && !live.closed) return this.#describe(sessionId, live);
+    const detached = this.detachedSessions.get(sessionId);
+    if (detached?.runtimeSession && !detached.runtimeSession.closed) {
+      return {
+        ...this.#describe(sessionId, detached.runtimeSession),
+        runtimeState: 'detached',
+        status: detached.runtimeSession.activeTurnId ? 'running' : 'detached',
+        detachedAt: detached.detachedAt,
+      };
+    }
+    const deferred = this.deferredSessions.get(sessionId);
+    if (deferred) return this.#describeDeferred(sessionId, deferred);
+    return {
+      sessionId,
+      capabilities: this.capabilities(),
+      runtimeProvider: this.provider.id,
+      runtimeSessionId: null,
+      activeTurnId: null,
+      cwd: null,
+      runtimeProfile: null,
+      runtimeState: 'released',
+      status: 'released',
+      released: true,
+      releaseReason: null,
+      runtimeLeaseExpiresAt: null,
+    };
   }
 
   async attach(sessionId, options = {}) {
     assertSessionId(sessionId);
+    if (this.releasePromises.has(sessionId)) await this.waitForRuntimeRelease(sessionId);
     const current = this.sessions.get(sessionId);
     if (current && !current.closed) {
       this.#scheduleLease(sessionId, { renew: true });
@@ -164,6 +217,7 @@ export class AgentSessionKernel extends EventEmitter {
   }
 
   async #ensureRuntime(sessionId, options = {}) {
+    if (this.releasePromises.has(sessionId)) await this.waitForRuntimeRelease(sessionId);
     const current = this.sessions.get(sessionId);
     if (current && !current.closed) return current;
     const reclaimed = this.#reclaimDetached(sessionId);
@@ -214,6 +268,7 @@ export class AgentSessionKernel extends EventEmitter {
 
   async adopt(sessionId, runtimeSession) {
     assertSessionId(sessionId);
+    if (this.releasePromises.has(sessionId)) await this.waitForRuntimeRelease(sessionId);
     if (!runtimeSession?.runtimeSessionId || typeof runtimeSession.describe !== 'function') {
       throw new TypeError('A created runtimeSession is required.');
     }
@@ -547,10 +602,19 @@ export class AgentSessionKernel extends EventEmitter {
     this.#renewLease(sessionId);
   }
 
+  waitForRuntimeRelease(sessionId) {
+    assertSessionId(sessionId);
+    return this.releasePromises.get(sessionId) || Promise.resolve();
+  }
+
   async releaseRuntime(sessionId, { reason = 'explicit' } = {}) {
     assertSessionId(sessionId);
+    if (this.releasePromises.has(sessionId)) return this.releasePromises.get(sessionId);
     const runtimeSession = this.sessions.get(sessionId) ?? this.detachedSessions.get(sessionId)?.runtimeSession ?? null;
-    if (!runtimeSession) return this.deferredSessions.has(sessionId) ? this.bindingStore.load(sessionId) : null;
+    if (!runtimeSession) {
+      if (this.deferredSessions.has(sessionId)) return this.bindingStore.load(sessionId);
+      return null;
+    }
     if (runtimeSession.activeTurnId || this.startingTurns.has(sessionId)) {
       throw kernelError('TURN_ACTIVE', 'Interrupt the active Turn before releasing the Runtime.', 409);
     }
@@ -705,7 +769,9 @@ export class AgentSessionKernel extends EventEmitter {
       }
       return;
     }
-    await this.#releaseRuntime(sessionId, runtimeSession, 'idle-ttl');
+    await this.#releaseRuntime(sessionId, runtimeSession, 'idle-ttl').catch((error) => {
+      this.#publish(sessionId, { type: 'runtime_release_failed', payload: { reason: 'idle-ttl', code: error.code || 'RUNTIME_RELEASE_FAILED' } });
+    });
   }
 
   async #expireDetached(sessionId) {
@@ -718,7 +784,9 @@ export class AgentSessionKernel extends EventEmitter {
       detached.timer.unref?.();
       return;
     }
-    await this.#releaseRuntime(sessionId, detached.runtimeSession, 'detached-ttl');
+    await this.#releaseRuntime(sessionId, detached.runtimeSession, 'detached-ttl').catch((error) => {
+      this.#publish(sessionId, { type: 'runtime_release_failed', payload: { reason: 'detached-ttl', code: error.code || 'RUNTIME_RELEASE_FAILED' } });
+    });
   }
 
   #hasActiveWork(sessionId) {
@@ -728,17 +796,41 @@ export class AgentSessionKernel extends EventEmitter {
     for (const pending of this.pendingRequests.values()) {
       if (pending.sessionId === sessionId) return true;
     }
-    return false;
+    return Boolean(this.hasHostActiveWork(sessionId));
   }
 
-  async #releaseRuntime(sessionId, runtimeSession, reason) {
+  #releaseRuntime(sessionId, runtimeSession, reason) {
+    const pending = this.releasePromises.get(sessionId);
+    if (pending) return pending;
+    const operation = Promise.resolve().then(() => this.#finishRuntimeRelease(sessionId, runtimeSession, reason));
+    this.releasePromises.set(sessionId, operation);
+    const cleanup = () => {
+      if (this.releasePromises.get(sessionId) === operation) this.releasePromises.delete(sessionId);
+    };
+    operation.then(cleanup, cleanup);
+    return operation;
+  }
+
+  async #finishRuntimeRelease(sessionId, runtimeSession, reason) {
     this.#clearLease(sessionId);
     const detached = this.detachedSessions.get(sessionId);
     if (detached?.timer) clearTimeout(detached.timer);
+    try {
+      await runtimeSession.unsubscribe?.();
+    } catch (error) {
+      // Keep the attachment authoritative when unsubscribe did not complete.
+      // Explicit callers observe the failure; automatic expiry retries later.
+      if (detached) {
+        detached.timer = setTimeout(() => void this.#expireDetached(sessionId), this.detachedLeaseMs);
+        detached.timer.unref?.();
+      } else {
+        this.#scheduleLease(sessionId, { renew: true });
+      }
+      throw error;
+    }
     this.detachedSessions.delete(sessionId);
     if (this.sessions.get(sessionId) === runtimeSession) this.sessions.delete(sessionId);
     this.#expireRequests(sessionId, 'runtime_released');
-    await runtimeSession.unsubscribe?.().catch(() => {});
     runtimeSession.close();
     const releasedAt = new Date(this.now()).toISOString();
     const binding = await this.#saveBinding(sessionId, {
@@ -766,9 +858,11 @@ export class AgentSessionKernel extends EventEmitter {
       activeTurnId: null,
       cwd: binding.cwd || null,
       runtimeProfile: null,
+      runtimeState: 'deferred',
       status: 'released',
       released: true,
       releaseReason: binding.releaseReason || null,
+      runtimeLeaseExpiresAt: null,
     };
   }
 
@@ -882,11 +976,16 @@ export class AgentSessionKernel extends EventEmitter {
   }
 
   #describe(sessionId, runtimeSession) {
+    const lease = this.leases.get(sessionId);
     return {
       sessionId,
       capabilities: this.capabilities(),
       ...runtimeSession.describe(),
+      runtimeState: 'live',
       status: runtimeSession.activeTurnId ? 'running' : 'idle',
+      runtimeLeaseExpiresAt: lease?.lastMeaningfulActivityAt
+        ? new Date(Date.parse(lease.lastMeaningfulActivityAt) + this.runtimeLeaseMs).toISOString()
+        : null,
     };
   }
 }

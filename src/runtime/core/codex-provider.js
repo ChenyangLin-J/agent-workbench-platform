@@ -326,7 +326,12 @@ export class CodexRuntimeSession extends EventEmitter {
     if (scope === 'thread' && !payload.threadId) {
       throw providerError('RUNTIME_SESSION_MISSING', 'Runtime Session has not been created.');
     }
-    return this.connection.request(method, payload);
+    const result = await this.connection.request(method, payload);
+    if (method === 'review/start') {
+      const turnId = String(result?.turn?.id || '') || null;
+      if (turnId && !this.completedTurnIds.has(turnId)) this.activeTurnId = turnId;
+    }
+    return result;
   }
 
   async unsubscribe() {
