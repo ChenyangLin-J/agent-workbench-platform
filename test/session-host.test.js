@@ -10,6 +10,86 @@ test('switching the native thread behind one UI Session discards history from th
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 const snapshot = (id, revision = 1) => ({ sessionId: id, revision, messages: [], queuedTurns: [], pendingRequests: [] });
 
+test('Creation is usable while an older history list is delayed and its response cannot remove the new row', async () => {
+  const history = deferred();
+  let lists = 0;
+  const host = createSessionHostController({ adapter: {
+    listSessions: () => lists++ ? history.promise : Promise.resolve([{ id: 'old' }]),
+    readSession: async (id) => snapshot(id),
+    createSession: async () => ({ session: { sessionId: 'draft', title: 'New conversation' } }),
+  } });
+  await host.start();
+  const refreshing = host.refreshSessions();
+  let completed = false;
+  const creating = host.execute('create').then((value) => { completed = true; return value; });
+  await new Promise((resolve) => setImmediate(resolve));
+  try {
+    assert.equal(host.getSnapshot().selectedId, 'draft');
+    assert.equal(host.getSnapshot().session.sessionId, 'draft');
+    assert.equal(host.getSnapshot().sessions.some((row) => row.sessionId === 'draft'), true);
+    assert.equal(completed, true, 'accepted creation must settle before unrelated history responds');
+    await host.select('old');
+    history.resolve([{ id: 'old' }]);
+    await Promise.all([refreshing, creating]);
+    assert.equal(host.getSnapshot().selectedId, 'old');
+    assert.equal(host.getSnapshot().sessions.some((row) => row.sessionId === 'draft'), true);
+  } finally { history.resolve([]); host.dispose(); }
+});
+
+test('A delayed accepted creation retains operation identity and respects a newer selection', async () => {
+  const creation = deferred();
+  let calls = 0;
+  const host = createSessionHostController({ adapter: {
+    listSessions: async () => [{ id: 'old' }], readSession: async (id) => snapshot(id),
+    createSession: () => { calls++; return creation.promise; },
+  } });
+  await host.start();
+  const first = host.execute('create');
+  const repeated = host.execute('create');
+  await host.select('old');
+  creation.resolve({ sessionId: 'draft' });
+  await Promise.all([first, repeated]);
+  assert.equal(calls, 1);
+  assert.equal(host.getSnapshot().selectedId, 'old');
+  assert.equal(host.getSnapshot().session.sessionId, 'old');
+  assert.equal(host.getSnapshot().sessions.some((row) => row.sessionId === 'draft'), true);
+  host.dispose();
+});
+
+test('Creation resolving after disposal does not start a read or update the visible state', async () => {
+  const creation = deferred();
+  let reads = 0;
+  const host = createSessionHostController({ adapter: {
+    listSessions: async () => [], readSession: async (id) => { reads++; return snapshot(id); },
+    createSession: () => creation.promise,
+  } });
+  await host.start();
+  const creating = host.execute('create');
+  host.dispose();
+  creation.resolve({ sessionId: 'draft' });
+  assert.deepEqual(await creating, { sessionId: 'draft' });
+  assert.equal(reads, 0);
+  assert.equal(host.getSnapshot().selectedId, null);
+  assert.deepEqual(host.getSnapshot().sessions, []);
+});
+
+test('An operation completed for an earlier selection cannot clear a fresh operation error', async () => {
+  const earlier = deferred();
+  const host = createSessionHostController({ adapter: {
+    listSessions: async () => [], readSession: async (id) => snapshot(id),
+    execute: async (id) => { if (id === 'a') return earlier.promise; throw new Error('current operation failed'); },
+  } });
+  await host.select('a');
+  const operation = host.execute('turn', { prompt: 'first' });
+  await host.select('b');
+  await assert.rejects(host.execute('turn', { prompt: 'second' }), /current operation failed/);
+  earlier.resolve({ accepted: true });
+  await operation;
+  assert.equal(host.getSnapshot().error, 'current operation failed');
+  assert.equal(host.getSnapshot().selectedId, 'b');
+  host.dispose();
+});
+
 for (const context of [null, 'project-a']) {
   test(`Host Kit keeps Session identity and operations in ${context || 'project-free'} mode`, async () => {
     const submitted = [];

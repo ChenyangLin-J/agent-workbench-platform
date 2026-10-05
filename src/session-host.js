@@ -143,6 +143,7 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     if (!creating && !target) throw new Error('Select a Session before performing this operation.');
     const operation = operations.begin({ scope: action, targetId: creating ? 'new' : target, payload });
     if (pendingOperations.has(operation.lookupKey)) return pendingOperations.get(operation.lookupKey);
+    const operationSelection = selectionGeneration;
     const task = (async () => {
       try {
         const result = creating
@@ -150,14 +151,24 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
           : await adapter.execute(target, action, operation.payload, { idempotencyKey: operation.idempotencyKey });
         if (result?.pending && result?.idempotent !== false) throw new Error('这条操作仍在确认中，请稍后重试。');
         operations.complete(operation);
-        publish({ error: '' });
+        if (selectionGeneration === operationSelection) publish({ error: '' });
         if (creating) {
           const created = sessionId(result) ? result : result?.session;
-          await refreshSessions().catch(fail);
-          if (sessionId(created)) await select(sessionId(created)).catch(fail);
-        } else if (target === state.selectedId) await refreshSession(target).catch(fail);
+          if (sessionId(created) && !disposed) {
+            // Creation already supplies the new row. An older history request must
+            // not remove it, and listing unrelated Sessions must not delay selection.
+            listGeneration++;
+            publish({ sessions: mergeSessionSummaries(state.sessions, [created]) });
+            if (selectionGeneration === operationSelection) {
+              const selected = await select(sessionId(created)).catch(() => null);
+              if (selected && !disposed && adapter.patchSummary) publish({ sessions: adapter.patchSummary(state.sessions, selected) });
+            }
+          }
+        } else if (target === state.selectedId && selectionGeneration === operationSelection) {
+          await refreshSession(target).catch((error) => { if (current(target, operationSelection)) fail(error); });
+        }
         return result;
-      } catch (error) { if (error?.knownResult === true) operations.discard(operation); fail(error); throw error; }
+      } catch (error) { if (error?.knownResult === true) operations.discard(operation); if (selectionGeneration === operationSelection) fail(error); throw error; }
       finally { pendingOperations.delete(operation.lookupKey); }
     })();
     pendingOperations.set(operation.lookupKey, task);
