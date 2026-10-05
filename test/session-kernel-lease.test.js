@@ -134,6 +134,52 @@ test('a detached Runtime is retained for its lease and reclaimed on attach', asy
   assert.equal(provider.createdSessions.length, 1, 'reattach reuses the retained Runtime');
 });
 
+test('host activity defers idle expiry without requiring a product model', async (t) => {
+  const provider = new FakeRuntimeProvider();
+  let hostBusy = true;
+  const observed = [];
+  const kernel = new AgentSessionKernel({
+    provider,
+    bindingStore: new InMemoryBindingStore(),
+    runtimeLeaseMs: 60,
+    hasHostActiveWork: (id) => { observed.push(id); return hostBusy; },
+  });
+  t.after(() => kernel.close());
+  const attached = await kernel.attach('project-free');
+  assert.ok(attached.runtimeLeaseExpiresAt);
+  await delay(180);
+  assert.equal(provider.createdSessions[0].closed, false);
+  assert.deepEqual([...new Set(observed)], ['project-free']);
+  assert.equal(kernel.describeRuntime('project-free').runtimeLeaseExpiresAt, attached.runtimeLeaseExpiresAt);
+  hostBusy = false;
+  await waitFor(() => provider.createdSessions[0].closed);
+  assert.equal(kernel.describeRuntime('project-free').runtimeLeaseExpiresAt, null);
+});
+
+test('a replacement waits for unsubscribe and duplicate releases share one operation', async (t) => {
+  const { provider, kernel } = kernelOptions({ leaseMs: 60_000 });
+  t.after(() => kernel.close());
+  await kernel.attach('session-a');
+  const oldRuntime = provider.createdSessions[0];
+  let finishUnsubscribe;
+  let unsubscribeCount = 0;
+  oldRuntime.unsubscribe = () => {
+    unsubscribeCount += 1;
+    return new Promise((resolve) => { finishUnsubscribe = resolve; });
+  };
+  const release = kernel.releaseRuntime('session-a');
+  await waitFor(() => finishUnsubscribe);
+  const duplicate = kernel.releaseRuntime('session-a');
+  const replacement = kernel.submit('session-a', 'resume after unsubscribe');
+  await delay(30);
+  assert.equal(provider.createdSessions.length, 1);
+  assert.equal(unsubscribeCount, 1);
+  finishUnsubscribe();
+  await Promise.all([release, duplicate, replacement]);
+  assert.equal(provider.createdSessions.length, 2);
+  assert.equal(provider.createdSessions[1].runtimeSessionId, oldRuntime.runtimeSessionId);
+});
+
 test('a detached Runtime is released after its lease expires', async (t) => {
   const { provider, store, kernel } = kernelOptions({ detachedLeaseMs: 50 });
   t.after(() => kernel.close());
@@ -179,4 +225,27 @@ test('a Runtime exit interrupts the active Turn and the next attach resumes with
   assert.equal(resumed.runtimeSessionId, runtime.runtimeSessionId);
   assert.equal(resumed.startedTurns.length, 1);
   assert.equal(resumed.startedTurns[0].input, 'queued behind work');
+});
+
+test('failed unsubscribe rejects a waiting replacement and preserves the attachment for retry', async (t) => {
+  const { provider, store, kernel } = kernelOptions({ leaseMs: 60_000 });
+  t.after(() => kernel.close());
+  await kernel.attach('session-a');
+  const runtime = provider.createdSessions[0];
+  let rejectUnsubscribe;
+  runtime.unsubscribe = () => new Promise((_resolve, reject) => { rejectUnsubscribe = reject; });
+  const release = kernel.releaseRuntime('session-a');
+  await waitFor(() => rejectUnsubscribe);
+  const replacement = kernel.submit('session-a', 'must wait');
+  const rejectedRelease = assert.rejects(release, /unsubscribe failed/);
+  const rejectedReplacement = assert.rejects(replacement, /unsubscribe failed/);
+  rejectUnsubscribe(new Error('unsubscribe failed'));
+  await Promise.all([rejectedRelease, rejectedReplacement]);
+  assert.equal(runtime.closed, false);
+  assert.equal(provider.createdSessions.length, 1);
+  assert.equal((await store.load('session-a')).released, false);
+  assert.equal(kernel.describeRuntime('session-a').runtimeState, 'live');
+  runtime.unsubscribe = async () => ({});
+  await kernel.releaseRuntime('session-a');
+  assert.equal(runtime.closed, true);
 });

@@ -25,6 +25,51 @@ test('Session Kernel binds product Sessions without exposing provider protocol m
   assert.equal(JSON.stringify(binding).includes('threadId'), false);
 });
 
+for (const fixture of [
+  { name: 'project-free', cwd: null },
+  { name: 'project-scoped', cwd: '/workspace/project' },
+]) {
+  test(`Runtime description is synchronous and side-effect free for ${fixture.name} Sessions`, async (t) => {
+    const provider = new FakeRuntimeProvider();
+    const kernel = new AgentSessionKernel({
+      provider,
+      bindingStore: new InMemoryBindingStore(),
+      detachedLeaseMs: 60_000,
+    });
+    t.after(() => kernel.close());
+
+    assert.equal(kernel.describeRuntime('session-a').runtimeState, 'released');
+    assert.equal(provider.createdSessions.length, 0);
+
+    const attached = await kernel.attach('session-a', { cwd: fixture.cwd });
+    assert.equal(attached.runtimeState, 'live');
+    assert.equal(kernel.describeRuntime('session-a').cwd, fixture.cwd);
+    assert.equal(kernel.describeRuntime('session-a').runtimeLeaseExpiresAt, attached.runtimeLeaseExpiresAt);
+    assert.equal(provider.createdSessions.length, 1);
+
+    await kernel.detach('session-a');
+    assert.equal(kernel.describeRuntime('session-a').runtimeState, 'detached');
+    assert.equal(provider.createdSessions.length, 1);
+
+    await kernel.attach('session-a');
+    await kernel.releaseRuntime('session-a', { reason: 'test' });
+    const released = kernel.describeRuntime('session-a');
+    assert.equal(released.runtimeState, 'released');
+    assert.equal(released.runtimeSessionId, null);
+    assert.equal(released.runtimeLeaseExpiresAt, null);
+    assert.equal(provider.createdSessions.length, 1);
+
+    const deferred = await kernel.attach('session-a');
+    assert.equal(deferred.runtimeState, 'deferred');
+    assert.equal(kernel.describeRuntime('session-a').runtimeState, 'deferred');
+    assert.equal(provider.createdSessions.length, 1, 'description and deferred attach must not resume the Runtime');
+
+    await kernel.submit('session-a', 'resume');
+    assert.equal(kernel.describeRuntime('session-a').runtimeState, 'live');
+    assert.equal(provider.createdSessions.length, 2);
+  });
+}
+
 test('provider without steer capability queues a follow-up and starts it after completion', async (t) => {
   const provider = new FakeRuntimeProvider({ capabilities: { steer: false } });
   const kernel = new AgentSessionKernel({ provider, bindingStore: new InMemoryBindingStore() });
