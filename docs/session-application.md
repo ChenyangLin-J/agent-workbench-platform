@@ -46,6 +46,8 @@ Context usage stays live through `context.usage`, including an explicit `null` w
 
 The compact Composer measures natural control width. Full model/effort/access/Fast controls stay inline when they fit; narrower layouts use one options panel. Desktop drawer preference is stored separately from Session draft/reading state. Up to 50 Session UI states are recoverable through optional browser session storage; incomplete uploads are not restored as ready attachments.
 
+The Composer keeps its textarea editable without a formatted-preview step. Plain text, a standalone heading and a single list item preserve the clipboard's literal text. Structurally complex rich content, including multi-block content, multi-item lists, tables, fenced code, blockquotes and multi-paragraph content, becomes a Markdown attachment; long unstructured text follows the existing plain-text attachment threshold. File and directory drops route through the shared workspace actions, with authorization and upload owned by the Host.
+
 The full-page application hides the redundant list total by default (`browser.showSessionCount` can opt in). Its sidebar toggle stays at the same top-left position through hover, focus, opening and closing; no layout transition or spare column remains when the desktop list is open. The collapsed detail header reserves space for the toggle. Embedded consumers retain their existing chrome.
 
 Hosts enable sidebar-to-Composer references by providing `sessions[].reference` (`hostId` and native `threadId`, with cached labels), plus `onSearchSessionReferences`, `onResolveSessionReferences` and `onOpenSessionReference`. The Composer shares drag, `@` selection, removable chips, duplicate checks and per-Session recovery. `threadId` identifies self references even when the selected UI `sessionId` is an alias. References are included in submit and edit callbacks.
@@ -63,3 +65,5 @@ Current public intermediate messages and tool output remain readable in order. A
 - `src/environment/host-adapter.js`: Minimal Host's transport projection.
 
 `test/session-host.test.js`, `session-ui-state.test.js`, and the existing Kernel/UI suites cover state and protocol contracts. Project-owned `scripts/testing/session-ui.flow.mjs` is recorded with workspace Playwright against the built application, using isolated synthetic Runtime state. It does not establish physical microphone, iOS keyboard, or production account acceptance.
+
+Consumer adoption remains independent: package tests establish Platform correctness, while each consumer verifies its mounted surfaces and pins an accepted release through its own delivery process. See [`operations/RELEASING.md`](operations/RELEASING.md). Resource lifecycle coordination and configurable built-in Minimal Host extensions remain separate from the implemented common application; their open design is in [`specs/consumer-host-convergence.md`](specs/consumer-host-convergence.md).

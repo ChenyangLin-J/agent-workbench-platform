@@ -1,73 +1,39 @@
-# Consumer Host Convergence
+# Consumer Host Composition
 
-Lifecycle: active migration. This spec closes the gap between low-level Platform contracts and the built-in Minimal Host without introducing product objects into Platform.
+Lifecycle: active design for storage-independent resource coordination and configurable built-in Minimal Host extensions. Common Session application assembly and client orchestration are implemented and documented in [`../session-application.md`](../session-application.md).
 
-## Problem
+## Current boundary
 
-Full products can import shared React surfaces, but still need to rebuild request identity, optimistic state, authoritative snapshot reconciliation and event recovery. The Minimal Host implements the same concerns in its private browser entry. A consumer that starts from the closed Minimal Host cannot inject rich product extensions without depending on internal DOM or request behavior.
+Minimal Host and Agent Web consume the same exported `SessionApplication` and `createSessionHostController`. Platform owns selection protection, operation identity, snapshot/event reconciliation, recovery, the Session list, finder, transcript, execution records, Composer and responsive drawer. Hosts supply transport adapters and authorized product actions.
 
-The missing unit is a product-neutral Host Kit: headless Session application controllers used by the built-in Minimal Host and available to full consumers. Consumers continue to own HTTP transport, stores, authorization, product context, paths, lifecycle and deployment.
+The lower-level `@agent-workbench/platform/session-client` exports remain available for embedded consumers: `SessionClientOperationController`, authoritative-snapshot/optimistic-item reconciliation and `createSessionEventController`. They accept transport, product-event, extension-recovery and error callbacks without importing product state.
 
-## Target contract
+Generic React extension slots are available to full consumers. The built-in Minimal Host composes its own Environment transport, upload helpers and extensions in `src/environment/host-client.jsx`; these are not yet a general configuration API for injecting arbitrary product extensions into a deployed Minimal Host.
 
-Platform owns:
+Consumers own their package pin, authorization, stores, paths, Runtime lifecycle and deployment. Adoption in one consumer does not upgrade another. Read the consumer's current package, lockfile and acceptance evidence rather than a version snapshot in this design.
 
-- client operation identity and retry-safe mutation state;
-- authoritative Session snapshot plus optimistic message reconciliation;
-- event replay, reconnect and polling coordination;
-- Edit/Fork intent, queue and request state transitions;
-- resource stage/commit/promotion coordination;
-- stable React extension inputs that do not require DOM selectors.
+## Remaining design
 
-Consumers own:
+### Resource lifecycle coordination
 
-- endpoint construction, authentication and process lifecycle;
-- persistence implementations and retention;
-- product navigation, objects, labels and business extensions;
-- local path authorization and external side effects.
+Expose common staging, acceptance, commit and output-promotion coordination without coupling it to filesystem storage or a product endpoint. Resource identities and lifecycle semantics are defined by [`session-resources-and-storage.md`](session-resources-and-storage.md); its reference store and migration helpers do not by themselves provide a portable browser/Host coordinator.
 
-The built-in Minimal Host must consume the same exported controllers. It may compose them with Environment-specific transport and storage, but it must not remain an unrelated reference implementation.
+The coordinator should accept authorized ResourceStore and transport adapters, preserve staged resources when a submission fails, and commit references only after acceptance. Unknown outcomes must retain the same operation identity. Consumers continue to own retention, physical storage, path access and external effects.
 
-## Current milestone
+### Built-in Minimal Host extension configuration
 
-The first slice exports `SessionClientOperationController` from `@agent-workbench/platform/session-client`. It assigns an idempotency key to a JSON-safe mutation payload, reuses that key when the same target and payload are retried after an uncertain response, and forgets it only after the caller confirms acceptance or explicitly discards it.
+Define an explicit composition entry for consumers that need to configure the deployed Minimal Host instead of mounting `SessionApplication` themselves. It should inject supported product actions and React slots through public contracts, without DOM selectors, patched `fetch`, or imports from private Host modules.
 
-Minimal Host Session creation and Turn submission use this controller with the existing server-side reservation ledger. This closes the end-to-end retry gap for the built-in browser client and establishes the first reusable Host Kit boundary. `SessionWorkspace` also owns whole-detail file/directory drag routing, including Finder's opaque preview phase, so consumers no longer need a DOM event bridge after adopting this release. Consumer-specific stores remain adapters until they can adopt a released package containing these changes.
+Reuse the existing application and controllers. Keep a project-free Host valid without requiring product objects. Extension loading, capability declarations and authorization must remain consumer-controlled; discovery and planning must not start processes or execute product effects.
 
-The next additive Host Kit slice exports authoritative-snapshot/optimistic-item reconciliation plus a transport-injected Session event controller from the same entry. The controller owns active-Turn, request, queue, live Agent delta, reconnect recovery and polling transitions. Consumers inject EventSource construction, snapshot/list refresh, extension recovery, product-event routing and error presentation. Both project-free and project-scoped fixtures exercise the same state transitions; unknown product context remains untouched.
+## Implementation and adoption gate
 
-Personal now pins the released `v0.20.0` slice. Its Session state module only re-exports the public Host Kit plus local-path helpers, and its event controller only injects product events, extension recovery and error policy. Personal removed the duplicate event classifier and state-machine tests. Compatible Platform upgrades use Personal's narrow `core:accept` package/adapter/browser gate; changes to persistence, authorization, Runtime, Resource or existing adapter contracts still require targeted migration tests and the full Personal gate.
+These designs require their own reviewed scope before implementation. They do not reopen the completed Agent Web shared-UI migration or authorize consumer data migration.
 
-## UI behavior
+- Publish new contracts additively and exercise them through public exports in project-free and project-scoped fixtures.
+- Verify resource failure/retry/acceptance through injected storage and transport adapters, including cross-Session rejection and preserved staged resources.
+- Verify configurable extensions in a mounted Minimal Host without private DOM or request patches.
+- Let each affected consumer accept and pin a released contract before deleting its corresponding compatibility adapter.
+- Keep ResourceStore migration, source retirement and deployment authorization with their owning consumer.
 
-Reviewable interface reference: [Consumer Host Convergence UI](../mockups/consumer-host-convergence.html).
-
-The Composer has one editing state: the textarea remains visible and no formatted-preview/edit step exists. An ordinary sentence, standalone heading, or single list item uses the clipboard's plain text exactly, so multiplication asterisks and similar punctuation are not escaped in the submitted prompt. Multi-block content, multi-item lists, tables, fenced code, blockquotes, and multi-paragraph rich content become Markdown attachments; long unstructured text keeps the existing plain-text attachment threshold. While a request is in flight, existing submitting states remain unchanged. If transport fails before a response is known, or the server reports that an identical reservation is still pending, the Composer restores the same user-visible draft; sending the unchanged request again reuses its operation identity. Changing the target or payload creates a new operation. A confirmed accepted response clears the retained identity.
-
-## Remaining migration
-
-1. Move Minimal Host's remaining React-owned refresh scheduling behind the exported application controller so both built-in and full consumers compose the same complete path.
-2. Expose resource lifecycle coordination independently from filesystem storage and product authorization.
-3. Make Minimal Host extensions injectable without consumer DOM or `fetch` patches.
-4. Adopt each released slice in another independent consumer before deleting its previous implementation there.
-
-DataMama migration is intentionally separate from Platform implementation: its production branch and release lifecycle remain consumer-owned. Replace consumer patches only in an isolated worktree and only after the corresponding Platform contract has browser acceptance.
-
-Current adoption is intentionally asymmetric: Personal production pins `v0.20.0`, while Datamama production remains on its accepted `v0.19.1` Run. This is expected decoupling, not version drift by itself. Datamama adopts a later Platform candidate only when its mounted surfaces or a Datamama requirement need it; Personal does the same independently. Platform publishes a tag once its own tests pass and records the impacted consumers in the Release; configured consumer preflights are early signals only. Each consumer runs its gate when it adopts a tag — Datamama's formal contract gate proves an isolated Environment/Run through a disposable Gateway and real browser. These release mechanics remain separate from the Host Kit migration above.
-
-## Acceptance
-
-- Repeating the same Session mutation after an unknown transport outcome sends the same valid idempotency key and body.
-- A changed payload or target receives a new key.
-- Accepted and explicitly discarded operations do not leak into later requests.
-- The controller is browser-safe, product-free and covered through its public export.
-- Authoritative snapshots replace canonical fields without dropping optimistic/live messages or a non-terminal known active Turn.
-- Request, queue, delta, active-Turn and reconnect transitions behave identically with no context and with injected product context.
-- Internal maintenance such as context compaction is exposed as running activity and retained as technical detail while remaining non-result-bearing, including when a completion event omits lifecycle metadata; it does not change unread state or the last user-visible result. The shared detail shows its activity label above the Composer and routes input to the next-Turn queue instead of steer until compaction finishes.
-- A completion only clears its matching active Turn, and item/list activity can restore polling after a missed start event.
-- Product events, extension recovery, transport and queue-failure presentation stay consumer callbacks.
-- Minimal Host uses the export for Session creation and Turn submission.
-- Personal consumes the released state/event slice through the public package and tests only package mounting, Host adapters and product-owned effects for compatible upgrades.
-- Plain rich-text paste, a standalone heading, and a single list item preserve literal text and remain in the editable Composer; structurally complex paste becomes an attachment and no Composer preview is rendered.
-- Existing project-free Platform tests and Minimal Host browser smoke remain green.
-- A Platform release and a consumer's formal pin are recorded as separate states. No shared migration is called deployed in a consumer until that consumer has accepted and formally pinned the released tag.
+Release mechanics and consumer acceptance remain in [`../operations/RELEASING.md`](../operations/RELEASING.md). Physical microphone, real-device keyboard/touch and push acceptance belong to the consumer's ongoing product verification, not this composition design.
