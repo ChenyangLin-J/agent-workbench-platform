@@ -34,9 +34,13 @@ Snapshots and events carry monotonically comparable `revision` values when the H
 
 `execute` retains an operation ID until acceptance is known. The Host must deduplicate that ID durably. A timeout is an unknown outcome; it is not permission to submit a second operation. Definitive client rejection can set `knownResult=true`, allowing a corrected retry. Accepted operations stay accepted when a subsequent snapshot read fails.
 
+Accepted creation inserts the returned Session into the local list and selects it without waiting for another history list request. Older in-flight lists cannot remove that row. If the user has selected another Session while creation was pending, that newer selection wins. Hosts may explicitly refresh lists for their own paging or metadata needs.
+
 ## UI extensions and state
 
 Use list/header/composer/auxiliary-panel slots for product functionality. `SessionComposerUtilities` accepts Host-owned `voice.start()` and context read/compact callbacks; recording returns text into the draft and never submits automatically. Side Chat, Subagent, and Realtime use the public panels with Host actions.
+
+Context usage stays live through `context.usage`, including an explicit `null` when the Host has no current capacity. A dialog read's `tokenUsage` is retained only until a newer Host usage snapshot arrives. Hosts can set `context.isDraft` to label an unsent draft as “未开始”; Platform does not infer a model capacity.
 
 `SideChatPanel.singleChat` omits its internal chat selector for Hosts that support one Side Chat and already provide an outer tab. `SessionRealtimePanel` supplies default labels and accepts `inline` to show controls inside a Host-owned dialog. Opening the panel reads voice choices; microphone capture begins only when the user starts. Unmounting disposes media and requests a stop for an active realtime conversation.
 

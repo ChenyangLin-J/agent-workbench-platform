@@ -865,6 +865,25 @@ export function sessionTranscriptAwayFromLatest({
   return Number(scrollHeight) - Number(scrollTop) - Number(clientHeight) > threshold;
 }
 
+/** A context dialog read is usable until the Host supplies a newer usage snapshot. */
+export function composerContextPresentation(context = {}, status = null) {
+  const snapshot = status?.snapshot;
+  const usage = status && context?.usage === status.usageAtRead && Object.hasOwn(snapshot || {}, 'tokenUsage')
+    ? snapshot.tokenUsage : context?.usage;
+  const usedValue = usage?.contextUsedTokens ?? usage?.usedTokens;
+  const totalValue = usage?.modelContextWindow ?? usage?.contextWindow;
+  const used = Number(usedValue);
+  const total = Number(totalValue);
+  const known = usedValue != null && totalValue != null && Number.isFinite(used) && used >= 0 && Number.isFinite(total) && total > 0;
+  const percent = known ? Math.min(100, Math.round(used / total * 100)) : null;
+  return {
+    percent,
+    label: known ? `${percent}%` : context?.isDraft ? '未开始' : '未知',
+    description: known ? `${used.toLocaleString()} / ${total.toLocaleString()} tokens · ${percent}%`
+      : context?.isDraft ? '发送首条消息后显示上下文用量' : '尚未获得上下文容量信息',
+  };
+}
+
 export function turnDurationLabel({
   startedAt,
   completedAt = null,
