@@ -130,8 +130,8 @@ When a change crosses the boundary, Platform defines the contract and the consum
 - Platform automated tests cover the public contract, including project-free and project-scoped fixtures.
 - Personal is the canary for shared full-product Session and UI behavior.
 - Data Skill Lab is the canary for minimal, project-free and constrained-capability composition.
-- Agent Terminal owns PTY, mobile shell and multi-host regression while adopting shared Session surfaces.
+- Agent Web owns its transport, native thread recovery, authorization, product extensions and mobile shell acceptance while consuming the shared Session application.
 - Automatic tests establish contract correctness; consumer browser or workflow acceptance establishes that the product remains usable. One does not replace the other.
 - A successful consumer canary is compatibility evidence, not adoption. Formal adoption requires that consumer's package and lockfile to pin the released tag and its own acceptance record to name the same version.
 
-Release and consumer adoption gates are defined in [`operations/RELEASING.md`](operations/RELEASING.md). Active Agent Terminal migration scope is defined separately in [`specs/agent-terminal-migration.md`](specs/agent-terminal-migration.md).
+Release and consumer adoption gates are defined in [`operations/RELEASING.md`](operations/RELEASING.md). Shared Session application assembly and Host ownership are defined in [`session-application.md`](session-application.md). Remaining resource coordination and built-in Host composition design is tracked in [`specs/consumer-host-convergence.md`](specs/consumer-host-convergence.md).

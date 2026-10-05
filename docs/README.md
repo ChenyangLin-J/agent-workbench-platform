@@ -10,8 +10,7 @@ This is the durable documentation entry for the shared package. Read only the ro
 | Build the runnable minimal host or isolated environments | [`specs/runnable-minimal-host.md`](specs/runnable-minimal-host.md) | Active CLI, manifest, isolation, and adoption design |
 | Design Session files, attachments, artifacts, storage, or cleanup | [`specs/session-resources-and-storage.md`](specs/session-resources-and-storage.md) | Active resource model, lifecycle, Host adapter, retention, and migration design |
 | Create, inspect, run, or stop a local Environment | [`operations/ENVIRONMENTS.md`](operations/ENVIRONMENTS.md) | Profile examples, lifecycle commands, provider guarantees, and verification |
-| Continue the Agent Terminal shared-UI migration | [`specs/agent-terminal-migration.md`](specs/agent-terminal-migration.md) | Active scope, order, acceptance, and deletion gate |
-| Converge Minimal Host and full-consumer Session behavior | [`specs/consumer-host-convergence.md`](specs/consumer-host-convergence.md), [`mockups/consumer-host-convergence.html`](mockups/consumer-host-convergence.html) | Active headless Host Kit slices, reviewable UI reference, adoption gates, and extension boundary |
+| Extend resource coordination or configurable Minimal Host composition | [`specs/consumer-host-convergence.md`](specs/consumer-host-convergence.md) | Remaining storage-independent coordination and built-in Host extension design |
 | Change a version, publish a tag, or upgrade a consumer | [`operations/RELEASING.md`](operations/RELEASING.md) | Release, consumer adoption, and rollback workflow |
 | Use or install the package | [`../README.md`](../README.md) | Public entry points and development commands |
 | Verify implementation behavior | [`../test/`](../test/) | Executable contract truth |
