@@ -3454,7 +3454,7 @@ function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onOpenA
   const [expandedItems, setExpandedItems] = useState({});
   const [read, setRead] = useState({ status: 'idle', error: '' });
   const pending = useRef(null);
-  const open = manualOpen ?? localOpen;
+  const open = manualOpen ?? (running || localOpen);
   const tabbed = detailTabs != null;
   const activeTab = detailTabs?.find(tab => tab.id === selectedTab);
   const executionOpen = open && (!tabbed || !activeTab);

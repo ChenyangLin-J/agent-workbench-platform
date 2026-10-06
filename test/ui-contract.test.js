@@ -218,6 +218,7 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
   assert.match(source, /onOpenArtifact/);
   assert.match(source, /onRevealArtifact/);
   assert.match(source, /manualOpen \?\? running/);
+  assert.match(source, /manualOpen \?\? \(running \|\| localOpen\)/);
   assert.match(source, /turnStatus === 'interrupted'/);
   assert.match(source, /globalThis\.setInterval\(\(\) => setDurationNow\(Date\.now\(\)\), 1000\)/);
   assert.match(source, /globalThis\.clearInterval\(timer\)/);
