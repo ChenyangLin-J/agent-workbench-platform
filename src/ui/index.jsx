@@ -2961,7 +2961,7 @@ function SpreadsheetPreview({ file }) {
   );
 }
 
-function ScrollRegion({ className, bounded = false, ariaLabel, children, id }) {
+function ScrollRegion({ className, bounded = false, ariaLabel, ariaBusy, children, id }) {
   const scrollRef = useRef(null);
   const contentRef = useRef(null);
   const hintId = useId();
@@ -2983,8 +2983,8 @@ function ScrollRegion({ className, bounded = false, ariaLabel, children, id }) {
     for (const element of [scrollRef.current, contentRef.current].filter(Boolean)) observer.observe(element);
     return () => observer.disconnect();
   }, [bounded, updateEdges]);
-  if (!bounded) return <div className={className} id={id} aria-label={ariaLabel}>{children}</div>;
-  return <div className={`cwu-scroll-region ${className}`} id={id} data-overflow={edges.overflow ? 'true' : undefined}>
+  if (!bounded) return <div className={className} id={id} aria-label={ariaLabel} aria-busy={ariaBusy}>{children}</div>;
+  return <div className={`cwu-scroll-region ${className}`} id={id} aria-busy={ariaBusy} data-overflow={edges.overflow ? 'true' : undefined}>
     <div className="cwu-scroll-content" ref={scrollRef} onScroll={edges.overflow ? updateEdges : undefined} tabIndex={edges.overflow ? 0 : undefined} role={edges.overflow ? 'region' : undefined} aria-label={edges.overflow ? ariaLabel : undefined} aria-describedby={edges.below ? hintId : undefined}>
       <div className="cwu-scroll-copy" ref={contentRef}>{children}</div>
     </div>
@@ -3472,14 +3472,14 @@ function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onOpenA
     <button className="cwu-technical-toggle" type="button" aria-expanded={open} aria-controls={panelId} onClick={() => { setLocalOpen(!open); onOpenChange?.(!open); }}>
       <span aria-hidden="true" className="cwu-process-chevron">{open ? '⌄' : '›'}</span><span>{title}</span>
     </button>
-    {open ? <div className="cwu-progressive-list" id={panelId} aria-busy={reading}>
+    {open ? <ScrollRegion className="cwu-progressive-list" id={panelId} bounded={!running} ariaBusy={reading} ariaLabel={running ? '当前公开执行过程' : '执行记录'}>
       {reading ? <p className="cwu-technical-loading" role="status">正在读取执行记录…</p> : <>
         {error ? <div className="cwu-process-error" role="alert"><p>{read.error}</p><button type="button" onClick={() => void load()}>重试</button></div> : null}
         {complete && visibleItems.length ? <p className="cwu-process-count">{visibleItems.length} 项执行记录</p> : null}
         {visibleItems.map(item => <ProgressiveProcessItem key={item.id} {...{ item, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }} expanded={Boolean(expandedItems[item.id])} onToggle={() => setExpandedItems(current => ({ ...current, [item.id]: !current[item.id] }))} />)}
         {!visibleItems.length && !error ? <p className="cwu-technical-loading">{running ? '等待执行进度…' : '没有可展示的执行记录。'}</p> : null}
       </>}
-    </div> : null}
+    </ScrollRegion> : null}
   </section>;
 }
 

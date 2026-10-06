@@ -701,9 +701,10 @@
 .cwu-technical-list .cwu-process-detail { --cwu-scroll-max-height: min(320px, 40dvh); --cwu-scroll-hint-surface: var(--cwu-soft); margin-top: 8px; border: 1px solid var(--cwu-border); border-radius: 6px; }
 .cwu-process-detail pre { max-height: none; overflow: visible; }
 .cwu-technical.is-progressive { border: 0; }
-.is-progressive .cwu-technical-toggle { justify-content: flex-start; align-items: center; gap: 8px; min-height: 44px; text-align: left; font-size: 12px; }
+.is-progressive .cwu-technical-toggle { width: fit-content; justify-content: flex-start; align-items: center; gap: 6px; min-height: 32px; padding: 6px 4px; border-radius: 5px; text-align: left; font-size: 12px; }
+@media (pointer: coarse) { .is-progressive .cwu-technical-toggle { min-height: 44px; } }
 .cwu-process-chevron { flex: 0 0 14px; text-align: center; color: var(--cwu-muted); }
-.cwu-progressive-list { min-width: 0; padding-left: 12px; border-left: 1px solid var(--cwu-border); }
+.cwu-progressive-list { --cwu-scroll-max-height: min(400px, 48dvh); min-width: 0; padding-left: 12px; border-left: 1px solid var(--cwu-border); }
 .cwu-process-count { margin: 0; padding: 4px 10px 8px; color: var(--cwu-muted); font-size: 11px; }
 .cwu-process-row + .cwu-process-row { border-top: 1px solid var(--cwu-border); }
 .cwu-process-summary { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; min-height: 44px; padding: 10px; border: 0; background: transparent; color: var(--cwu-text); text-align: left; font-size: 12px; }
