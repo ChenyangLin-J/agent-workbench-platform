@@ -62,6 +62,8 @@ Hosts list fully read turn IDs in `session.technicalDetailsLoaded`. A historical
 
 ## Modules and validation
 
+`SessionWorkspace.technicalDetailsPresentation="tabbed"` uses one collapsed Turn detail card with an execution tab and optional Host-owned tabs. `extensions.getTurnDetailTabs({ message, session, turnKey })` is evaluated for the last visible message in each Turn and returns `{ id, label, count?, renderContent() }` entries; IDs must be unique and must not use the reserved `execution` ID. Product memory sources and authorized file opening remain Host-owned. Clicking a tab opens its shared content area; one control collapses the entire card. Arrow keys, Home and End select tabs. Switching tabs or collapsing retains execution read/cache and item expansion choices. Only opening the execution tab triggers a historical read; the completed content remains bounded, while active content is unbounded. Counts appear only when known. Simple text progress and its status share a row without a repeated provider heading. Existing default/progressive consumers retain their assembly contracts.
+
 - `src/session-host.js`: selection, recovery and operations.
 - `src/ui/session-application.jsx`: common application and finder.
 - `src/ui/index.jsx`, `model.js`, `styles.css`: public components and presentation.
