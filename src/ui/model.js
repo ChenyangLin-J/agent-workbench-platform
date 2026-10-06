@@ -25,6 +25,11 @@ export function technicalProcessSummary(item) {
     : item.label || item.title || firstLine || typeLabel;
   return { title: ['assistant', 'command', 'tool'].includes(title) ? typeLabel : title, typeLabel, statusLabel };
 }
+
+export function technicalProcessNeedsDisclosure(item = {}) {
+  if (item.disclosure === 'inline' || item.type === 'assistant') return false;
+  return item.type === 'command' || Boolean(item.detail || item.output);
+}
 richTextTurndown.use(turndownGfm);
 richTextTurndown.addRule('styledStrong', {
   filter: (node) => node.nodeName === 'SPAN' && /(?:bold|[6-9]00)/i.test(node.style?.fontWeight || ''),
@@ -221,6 +226,7 @@ export function normalizeSessionViewModel(value = {}) {
           output: String(item?.output || ''),
           status: String(item?.status || ''),
           detail: String(item?.detail || ''),
+          disclosure: item?.disclosure === 'inline' ? 'inline' : null,
           startedAt: item?.startedAt || item?.createdAt || null,
           turnId: stringOrNull(item?.turnId),
           turnKey: stringOrNull(item?.turnKey ?? item?.turnId),

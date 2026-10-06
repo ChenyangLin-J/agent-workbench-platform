@@ -22,6 +22,21 @@ test('progressive records use human summaries and do not invent unknown statuses
   }
 });
 
+test('progressive disclosure keeps text progress and Host-designated observations inline, while commands and tool outputs remain expandable', async () => {
+  const { technicalProcessNeedsDisclosure } = await import('../src/ui/model.js');
+  for (const projectId of [null, 'project-scoped']) {
+    const view = normalizeSessionViewModel({ sessionId: 'session', projectId, technicalItems: [
+      { id: 'progress', type: 'assistant', text: '检查执行结果\n继续核对详情' },
+      { id: 'image', type: 'tool', disclosure: 'inline', detail: '{"path":"image.png"}', media: [{ kind: 'image', src: '/image.png' }] },
+      { id: 'file', type: 'tool', text: '查看说明文件', artifacts: [{ id: 'readme', name: 'README.md' }] },
+      { id: 'command', type: 'command', text: 'node --test' },
+      { id: 'tool', type: 'tool', output: 'long tool output' },
+    ] });
+    assert.deepEqual(view.technicalItems.map(technicalProcessNeedsDisclosure), [false, false, false, true, true]);
+    assert.equal(view.technicalItems[1].disclosure, 'inline');
+  }
+});
+
 test('attachment drag feedback survives child transitions but clears outside the Session', () => {
   const bounds = { left: 10, right: 210, top: 20, bottom: 220 };
   const child = {};

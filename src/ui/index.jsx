@@ -37,6 +37,7 @@ import {
   sessionStatusTone,
   shouldConvertPastedTextToAttachment,
   technicalProcessSummary,
+  technicalProcessNeedsDisclosure,
   turnDurationLabel,
 } from './model.js';
 import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
@@ -3486,13 +3487,14 @@ function ProgressiveProcessItem({ item, expanded, onToggle, onOpenArtifact, onRe
   const panelId = useId();
   const summary = technicalProcessSummary(item);
   const hasContent = Boolean(item.text || item.detail || item.output || item.media?.length || item.artifacts?.length);
+  const needsDisclosure = hasContent && technicalProcessNeedsDisclosure(item);
   const row = <><span className="cwu-process-chevron" aria-hidden="true">{hasContent ? expanded ? '⌄' : '›' : '·'}</span><span className="cwu-process-summary-text">{summary.title}</span><small>{[summary.typeLabel, summary.statusLabel].filter(Boolean).join(' · ')}</small></>;
   return <article className={`cwu-process-row type-${item.type}`}>
-    {hasContent ? <button type="button" className="cwu-process-summary" aria-expanded={expanded} aria-controls={panelId} onClick={onToggle}>{row}</button> : <div className="cwu-process-summary">{row}</div>}
-    {expanded && hasContent ? <div className="cwu-process-body" id={panelId}>
+    {needsDisclosure ? <button type="button" className="cwu-process-summary" aria-expanded={expanded} aria-controls={panelId} onClick={onToggle}>{row}</button> : <div className="cwu-process-summary is-inline"><span className="cwu-process-summary-text">{item.type === 'assistant' || summary.title === String(item.text || '').trim().split('\n')[0] ? summary.typeLabel : summary.title}</span>{summary.statusLabel ? <small>{summary.statusLabel}</small> : null}</div>}
+    {hasContent && (!needsDisclosure || expanded) ? <div className={`cwu-process-body${needsDisclosure ? '' : ' is-inline'}`} id={panelId}>
       {item.text ? item.type === 'command' ? <pre className="cwu-process-command">{item.text}</pre> : <div className="cwu-process-copy"><ReactMarkdown remarkPlugins={MARKDOWN_REMARK_PLUGINS}>{item.text}</ReactMarkdown></div> : null}
       {[['detail', '调用详情'], ['output', '输出']].map(([field, label]) => item[field] ? <section key={field}><h4>{label}</h4><ScrollRegion className="cwu-process-detail" bounded ariaLabel={label}><pre>{item[field]}</pre></ScrollRegion></section> : null)}
-      {item.media?.length ? <MediaGallery items={item.media} onResolveMedia={onResolveMedia} sessionId={sessionId} /> : null}
+      {item.media?.length ? <MediaGallery items={item.media} onOpenAttachment={onOpenArtifact ? attachment => onOpenArtifact(attachment, item) : null} onResolveMedia={onResolveMedia} sessionId={sessionId} /> : null}
       {item.artifacts?.length ? <div className="cwu-technical-artifacts">{item.artifacts.map(artifact => <article key={artifact.id}><button disabled={!onOpenArtifact} type="button" onClick={() => onOpenArtifact?.(artifact, item)}><span><strong>{artifact.name}</strong><small>{artifact.status || '文件产物'}</small></span></button>{onRevealArtifact ? <button type="button" className="cwu-artifact-reveal" aria-label={`在文件夹中显示 ${artifact.name}`} onClick={() => onRevealArtifact(artifact, item)}><RevealFolderIcon /></button> : null}</article>)}</div> : null}
     </div> : null}
   </article>;
