@@ -36,6 +36,7 @@ import {
   sessionTranscriptAwayFromLatest,
   sessionStatusTone,
   shouldConvertPastedTextToAttachment,
+  technicalProcessSummary,
   turnDurationLabel,
 } from './model.js';
 import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
@@ -964,6 +965,7 @@ function CommentaryGroup({ children, initiallyOpen = false, messageCount }) {
 export function SessionWorkspace({
   session,
   compactComposer = false,
+  technicalDetailsPresentation = 'default',
   uiStateStore = null,
   attachmentPolicy = {},
   documentPreview = null,
@@ -2030,6 +2032,8 @@ export function SessionWorkspace({
                     && lastMessageByTurn.get(trailingTurnKey) === trailingMessage.id
                     && (technicalByTurn.get(trailingTurnKey)?.length || technicalDetailsAvailable.has(trailingTurnKey)) ? (
                       <TechnicalDetails
+                        progressive={technicalDetailsPresentation === 'progressive'}
+                        loaded={view.technicalDetailsLoaded.includes(trailingTurnKey)}
                         compactPresentation={compactComposer}
                         key={`${view.sessionId}:${trailingTurnKey}`}
                         manualOpen={processOpenByTurn[`${view.sessionId}:${trailingTurnKey}`] ?? null}
@@ -2089,6 +2093,7 @@ export function SessionWorkspace({
 
             {enabledFeatures.technicalDetails && technicalByTurn.get('unassigned')?.length ? (
               <TechnicalDetails
+                progressive={technicalDetailsPresentation === 'progressive'}
                 compactPresentation={compactComposer}
                 items={technicalByTurn.get('unassigned')}
                 onOpenArtifact={actions.onOpenArtifact}
@@ -3393,6 +3398,15 @@ function TechnicalDetails({
   onOpenArtifact = null, onResolveMedia = null, onRevealArtifact = null,
   sessionId = null, startedAt = null, completedAt = null, running = false,
   turnStatus = null, manualOpen = null, onOpenChange = null, turnOrdinal = null, compactPresentation = false,
+  progressive = false, loaded = false,
+}) {
+  if (progressive) return <ProgressiveTechnicalDetails {...{ items, available, loaded, onLoad, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId, running, turnStatus, manualOpen, onOpenChange }} />;
+  return <DefaultTechnicalDetails {...{ items, itemCount, available, loading, onLoad, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId, startedAt, completedAt, running, turnStatus, manualOpen, onOpenChange, turnOrdinal, compactPresentation }} />;
+}
+
+function DefaultTechnicalDetails({
+  items, itemCount, available, loading, onLoad, onOpenArtifact, onResolveMedia, onRevealArtifact,
+  sessionId, startedAt, completedAt, running, turnStatus, manualOpen, onOpenChange, turnOrdinal, compactPresentation,
 }) {
   const open = manualOpen ?? running;
   const [durationNow, setDurationNow] = useState(() => Date.now());
@@ -3420,6 +3434,68 @@ function TechnicalDetails({
       {items.length ? items.map(item => <TechnicalProcessItem key={item.id} item={item} onOpenArtifact={onOpenArtifact} onResolveMedia={onResolveMedia} onRevealArtifact={onRevealArtifact} sessionId={sessionId}/>) : <p className="cwu-technical-loading">{loading ? '正在读取执行详情…' : '没有可展示的执行详情。'}</p>}
     </ScrollRegion> : null}
   </section>;
+}
+
+function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId, running, turnStatus, manualOpen, onOpenChange }) {
+  const panelId = useId();
+  const [localOpen, setLocalOpen] = useState(false);
+  const [expandedItems, setExpandedItems] = useState({});
+  const [read, setRead] = useState({ status: 'idle', error: '' });
+  const pending = useRef(null);
+  const open = manualOpen ?? localOpen;
+  const needsRead = available && onLoad && !running && !loaded && read.status !== 'complete';
+  const loadRef = useRef(onLoad);
+  loadRef.current = onLoad;
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const load = useCallback(() => {
+    if (pending.current) return pending.current;
+    setRead({ status: 'loading', error: '' });
+    const task = Promise.resolve().then(() => loadRef.current?.()).then(result => {
+      if (mounted.current) setRead({ status: 'complete', error: '', items: result?.technicalItems });
+    }).catch(error => {
+      if (mounted.current) setRead({ status: 'error', error: error?.message || '执行记录暂时无法读取。' });
+    }).finally(() => { if (pending.current === task) pending.current = null; });
+    pending.current = task;
+    return task;
+  }, []);
+  useEffect(() => {
+    if (open && needsRead && read.status === 'idle') void load();
+  }, [open, needsRead, read.status, load]);
+  const reading = needsRead && ['idle', 'loading'].includes(read.status);
+  const complete = !running && (loaded || read.status === 'complete');
+  const visibleItems = !running && read.items ? read.items : items;
+  const error = !loaded && read.status === 'error';
+  const title = running ? '正在执行' : turnStatus === 'interrupted' ? '执行已中断' : '执行记录';
+  return <section className={`cwu-technical is-progressive ${running ? 'is-running' : ''}`}>
+    <button className="cwu-technical-toggle" type="button" aria-expanded={open} aria-controls={panelId} onClick={() => { setLocalOpen(!open); onOpenChange?.(!open); }}>
+      <span aria-hidden="true" className="cwu-process-chevron">{open ? '⌄' : '›'}</span><span>{title}</span>
+    </button>
+    {open ? <div className="cwu-progressive-list" id={panelId} aria-busy={reading}>
+      {reading ? <p className="cwu-technical-loading" role="status">正在读取执行记录…</p> : <>
+        {error ? <div className="cwu-process-error" role="alert"><p>{read.error}</p><button type="button" onClick={() => void load()}>重试</button></div> : null}
+        {complete && visibleItems.length ? <p className="cwu-process-count">{visibleItems.length} 项执行记录</p> : null}
+        {visibleItems.map(item => <ProgressiveProcessItem key={item.id} {...{ item, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }} expanded={Boolean(expandedItems[item.id])} onToggle={() => setExpandedItems(current => ({ ...current, [item.id]: !current[item.id] }))} />)}
+        {!visibleItems.length && !error ? <p className="cwu-technical-loading">{running ? '等待执行进度…' : '没有可展示的执行记录。'}</p> : null}
+      </>}
+    </div> : null}
+  </section>;
+}
+
+function ProgressiveProcessItem({ item, expanded, onToggle, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }) {
+  const panelId = useId();
+  const summary = technicalProcessSummary(item);
+  const hasContent = Boolean(item.text || item.detail || item.output || item.media?.length || item.artifacts?.length);
+  const row = <><span className="cwu-process-chevron" aria-hidden="true">{hasContent ? expanded ? '⌄' : '›' : '·'}</span><span className="cwu-process-summary-text">{summary.title}</span><small>{[summary.typeLabel, summary.statusLabel].filter(Boolean).join(' · ')}</small></>;
+  return <article className={`cwu-process-row type-${item.type}`}>
+    {hasContent ? <button type="button" className="cwu-process-summary" aria-expanded={expanded} aria-controls={panelId} onClick={onToggle}>{row}</button> : <div className="cwu-process-summary">{row}</div>}
+    {expanded && hasContent ? <div className="cwu-process-body" id={panelId}>
+      {item.text ? item.type === 'command' ? <pre className="cwu-process-command">{item.text}</pre> : <div className="cwu-process-copy"><ReactMarkdown remarkPlugins={MARKDOWN_REMARK_PLUGINS}>{item.text}</ReactMarkdown></div> : null}
+      {[['detail', '调用详情'], ['output', '输出']].map(([field, label]) => item[field] ? <section key={field}><h4>{label}</h4><ScrollRegion className="cwu-process-detail" bounded ariaLabel={label}><pre>{item[field]}</pre></ScrollRegion></section> : null)}
+      {item.media?.length ? <MediaGallery items={item.media} onResolveMedia={onResolveMedia} sessionId={sessionId} /> : null}
+      {item.artifacts?.length ? <div className="cwu-technical-artifacts">{item.artifacts.map(artifact => <article key={artifact.id}><button disabled={!onOpenArtifact} type="button" onClick={() => onOpenArtifact?.(artifact, item)}><span><strong>{artifact.name}</strong><small>{artifact.status || '文件产物'}</small></span></button>{onRevealArtifact ? <button type="button" className="cwu-artifact-reveal" aria-label={`在文件夹中显示 ${artifact.name}`} onClick={() => onRevealArtifact(artifact, item)}><RevealFolderIcon /></button> : null}</article>)}</div> : null}
+    </div> : null}
+  </article>;
 }
 
 function optionalInteger(value, { minimum }) {

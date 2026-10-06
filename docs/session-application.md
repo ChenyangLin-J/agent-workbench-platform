@@ -56,6 +56,10 @@ Minimal Host authorizes references against its owned Session store; shared, fore
 
 Current public intermediate messages and tool output remain readable in order. Active process groups are open by default; completed records collapse by default and scroll only when content exceeds the limit. Final assistant replies use the conversation scroll area. Scroll cues occupy a separate small gutter and disappear at the bottom.
 
+`SessionWorkspace.technicalDetailsPresentation="progressive"` opts into two disclosures: a collapsed execution group, then each individual item. Both completed and active groups start collapsed; closing and reopening preserves the current item choices. Opening an item shows its body, call detail, output and available media/files together. Only long outputs have their own bounded scroll region.
+
+Hosts list fully read turn IDs in `session.technicalDetailsLoaded`. A historical turn in `technicalDetailsAvailable` is read through `onLoadTechnicalDetails(turnId)` when its group opens, including restored expansion after refresh. That Promise must settle only after the full projection is available; it may return `{ technicalItems }` to display the result directly. Loading hides partial preview rows, read failures offer an inline retry, and an actual item count appears only inside a completed, fully read group. Live and unknown totals remain unlabeled. Transport caching and concurrent read deduplication belong to the Host.
+
 ## Modules and validation
 
 - `src/session-host.js`: selection, recovery and operations.

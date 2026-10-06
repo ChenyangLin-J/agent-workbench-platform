@@ -15,6 +15,16 @@ const richTextTurndown = new TurndownService({
   headingStyle: 'atx',
   strongDelimiter: '**',
 });
+
+export function technicalProcessSummary(item) {
+  const typeLabel = { assistant: '进度说明', command: '运行命令', tool: '工具调用', plan: '执行计划', file: '文件变更' }[item.type] || '执行信息';
+  const statusLabel = { inProgress: '进行中', completed: '已完成', failed: '失败', interrupted: '已中断' }[item.status] || '';
+  const firstLine = String(item.text || '').trim().split('\n')[0].trim();
+  const title = item.type === 'command' || item.type === 'assistant'
+    ? firstLine || typeLabel
+    : item.label || item.title || firstLine || typeLabel;
+  return { title: ['assistant', 'command', 'tool'].includes(title) ? typeLabel : title, typeLabel, statusLabel };
+}
 richTextTurndown.use(turndownGfm);
 richTextTurndown.addRule('styledStrong', {
   filter: (node) => node.nodeName === 'SPAN' && /(?:bold|[6-9]00)/i.test(node.style?.fontWeight || ''),
@@ -222,6 +232,9 @@ export function normalizeSessionViewModel(value = {}) {
       ? [...new Set(value.technicalDetailsAvailable.map((turnId) => String(turnId || '')).filter(Boolean))]
       : [],
     technicalDetailsLoading: Boolean(value.technicalDetailsLoading),
+    technicalDetailsLoaded: Array.isArray(value.technicalDetailsLoaded)
+      ? [...new Set(value.technicalDetailsLoaded.map(String).filter(Boolean))]
+      : [],
     turnMetadata: Array.isArray(value.turnMetadata)
       ? value.turnMetadata.map((turn, index) => ({
           turnKey: String(turn?.turnKey || turn?.turnId || `turn-${index}`),

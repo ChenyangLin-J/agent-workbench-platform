@@ -9,6 +9,19 @@ const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
 const hooksUrl = new URL('../src/ui-hooks.js', import.meta.url);
 const katexStylesUrl = new URL('../node_modules/katex/dist/katex.css', import.meta.url);
 
+test('progressive records use human summaries and do not invent unknown statuses or completed-read metadata', async () => {
+  const { technicalProcessSummary } = await import('../src/ui/model.js');
+  assert.deepEqual(technicalProcessSummary({ type: 'command', title: 'command', text: 'node inspect.js\nfull multiline command', status: 'completed' }), { title: 'node inspect.js', typeLabel: '运行命令', statusLabel: '已完成' });
+  assert.equal(technicalProcessSummary({ type: 'assistant', title: 'assistant', text: '检查最近的执行结果\n后续说明' }).title, '检查最近的执行结果');
+  assert.equal(technicalProcessSummary({ type: 'tool', title: 'tool', status: 'unknown' }).statusLabel, '');
+  assert.equal(technicalProcessSummary({ type: 'tool', title: 'tool' }).title, '工具调用');
+  for (const projectId of [null, 'project-scoped']) {
+    const view = normalizeSessionViewModel({ sessionId: 'session', projectId, technicalDetailsAvailable: ['turn'], technicalItemCount: 99 });
+    assert.deepEqual(view.technicalDetailsLoaded, []);
+    assert.deepEqual(normalizeSessionViewModel({ sessionId: 'session', projectId, technicalDetailsLoaded: ['turn', 'turn'] }).technicalDetailsLoaded, ['turn']);
+  }
+});
+
 test('attachment drag feedback survives child transitions but clears outside the Session', () => {
   const bounds = { left: 10, right: 210, top: 20, bottom: 220 };
   const child = {};

@@ -700,6 +700,25 @@
 .cwu-technical-list .cwu-process-command { max-height: none; margin: 0; overflow: visible; background: transparent; padding: 9px 0 3px; color: var(--cwu-accent); font-size: 11px; }
 .cwu-technical-list .cwu-process-detail { --cwu-scroll-max-height: min(320px, 40dvh); --cwu-scroll-hint-surface: var(--cwu-soft); margin-top: 8px; border: 1px solid var(--cwu-border); border-radius: 6px; }
 .cwu-process-detail pre { max-height: none; overflow: visible; }
+.cwu-technical.is-progressive { border: 0; }
+.is-progressive .cwu-technical-toggle { justify-content: flex-start; align-items: center; gap: 8px; min-height: 44px; text-align: left; font-size: 12px; }
+.cwu-process-chevron { flex: 0 0 14px; text-align: center; color: var(--cwu-muted); }
+.cwu-progressive-list { min-width: 0; padding-left: 12px; border-left: 1px solid var(--cwu-border); }
+.cwu-process-count { margin: 0; padding: 4px 10px 8px; color: var(--cwu-muted); font-size: 11px; }
+.cwu-process-row + .cwu-process-row { border-top: 1px solid var(--cwu-border); }
+.cwu-process-summary { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; min-height: 44px; padding: 10px; border: 0; background: transparent; color: var(--cwu-text); text-align: left; font-size: 12px; }
+button.cwu-process-summary { cursor: pointer; }
+button.cwu-process-summary:hover, button.cwu-process-summary[aria-expanded='true'] { background: var(--cwu-soft); }
+.cwu-process-summary-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cwu-process-summary small { flex: 0 0 auto; color: var(--cwu-muted); font-size: 10px; }
+.cwu-process-body { min-width: 0; padding: 0 12px 14px 32px; overflow-wrap: anywhere; }
+.cwu-process-body h4 { margin: 14px 0 6px; color: var(--cwu-muted); font-size: 11px; font-weight: 500; }
+.cwu-process-body pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cwu-process-body .cwu-process-detail { --cwu-scroll-max-height: min(320px, 40dvh); background: var(--cwu-soft); border-radius: 6px; }
+.cwu-process-body .cwu-process-detail pre { margin: 0; padding: 10px; }
+.cwu-process-error { padding: 10px; color: var(--cwu-muted); font-size: 12px; overflow-wrap: anywhere; }
+.cwu-process-error p { margin: 0 0 6px; }
+.cwu-process-error button { min-height: 44px; padding: 8px 14px; border: 1px solid var(--cwu-border); border-radius: 6px; background: var(--cwu-surface); color: var(--cwu-text); cursor: pointer; }
 .cwu-message.is-user > .cwu-message-body { --cwu-scroll-max-height: min(640px, 65dvh); --cwu-scroll-hint-surface: var(--cwu-soft); max-height: none; overflow: visible; }
 .cwu-message:not(.is-user) > .cwu-message-body { max-height: none; overflow: visible; }
 .cwu-scroll-region { position: relative; min-width: 0; }
