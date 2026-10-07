@@ -3483,7 +3483,10 @@ function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onOpenA
   const error = !loaded && read.status === 'error';
   const title = running ? '正在执行' : turnStatus === 'interrupted' ? '执行已中断' : '执行记录';
   function setOpen(next) { setLocalOpen(next); onOpenChange?.(next); }
-  function selectTab(id) { setLocalTab(id); onTabChange?.(id); setOpen(true); }
+  function selectTab(id) {
+    if (id === selectedTab && open) { setOpen(false); return; }
+    setLocalTab(id); onTabChange?.(id); setOpen(true);
+  }
   const tabs = [{ id: 'execution', label: '执行记录', count: complete ? visibleItems.length : null }, ...(detailTabs || [])];
   function onTabKey(event, index) {
     const target = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
@@ -3497,7 +3500,7 @@ function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onOpenA
   const selectedId = activeTab?.id || 'execution';
   const statusLabel = running ? '执行中' : { completed: '已完成', interrupted: '已中断', failed: '已失败' }[turnStatus];
   return <section className={`cwu-technical is-progressive ${tabbed ? 'is-tabbed' : ''} ${running ? 'is-running' : ''}`} data-open={open}>
-    {tabbed ? <header className="cwu-turn-detail-header">
+    {tabbed ? <header className="cwu-turn-detail-header" onClick={event => { if (!event.target.closest('button')) setOpen(!open); }}>
       <div className="cwu-turn-detail-tabs" role="tablist" aria-label="本轮详情">
         {tabs.map((tab, index) => <button key={tab.id} type="button" role="tab" id={`${panelId}-${tab.id}-tab`}
           aria-selected={selectedId === tab.id} aria-controls={`${panelId}-${tab.id}`} tabIndex={selectedId === tab.id ? 0 : -1}
