@@ -28,6 +28,7 @@ test('voice input streams live partial transcripts into the draft and locks the 
   assert.match(source, /setError\(error\.message\); setRecording\(false\); onRecordingChange\?\.\(false\); setDraft\(\(\) => voiceBase\.current\)/);
   // Recording state is a filled red pulsing button; no separate live-transcript element remains.
   assert.match(styles, /\.cwu-voice-input\.is-recording \{[^}]*background: var\(--cwu-error\)/);
+  assert.match(styles, /\.cwu-voice-input\.is-recording:hover:not\(:disabled\) \{[^}]*background: var\(--cwu-error\)/);
   assert.match(styles, /@keyframes cwu-voice-pulse/);
   assert.doesNotMatch(source, /cwu-voice-live/);
   assert.doesNotMatch(styles, /\.cwu-voice-live/);

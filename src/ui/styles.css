@@ -815,6 +815,7 @@ button.cwu-process-summary:hover, button.cwu-process-summary[aria-expanded='true
 .cwu-voice-input:hover:not(:disabled) { background: var(--cwu-soft); color: var(--cwu-text); }
 .cwu-voice-input svg { width: 17px; height: 17px; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .cwu-voice-input.is-recording { color: var(--cwu-surface); background: var(--cwu-error); animation: cwu-voice-pulse 1.6s ease-out infinite; }
+.cwu-voice-input.is-recording:hover:not(:disabled) { color: var(--cwu-surface); background: var(--cwu-error); }
 @keyframes cwu-voice-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--cwu-error) 35%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 .cwu-context-button { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; border: 0; background: transparent; color: var(--cwu-muted); font: inherit; font-size: 12px; cursor: pointer; padding: 7px; }
 .cwu-context-meter { display: block; width: 14px; height: 14px; border-radius: 50%; background: conic-gradient(var(--cwu-accent) var(--context-percent),var(--cwu-border) 0); mask: radial-gradient(circle,transparent 42%,#000 45%); }
