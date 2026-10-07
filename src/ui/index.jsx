@@ -1021,6 +1021,7 @@ export function SessionWorkspace({
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [composerReadOnly, setComposerReadOnly] = useState(false);
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [deletingQueuedIds, setDeletingQueuedIds] = useState(() => new Set());
   const [executionSettingsOpen, setExecutionSettingsOpen] = useState(false);
@@ -1061,6 +1062,7 @@ export function SessionWorkspace({
   });
   const canSubmit = Boolean((draft.trim() || readyAttachments.length)
     && !composerDisabled
+    && !composerReadOnly
     && !uploading
     && actions.onSubmit
     && composer.primaryMode);
@@ -2279,6 +2281,7 @@ export function SessionWorkspace({
               onKeyDown={handleComposerKeyDown}
               onPaste={handleComposerPaste}
               placeholder={labels.composerPlaceholder || '补充需求、反馈问题，或者继续修改…'}
+              readOnly={composerReadOnly}
               ref={composerRef}
               rows={compactComposer ? 2 : 3}
               value={draft}
@@ -2323,7 +2326,7 @@ export function SessionWorkspace({
                 ) : view.executionProfile.label ? <span className="cwu-execution-profile">{view.executionProfile.label}</span> : null}
               </div>
               <div className="cwu-composer-actions" ref={composerActionsRef}>
-                {extensions.renderComposerActions?.({ session: view, draft, setDraft, disabled: composerDisabled }) || null}
+                {extensions.renderComposerActions?.({ session: view, draft, setDraft, disabled: composerDisabled, onRecordingChange: setComposerReadOnly }) || null}
                 {running && actions.onInterrupt ? (
                   <button
                     aria-label="停止当前处理"
@@ -2348,7 +2351,7 @@ export function SessionWorkspace({
           </agent-session-composer>}
         </footer>
       </main>
-      {composerOptionsOpen ? <div className="cwu-composer-options-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOptionsOpen(false); }}><section className="cwu-composer-options-sheet" role="dialog" aria-modal="true" aria-label="输入选项" tabIndex={-1} ref={composerOptionsRef}><div className="cwu-sheet-handle"/><header><strong>输入选项</strong><button aria-label="关闭输入选项" type="button" onClick={() => setComposerOptionsOpen(false)}>×</button></header>{renderExecutionControls()}{extensions.renderComposerOptions?.({ session: view, draft, setDraft, disabled: composerDisabled, close: () => setComposerOptionsOpen(false) }) || null}{running ? <div className="cwu-mobile-submit-mode"><span>发送方式</span><div>{[['steer', '追加当前'], ['queue', '下一轮']].map(([mode, label]) => <button key={mode} type="button" aria-pressed={mobileSubmitMode === mode} onClick={() => setMobileSubmitMode(mode)}>{label}</button>)}</div></div> : null}<button className="cwu-send" type="button" onClick={() => setComposerOptionsOpen(false)}>完成</button></section></div> : null}
+      {composerOptionsOpen ? <div className="cwu-composer-options-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOptionsOpen(false); }}><section className="cwu-composer-options-sheet" role="dialog" aria-modal="true" aria-label="输入选项" tabIndex={-1} ref={composerOptionsRef}><div className="cwu-sheet-handle"/><header><strong>输入选项</strong><button aria-label="关闭输入选项" type="button" onClick={() => setComposerOptionsOpen(false)}>×</button></header>{renderExecutionControls()}{extensions.renderComposerOptions?.({ session: view, draft, setDraft, disabled: composerDisabled, onRecordingChange: setComposerReadOnly, close: () => setComposerOptionsOpen(false) }) || null}{running ? <div className="cwu-mobile-submit-mode"><span>发送方式</span><div>{[['steer', '追加当前'], ['queue', '下一轮']].map(([mode, label]) => <button key={mode} type="button" aria-pressed={mobileSubmitMode === mode} onClick={() => setMobileSubmitMode(mode)}>{label}</button>)}</div></div> : null}<button className="cwu-send" type="button" onClick={() => setComposerOptionsOpen(false)}>完成</button></section></div> : null}
       {executionSettingsOpen ? (
         <div
           aria-label="当前执行设置"

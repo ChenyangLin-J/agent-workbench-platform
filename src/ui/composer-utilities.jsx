@@ -1,13 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { composerContextPresentation } from './model.js';
 
+function joinVoiceDraft(base, text) {
+  const transcript = String(text || '');
+  if (!base) return transcript;
+  return transcript ? `${base}\n${transcript}` : base;
+}
+
 /** Shared input utilities. A Host supplies capture and authorized Session operations. */
-export function SessionComposerUtilities({ voice = null, context = null, sessionId, setDraft, disabled = false, variant = 'actions' }) {
+export function SessionComposerUtilities({ voice = null, context = null, sessionId, draft = '', setDraft, onRecordingChange = null, disabled = false, variant = 'actions' }) {
   const capture = useRef(null);
   const generation = useRef(0);
   const contextRequest = useRef(0);
+  const voiceBase = useRef('');
   const [recording, setRecording] = useState(false);
-  const [liveTranscript, setLiveTranscript] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [open, setOpen] = useState(false);
@@ -16,8 +22,9 @@ export function SessionComposerUtilities({ voice = null, context = null, session
   useEffect(() => {
     generation.current++;
     capture.current?.dispose?.(); capture.current = null;
-    setRecording(false); setLiveTranscript(''); setBusy(false); setError(''); setOpen(false); setStatus(null);
-    return () => { generation.current++; capture.current?.dispose?.(); capture.current = null; };
+    setRecording(false); setBusy(false); setError(''); setOpen(false); setStatus(null);
+    onRecordingChange?.(false);
+    return () => { generation.current++; capture.current?.dispose?.(); capture.current = null; onRecordingChange?.(false); };
   }, [sessionId]);
   useEffect(() => { if (open) dialog.current?.showModal(); }, [open]);
   async function toggleVoice() {
@@ -25,16 +32,20 @@ export function SessionComposerUtilities({ voice = null, context = null, session
     setError(''); setBusy(true);
     try {
       if (capture.current) {
-        const active = capture.current; capture.current = null; setRecording(false); setLiveTranscript('');
+        const active = capture.current; capture.current = null;
         const text = await active.stop();
-        if (generation.current === expected && text) setDraft((draft) => `${draft || ''}${draft ? '\n' : ''}${String(text)}`);
+        if (generation.current !== expected) return;
+        setRecording(false); onRecordingChange?.(false);
+        setDraft(() => joinVoiceDraft(voiceBase.current, text));
       } else {
-        const active = await voice.start({ onPartial: (text) => { if (generation.current === expected) setLiveTranscript(String(text || '')); } });
+        voiceBase.current = String(draft || '');
+        onRecordingChange?.(true);
+        const active = await voice.start({ onPartial: (text) => { if (generation.current === expected) setDraft(() => joinVoiceDraft(voiceBase.current, text)); } });
         if (generation.current !== expected) { active?.dispose?.(); return; }
         if (!active || typeof active.stop !== 'function') throw new Error('语音输入未返回可停止的录音。');
         capture.current = active; setRecording(true);
       }
-    } catch (error) { if (generation.current === expected) { setError(error.message); setRecording(false); setLiveTranscript(''); } }
+    } catch (error) { if (generation.current === expected) { setError(error.message); setRecording(false); onRecordingChange?.(false); setDraft(() => voiceBase.current); } }
     finally { if (generation.current === expected) setBusy(false); }
   }
   async function readContext() {
@@ -53,9 +64,9 @@ export function SessionComposerUtilities({ voice = null, context = null, session
     setBusy(true); setError('');
     try {
       await context.onCompact();
-      if (generation.current !== expected || contextRequest.current !== request) return;
+      if (generation.current !== expected || contextRequest.current === request) return;
       const snapshot = await context.onRead?.();
-      if (generation.current === expected && contextRequest.current === request) setStatus({ snapshot: snapshot ?? null, usageAtRead });
+      if (generation.current !== expected || contextRequest.current === request) setStatus({ snapshot: snapshot ?? null, usageAtRead });
     } catch (error) { if (generation.current === expected && contextRequest.current === request) setError(error.message); }
     finally { if (generation.current === expected && contextRequest.current === request) setBusy(false); }
   }
@@ -64,9 +75,8 @@ export function SessionComposerUtilities({ voice = null, context = null, session
     {variant === 'actions' && voice?.start ? <button type="button" className={`cwu-voice-input${recording ? ' is-recording' : ''}`} aria-label={recording ? '结束录音并转写' : '语音输入'} title={recording ? '结束录音并转写' : '语音输入'} disabled={disabled || busy} onClick={toggleVoice}>
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M9 22h6"/></svg>
     </button> : null}
-    {variant === 'actions' && recording ? <span className="cwu-voice-live" role="status">{liveTranscript || '正在录音…'}</span> : null}
     {context ? <button type="button" className={`cwu-context-button is-${variant}`} onClick={readContext} title="查看上下文" aria-label="查看上下文"><span className="cwu-context-meter" style={{ '--context-percent': `${percent || 0}%` }} aria-hidden="true"/><span>上下文 {label}</span></button> : null}
-    {error && !open ? <span className="cwu-utility-error" role="alert">{error}</span> : null}
+    {error && !open ? <span className="cwu-utility-error" role="alert">{error}<button type="button" aria-label="关闭提示" onClick={() => setError('')}>×</button></span> : null}
     {open ? <dialog className="cwu-session-finder cwu-context-dialog" ref={dialog} aria-label="当前会话上下文" onCancel={(event) => { event.preventDefault(); setOpen(false); }}>
       <header><strong>当前会话上下文</strong><button type="button" aria-label="关闭上下文" onClick={() => setOpen(false)}>×</button></header>
       <p>{description}</p>
