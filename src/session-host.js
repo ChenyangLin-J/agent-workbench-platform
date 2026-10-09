@@ -1,7 +1,7 @@
 import { SessionClientOperationController, mergeSessionItems, mergeSessionTurns } from './session-client.js';
 
 /** Product-neutral Session orchestration. Transport, authorization and storage stay in the Host. */
-export function createSessionHostController({ adapter, initialSessionId = null, capabilities = {}, independentStartup = false, submissionFeedback = false, operationTimeoutMs = 30000, operations = new SessionClientOperationController() } = {}) {
+export function createSessionHostController({ adapter, initialSessionId = null, capabilities = {}, independentStartup = false, submissionFeedback = false, operationTimeoutMs = 30000, selectedSnapshotCache = false, operations = new SessionClientOperationController() } = {}) {
   if (!adapter || typeof adapter.listSessions !== 'function' || typeof adapter.readSession !== 'function') {
     throw new TypeError('A Session Host adapter must provide listSessions and readSession.');
   }
@@ -20,10 +20,72 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
   const submissions = new Map();
   let selectionRepair = null;
   let repairAgain = false;
+  const cacheLimits = snapshotCacheLimits(selectedSnapshotCache);
+  const snapshotCache = new Map();
+  const pendingTargets = new Map();
+  let cacheBytes = 0;
+
+  function forgetSnapshot(id) {
+    const entry = snapshotCache.get(id);
+    if (entry) cacheBytes -= entry.bytes;
+    snapshotCache.delete(id);
+  }
+  function cacheIdentity(snapshot) {
+    if (!cacheLimits || !snapshot || !sessionId(snapshot) || pendingTargets.has(sessionId(snapshot))
+      || [...submissions.values()].some(submission => submission.target === sessionId(snapshot))
+      || snapshot.activeTurnId || snapshot.isRunning || snapshot.running
+      || snapshot.pendingRequests?.length || snapshot.queuedTurns?.length
+      || snapshot.messages?.some(message => message.submissionId)) return null;
+    // Only the adapter can attest current native activity and binding identity.
+    // This pure hook must return null whenever that authority is unknown.
+    try {
+      const key = adapter.getSnapshotCacheKey?.(snapshot, state.sessions);
+      return typeof key === 'string' && key ? key : null;
+    } catch { return null; }
+  }
+  function catalogueIdentity(id) {
+    const summary = state.sessions.find(row => sessionId(row) === id);
+    return summary ? JSON.stringify([summary.revision, summary.outputRevision, summary.lastEventId,
+      summary.updatedAt, summary.activityStatus, summary.status, summary.threadId, summary.webSessionId]) : null;
+  }
+  function pruneSnapshots() {
+    for (const [id, entry] of snapshotCache) {
+      if (Date.now() - entry.createdAt >= cacheLimits.ttlMs
+        || entry.key !== cacheIdentity(entry.snapshot) || entry.catalogue !== catalogueIdentity(id)) forgetSnapshot(id);
+    }
+  }
+  function rememberSnapshot(snapshot) {
+    if (!cacheLimits) return;
+    const id = sessionId(snapshot);
+    const key = cacheIdentity(snapshot);
+    forgetSnapshot(id);
+    pruneSnapshots();
+    if (!key) return;
+    try {
+      // Copy only this selected data snapshot; never a store, adapter, or Profile.
+      const serialized = JSON.stringify(snapshot);
+      const bytes = new TextEncoder().encode(serialized).byteLength;
+      if (bytes > cacheLimits.maxBytes) return;
+      snapshotCache.set(id, { snapshot: JSON.parse(serialized), key, bytes, catalogue: catalogueIdentity(id), createdAt: Date.now() });
+      cacheBytes += bytes;
+      while (snapshotCache.size > cacheLimits.maxEntries || cacheBytes > cacheLimits.maxBytes) forgetSnapshot(snapshotCache.keys().next().value);
+    } catch { /* Non-data snapshots are ineligible for this optional cache. */ }
+  }
+  function cachedSnapshot(id) {
+    if (!cacheLimits) return null;
+    pruneSnapshots();
+    const entry = snapshotCache.get(id);
+    if (!entry) return null;
+    snapshotCache.delete(id);
+    snapshotCache.set(id, entry);
+    // A new projection cannot mutate the retained entry during revalidation.
+    return JSON.parse(JSON.stringify(entry.snapshot));
+  }
 
   const publish = (patch) => {
     if (disposed) return;
     state = { ...state, ...patch };
+    if (cacheLimits && Object.hasOwn(patch, 'sessions')) pruneSnapshots();
     if (submissionFeedback && state.session) {
       const base = { ...state.session, messages: (state.session.messages || []).filter(message => !message.submissionId) };
       const projected = [];
@@ -72,7 +134,8 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     const next = previous && sessionId(previous) === id
       ? (adapter.mergeSnapshot || mergeSessionHostSnapshot)(previous, snapshot)
       : snapshot;
-    publish({ session: next, error: '' });
+    publish({ session: next, error: '', ...(cacheLimits ? { selectedSnapshotCached: false } : {}) });
+    rememberSnapshot(state.session);
     return next;
   }
 
@@ -91,8 +154,9 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     if (applied?.snapshotRequired) { void recover(id, generation).catch(fail); return false; }
     const next = applied;
     if (!next || (sessionId(next) && sessionId(next) !== id)) return false;
-    publish({ session: revision == null ? next : { ...next, revision }, error: '' });
+    publish({ session: revision == null ? next : { ...next, revision }, error: '', ...(cacheLimits ? { selectedSnapshotCached: false } : {}) });
     if (adapter.patchSummary) publish({ sessions: adapter.patchSummary(state.sessions, state.session) });
+    rememberSnapshot(state.session);
     return true;
   }
 
@@ -129,9 +193,11 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
   async function select(value, { force = false } = {}) {
     const id = value == null ? null : String(typeof value === 'object' ? sessionId(value) : value);
     if (!force && id === state.selectedId && state.session && subscription) return state.session;
+    if (force) forgetSnapshot(id);
+    const cached = !force && id ? cachedSnapshot(id) : null;
     releaseSelection();
     const retained = force && id === state.selectedId ? { ...state.session, revision: undefined } : null;
-    publish({ selectedId: id, session: retained, connection: id ? 'connecting' : 'idle', error: '' });
+    publish({ selectedId: id, session: cached || retained, ...(cacheLimits ? { selectedSnapshotCached: Boolean(cached) } : {}), connection: id ? 'connecting' : 'idle', error: '' });
     if (!id || disposed) return null;
     const generation = selectionGeneration;
     const abort = new AbortController();
@@ -162,8 +228,12 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
   // Only the selected logical Session is reconciled. The Host resolves its
   // replaceable transport binding; Platform owns cancellation and subscription.
   function reconcileSelectedSession({ refresh = false, resetRevision = false } = {}) {
+    if (resetRevision) {
+      // A restart changes the revision domain for every retained Session.
+      snapshotCache.clear(); cacheBytes = 0;
+      if (state.session) publish({ session: { ...state.session, revision: undefined }, ...(cacheLimits ? { selectedSnapshotCached: false } : {}) });
+    }
     if (disposed || !state.selectedId || !state.session) return Promise.resolve(null);
-    if (resetRevision) publish({ session: { ...state.session, revision: undefined } });
     if (selectionRepair) { repairAgain = true; return selectionRepair; }
     const task = (async () => {
       do {
@@ -185,6 +255,10 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     if (!creating && !target) throw new Error('Select a Session before performing this operation.');
     const operation = operations.begin({ scope: action, targetId: creating ? 'new' : target, payload });
     if (pendingOperations.has(operation.lookupKey)) return pendingOperations.get(operation.lookupKey);
+    if (!creating && cacheLimits) {
+      forgetSnapshot(target);
+      pendingTargets.set(target, (pendingTargets.get(target) || 0) + 1);
+    }
     const operationSelection = selectionGeneration;
     const message = submissionFeedback && adapter.submissionMessage?.(action, operation.payload);
     if (message) {
@@ -234,7 +308,13 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
         if (message && error?.knownResult !== true && target === state.selectedId) void reconcileSelectedSession({ refresh: true });
         throw error;
       }
-      finally { pendingOperations.delete(operation.lookupKey); }
+      finally {
+        pendingOperations.delete(operation.lookupKey);
+        if (!creating && cacheLimits) {
+          const count = (pendingTargets.get(target) || 1) - 1;
+          if (count) pendingTargets.set(target, count); else pendingTargets.delete(target);
+        }
+      }
     })();
     pendingOperations.set(operation.lookupKey, task);
     return task;
@@ -261,18 +341,21 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     searchSessions: (options = {}) => adapter.listSessions(options),
     execute,
     receiveEvent: (event) => receive(event, state.selectedId, selectionGeneration),
-    updateSession: (updater) => publish({ session: typeof updater === 'function' ? updater(state.session) : updater }),
+    updateSession: (updater) => { forgetSnapshot(state.selectedId); publish({ session: typeof updater === 'function' ? updater(state.session) : updater }); },
     updateSessions: (updater) => { publish({ sessions: typeof updater === 'function' ? updater(state.sessions) : updater }); void reconcileSelectedSession(); },
     async loadHistory(options = {}) {
       const id = state.selectedId;
       const generation = selectionGeneration;
       if (!id || !adapter.loadHistory) return null;
       const page = await adapter.loadHistory(id, options);
-      if (current(id, generation)) publish({ session: (adapter.mergeHistory || mergeSessionHostSnapshot)(state.session, page) });
+      if (current(id, generation)) {
+        publish({ session: (adapter.mergeHistory || mergeSessionHostSnapshot)(state.session, page) });
+        if (!state.selectedSnapshotCached) rememberSnapshot(state.session);
+      }
       return page;
     },
     markResultRead: (turnId) => state.selectedId && adapter.markResultRead?.(state.selectedId, turnId),
-    dispose() { releaseSelection(); disposed = true; listeners.clear(); },
+    dispose() { releaseSelection(); disposed = true; listeners.clear(); snapshotCache.clear(); cacheBytes = 0; },
   };
 }
 
@@ -317,4 +400,14 @@ function boundedOperation(run, timeoutMs, abort) {
     reject(new Error('发送结果暂未确认，请稍后重试；重试会保留同一个操作 ID。'));
   }, timeoutMs); });
   return Promise.race([Promise.resolve().then(run), timeout]).finally(() => clearTimeout(timer));
+}
+
+function snapshotCacheLimits(options) {
+  if (!options) return null;
+  const bounded = (value, fallback, maximum) => Number.isFinite(value) && value > 0 ? Math.min(Math.floor(value), maximum) || 1 : fallback;
+  return {
+    maxEntries: bounded(options.maxEntries, 5, 32),
+    maxBytes: bounded(options.maxBytes, 16 * 1024 * 1024, 64 * 1024 * 1024),
+    ttlMs: bounded(options.ttlMs, 60000, 300000),
+  };
 }

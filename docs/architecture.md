@@ -109,6 +109,39 @@ recovery can explicitly reset the revision domain after a Host restart; process
 local revision numbers are never compared across server instances. Other history
 entries retain metadata-only loading.
 
+
+Hosts may opt into a bounded process-local selected-body cache with
+`selectedSnapshotCache: true` or `{ maxEntries, maxBytes, ttlMs }`. Defaults are
+5 entries, 16 MiB and 60 seconds; upper limits are 32 entries, 64 MiB and
+5 minutes. Entries contain copied selected data snapshots only, expire from the
+last authoritative update, and are evicted by least recent selection and total
+serialized UTF-8 bytes. Disposal clears the cache. No persistence or Profile
+storage is added.
+
+Caching requires a pure synchronous adapter
+`getSnapshotCacheKey(snapshot, summaries)` returning a nonempty opaque string
+only when the snapshot is idle/completed and its native activity, current
+transport binding and catalogue version still match. The key must encode the
+adapter's binding and catalogue/activity identity. Return `null` for unknown,
+running, starting, waiting, approval, or changed state. The hook must not attach
+or resume a Runtime, adopt a binding, modify stores, or initiate a read. The
+adapter owns these native semantics; Platform additionally rejects known active
+Turns, queues, requests, pending operations and submission feedback, and
+invalidates entries when known catalogue revision, timestamp, activity or binding
+fields change. Adapter hook failure or absence disables reuse.
+
+A warm `select` synchronously publishes the copied body with
+`selectedSnapshotCached: true` and `connection: 'connecting'`. It still performs
+the original mandatory snapshot read and then subscribes using that fresh
+revision; the selection promise settles through that original lifecycle. A
+successful snapshot or event sets `selectedSnapshotCached: false`. This cached
+projection is provisional display data, never Runtime/Kernel execution
+authority. Snapshot merging, stale generation/revision checks, cancellation,
+submission identities and drafts retain their existing owners. Forced selection
+bypasses and invalidates that entry. `resetRevision` clears all retained entries
+because server restarts change the revision domain. Default cold selection
+behavior is unchanged.
+
 ### Runtime kernel
 
 - `AgentSessionKernel` owns provider-neutral Session lifecycle over a `bindingStore` the consumer persists. Attach on a `released` binding returns a deferred description without starting a Runtime; the provider thread resumes only on the first real operation (lazy resume). Submit during an in-flight first Turn buffers into the queue instead of failing, and a steer rejected because the Turn already ended preserves its input and starts a new Turn.
