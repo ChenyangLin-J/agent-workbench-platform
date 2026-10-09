@@ -3271,6 +3271,7 @@ function Message({
   return (
     <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'} ${!isUser && message.turnStatus === 'inProgress' ? 'is-streaming' : ''} ${editing ? 'is-editing' : ''}`} data-message-id={message.id} ref={messageRef} phase={message.phase} role={message.role}>
       {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
+      {message.deliveryState ? <div className="cwu-message-label" role="status">{({ sending: '正在发送…', accepted: '已提交，等待同步…', unknown: '发送结果待确认，请重试确认' })[message.deliveryState]}</div> : null}
       {isUser && message.references?.length ? (
         <div aria-label="引用的 Sessions" className="cwu-message-references">
           {message.references.map((reference) => (

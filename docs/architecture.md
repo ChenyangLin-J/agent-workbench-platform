@@ -88,6 +88,27 @@ Platform never reads a product database, chooses a package manager, stores crede
 - Products own full-text search backends, navigation and any content rendered through extension slots.
 - Host file actions receive the original authorized reference. Platform renders and normalizes metadata but does not grant filesystem access.
 
+### Host submission and selected binding recovery
+
+`createSessionHostController` can opt into `submissionFeedback`. The adapter maps
+send actions to a public `submissionMessage` and identifies a matching native
+message with `isSubmissionEcho`. Platform projects immediate user feedback without
+changing execution state. Operation identities survive unknown results; known
+failures remove the projection. A bounded `operationTimeoutMs` covers preparation
+and acknowledgement, passes an AbortSignal to the adapter, and restores the
+Composer through its existing error contract. Native echo and snapshot reads
+remove the temporary message, preserving the native item ID. Accepted sends do
+not wait for an unrelated snapshot read before releasing the Composer.
+
+Catalogue updates may request selected-only recovery through the adapter's
+`reconcileSelection(snapshot, summaries)` decision. `bindingChanged` reacquires
+that logical selection using Platform's existing cancellation and subscription
+lifecycle; `snapshotRequired` reconciles its current stream. The adapter owns
+binding identity, while Platform owns stale read/event rejection. Foreground
+recovery can explicitly reset the revision domain after a Host restart; process
+local revision numbers are never compared across server instances. Other history
+entries retain metadata-only loading.
+
 ### Runtime kernel
 
 - `AgentSessionKernel` owns provider-neutral Session lifecycle over a `bindingStore` the consumer persists. Attach on a `released` binding returns a deferred description without starting a Runtime; the provider thread resumes only on the first real operation (lazy resume). Submit during an in-flight first Turn buffers into the queue instead of failing, and a steer rejected because the Turn already ended preserves its input and starts a new Turn.

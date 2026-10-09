@@ -1,7 +1,7 @@
 import { SessionClientOperationController, mergeSessionItems, mergeSessionTurns } from './session-client.js';
 
 /** Product-neutral Session orchestration. Transport, authorization and storage stay in the Host. */
-export function createSessionHostController({ adapter, initialSessionId = null, capabilities = {}, independentStartup = false, operations = new SessionClientOperationController() } = {}) {
+export function createSessionHostController({ adapter, initialSessionId = null, capabilities = {}, independentStartup = false, submissionFeedback = false, operationTimeoutMs = 30000, operations = new SessionClientOperationController() } = {}) {
   if (!adapter || typeof adapter.listSessions !== 'function' || typeof adapter.readSession !== 'function') {
     throw new TypeError('A Session Host adapter must provide listSessions and readSession.');
   }
@@ -17,10 +17,23 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
   let disposed = false;
   let recovery = null;
   let eventBuffer = [];
+  const submissions = new Map();
+  let selectionRepair = null;
+  let repairAgain = false;
 
   const publish = (patch) => {
     if (disposed) return;
     state = { ...state, ...patch };
+    if (submissionFeedback && state.session) {
+      const base = { ...state.session, messages: (state.session.messages || []).filter(message => !message.submissionId) };
+      const projected = [];
+      for (const [key, submission] of submissions) {
+        if (submission.target !== state.selectedId) continue;
+        if (adapter.isSubmissionEcho?.(base, submission)) { submissions.delete(key); continue; }
+        projected.push({ ...submission.message, id: `submission:${key}`, submissionId: key, deliveryState: submission.status, canEdit: false, canFork: false });
+      }
+      state.session = { ...base, messages: [...(base.messages || []), ...projected] };
+    }
     for (const listener of [...listeners]) listener();
   };
   const current = (id, generation) => !disposed && state.selectedId === id && selectionGeneration === generation;
@@ -113,11 +126,12 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     eventBuffer = [];
   }
 
-  async function select(value) {
+  async function select(value, { force = false } = {}) {
     const id = value == null ? null : String(typeof value === 'object' ? sessionId(value) : value);
-    if (id === state.selectedId && state.session && subscription) return state.session;
+    if (!force && id === state.selectedId && state.session && subscription) return state.session;
     releaseSelection();
-    publish({ selectedId: id, session: null, connection: id ? 'connecting' : 'idle', error: '' });
+    const retained = force && id === state.selectedId ? { ...state.session, revision: undefined } : null;
+    publish({ selectedId: id, session: retained, connection: id ? 'connecting' : 'idle', error: '' });
     if (!id || disposed) return null;
     const generation = selectionGeneration;
     const abort = new AbortController();
@@ -145,6 +159,26 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     } catch (error) { if (current(id, generation)) fail(error); if (error?.name !== 'AbortError') throw error; return null; }
   }
 
+  // Only the selected logical Session is reconciled. The Host resolves its
+  // replaceable transport binding; Platform owns cancellation and subscription.
+  function reconcileSelectedSession({ refresh = false, resetRevision = false } = {}) {
+    if (disposed || !state.selectedId || !state.session) return Promise.resolve(null);
+    if (resetRevision) publish({ session: { ...state.session, revision: undefined } });
+    if (selectionRepair) { repairAgain = true; return selectionRepair; }
+    const task = (async () => {
+      do {
+        repairAgain = false;
+        const id = state.selectedId;
+        const decision = adapter.reconcileSelection?.(state.session, state.sessions) || {};
+        if (decision.bindingChanged) await select(id, { force: true });
+        else if (refresh || decision.snapshotRequired) await recover(id, selectionGeneration);
+        refresh = false;
+      } while (repairAgain && !disposed);
+    })().catch(fail).finally(() => { if (selectionRepair === task) selectionRepair = null; });
+    selectionRepair = task;
+    return task;
+  }
+
   async function execute(action, payload = {}, { sessionId: target = state.selectedId } = {}) {
     if (disposed) throw new Error('Session Host is disposed.');
     const creating = action === 'create' || action === 'session-create';
@@ -152,11 +186,24 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     const operation = operations.begin({ scope: action, targetId: creating ? 'new' : target, payload });
     if (pendingOperations.has(operation.lookupKey)) return pendingOperations.get(operation.lookupKey);
     const operationSelection = selectionGeneration;
+    const message = submissionFeedback && adapter.submissionMessage?.(action, operation.payload);
+    if (message) {
+      const previous = submissions.get(operation.idempotencyKey);
+      submissions.set(operation.idempotencyKey, previous ? { ...previous, status: 'sending' } : {
+        target, message, payload: operation.payload, idempotencyKey: operation.idempotencyKey, status: 'sending',
+        baseline: (state.session?.messages || []).filter(item => !item.submissionId).map(item => item.id),
+      });
+      publish({});
+    }
     const task = (async () => {
       try {
-        const result = creating
-          ? await adapter.createSession(operation.payload, { idempotencyKey: operation.idempotencyKey })
-          : await adapter.execute(target, action, operation.payload, { idempotencyKey: operation.idempotencyKey });
+        const abort = new AbortController();
+        const run = () => creating
+          ? adapter.createSession(operation.payload, { idempotencyKey: operation.idempotencyKey, signal: abort.signal })
+          : adapter.execute(target, action, operation.payload, { idempotencyKey: operation.idempotencyKey, signal: abort.signal });
+        const result = await boundedOperation(run, message ? operationTimeoutMs : 0, abort);
+        const submission = submissions.get(operation.idempotencyKey);
+        if (submission) submissions.set(operation.idempotencyKey, { ...submission, status: 'accepted', result });
         if (result?.pending && result?.idempotent !== false) throw new Error('这条操作仍在确认中，请稍后重试。');
         operations.complete(operation);
         if (selectionGeneration === operationSelection) publish({ error: '' });
@@ -175,10 +222,18 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
             }
           }
         } else if (target === state.selectedId && selectionGeneration === operationSelection) {
-          await refreshSession(target).catch((error) => { if (current(target, operationSelection)) fail(error); });
+          const refresh = refreshSession(target).catch((error) => { if (current(target, operationSelection)) fail(error); });
+          if (!message) await refresh;
         }
         return result;
-      } catch (error) { if (error?.knownResult === true) operations.discard(operation); if (selectionGeneration === operationSelection) fail(error); throw error; }
+      } catch (error) {
+        const submission = submissions.get(operation.idempotencyKey);
+        if (error?.knownResult === true) { operations.discard(operation); submissions.delete(operation.idempotencyKey); }
+        else if (submission) submissions.set(operation.idempotencyKey, { ...submission, status: 'unknown' });
+        if (selectionGeneration === operationSelection) fail(error); else publish({});
+        if (message && error?.knownResult !== true && target === state.selectedId) void reconcileSelectedSession({ refresh: true });
+        throw error;
+      }
       finally { pendingOperations.delete(operation.lookupKey); }
     })();
     pendingOperations.set(operation.lookupKey, task);
@@ -202,11 +257,12 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     select,
     refreshSession,
     refreshSessions,
+    reconcileSelectedSession,
     searchSessions: (options = {}) => adapter.listSessions(options),
     execute,
     receiveEvent: (event) => receive(event, state.selectedId, selectionGeneration),
     updateSession: (updater) => publish({ session: typeof updater === 'function' ? updater(state.session) : updater }),
-    updateSessions: (updater) => publish({ sessions: typeof updater === 'function' ? updater(state.sessions) : updater }),
+    updateSessions: (updater) => { publish({ sessions: typeof updater === 'function' ? updater(state.sessions) : updater }); void reconcileSelectedSession(); },
     async loadHistory(options = {}) {
       const id = state.selectedId;
       const generation = selectionGeneration;
@@ -252,3 +308,13 @@ function revisionOf(value) {
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
 }
 function timestamp(value) { return typeof value === 'number' ? value : Date.parse(value) || 0; }
+
+function boundedOperation(run, timeoutMs, abort) {
+  if (!(timeoutMs > 0)) return Promise.resolve().then(run);
+  let timer;
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => {
+    abort.abort();
+    reject(new Error('发送结果暂未确认，请稍后重试；重试会保留同一个操作 ID。'));
+  }, timeoutMs); });
+  return Promise.race([Promise.resolve().then(run), timeout]).finally(() => clearTimeout(timer));
+}
