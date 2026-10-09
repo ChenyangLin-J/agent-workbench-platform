@@ -853,3 +853,30 @@ button.cwu-process-summary:hover, button.cwu-process-summary[aria-expanded='true
 .cwu-realtime-dialog.is-inline .cwu-realtime-shell > header[hidden],
 .cwu-realtime-launch[hidden] { display:none; }
 .cwu-side-chat-single-actions { display:flex;justify-content:flex-end;margin-bottom:8px; }
+
+/* Hosts opt in to adjacent running-send modes; existing compact consumers keep their layout. */
+.has-split-send-composer .cwu-composer-footer { flex-wrap: wrap; }
+.has-split-send-composer .cwu-composer-meta { flex: 0 0 auto; gap: 4px; }
+.has-split-send-composer .cwu-composer-footer > .cwu-composer-actions { flex: 1 0 auto; gap: 4px; }
+.has-split-send-composer .cwu-attach-button { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+.has-split-send-composer .cwu-stop, .has-split-send-composer .cwu-voice-input { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+.has-split-send-composer .cwu-composer-footer .cwu-send { height: 44px; min-height: 44px; padding: 0 10px; }
+.has-split-send-composer .cwu-composer-options-button { height: 44px; min-height: 44px; }
+.has-split-send-composer .cwu-composer-options-button.is-icon-only { width: 44px; min-width: 44px; justify-content: center; padding: 0; }
+.has-split-send-composer .cwu-composer-options-button .cwu-composer-brain { width: 22px; height: 22px; }
+.has-split-send-composer .cwu-inline-controls-row select, .has-split-send-composer .cwu-execution-fast { min-height: 44px; }
+.cwu-send-action-group { position: relative; flex: 0 0 auto; display: inline-flex; align-items: stretch; }
+.has-split-send-composer .cwu-send-action-group .cwu-send { border-radius: 9px 0 0 9px; }
+.cwu-send-mode-trigger { width: 44px; min-width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 0; border-left: 1px solid rgb(255 255 255 / 25%); border-radius: 0 9px 9px 0; background: var(--cwu-accent); color: var(--cwu-surface); cursor: pointer; }
+.cwu-send-mode-trigger svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cwu-send-mode-trigger:hover { filter: brightness(1.06); }
+.cwu-send-mode-trigger:focus-visible, .cwu-send-mode-menu button:focus-visible { outline: 2px solid var(--cwu-accent); outline-offset: 2px; }
+.cwu-send-mode-menu { position: absolute; z-index: 30; bottom: calc(100% + 8px); right: 0; width: min(280px, calc(100vw - 32px)); padding: 5px; border: 1px solid var(--cwu-border); border-radius: 11px; background: var(--cwu-surface); box-shadow: 0 8px 28px rgb(0 0 0 / 15%); }
+.cwu-send-mode-menu button { width: 100%; min-height: 52px; display: grid; gap: 4px; text-align: left; padding: 9px 11px; border: 0; border-radius: 7px; color: var(--cwu-text); background: transparent; cursor: pointer; }
+.cwu-send-mode-menu button[aria-checked='true'], .cwu-send-mode-menu button:hover { background: var(--cwu-soft); }
+.cwu-send-mode-menu strong { font-size: 12px; font-weight: 600; }
+.cwu-send-mode-menu span { color: var(--cwu-muted); font-size: 11px; }
+.cwu-execution-options-status { display: flex; align-items: center; gap: 8px; padding: 4px 7px; font-size: 12px; color: var(--cwu-muted); }
+.cwu-execution-options-status button { min-height: 44px; padding: 4px 10px; border: 0; border-radius: 7px; background: var(--cwu-soft); color: var(--cwu-text); cursor: pointer; }
+
+.has-split-send-composer .cwu-context-button { min-height: 44px; }

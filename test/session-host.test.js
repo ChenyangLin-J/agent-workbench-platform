@@ -10,6 +10,59 @@ test('switching the native thread behind one UI Session discards history from th
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 const snapshot = (id, revision = 1) => ({ sessionId: id, revision, messages: [], queuedTurns: [], pendingRequests: [] });
 
+test('opt-in startup selects and subscribes while the catalogue is still pending', async () => {
+  const catalogue = deferred();
+  let subscribed = false;
+  const host = createSessionHostController({ independentStartup: true, initialSessionId: 'a', adapter: {
+    listSessions: () => catalogue.promise, readSession: async () => snapshot('a'),
+    subscribeSession: async () => { subscribed = true; return () => {}; },
+  } });
+  const startup = host.start();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host.getSnapshot().session.sessionId, 'a');
+  assert.equal(subscribed, true);
+  assert.equal(host.getSnapshot().listLoading, true);
+  catalogue.resolve({ sessions: [{ id: 'a' }], nextCursor: '20' });
+  await startup;
+  assert.equal(host.getSnapshot().listLoading, false);
+  assert.equal(host.getSnapshot().nextCursor, '20');
+  host.dispose();
+});
+
+test('opt-in catalogue failure is local and retry retains the selected conversation', async () => {
+  let fail = true;
+  const host = createSessionHostController({ independentStartup: true, initialSessionId: 'a', adapter: {
+    listSessions: async () => { if (fail) throw new Error('catalogue offline'); return []; },
+    readSession: async () => snapshot('a'),
+  } });
+  await host.start();
+  assert.equal(host.getSnapshot().session.sessionId, 'a');
+  assert.equal(host.getSnapshot().error, '');
+  assert.equal(host.getSnapshot().listError, 'catalogue offline');
+  fail = false;
+  await host.refreshSessions();
+  assert.equal(host.getSnapshot().listError, '');
+  assert.equal(host.getSnapshot().session.sessionId, 'a');
+  host.dispose();
+});
+
+test('creating during opt-in startup remains immediate and recovers catalogue pagination', async () => {
+  const first = deferred(); let lists = 0;
+  const host = createSessionHostController({ independentStartup: true, adapter: {
+    listSessions: () => ++lists === 1 ? first.promise : Promise.resolve({ sessions: [{ id: 'draft' }, { id: 'old' }], nextCursor: '20' }),
+    readSession: async id => snapshot(id), createSession: async () => ({ sessionId: 'draft' }),
+  } });
+  const startup = host.start();
+  await host.execute('create');
+  assert.equal(host.getSnapshot().session.sessionId, 'draft');
+  assert.equal(host.getSnapshot().nextCursor, '20');
+  first.resolve({ sessions: [{ id: 'stale' }], nextCursor: null });
+  await startup;
+  assert.deepEqual(host.getSnapshot().sessions.map(row => row.id), ['draft', 'old']);
+  assert.equal(host.getSnapshot().listLoading, false);
+  host.dispose();
+});
+
 test('Creation is usable while an older history list is delayed and its response cannot remove the new row', async () => {
   const history = deferred();
   let lists = 0;

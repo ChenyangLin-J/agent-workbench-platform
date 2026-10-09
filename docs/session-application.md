@@ -36,7 +36,30 @@ Snapshots and events carry monotonically comparable `revision` values when the H
 
 Accepted creation inserts the returned Session into the local list and selects it without waiting for another history list request. Older in-flight lists cannot remove that row. If the user has selected another Session while creation was pending, that newer selection wins. Hosts may explicitly refresh lists for their own paging or metadata needs.
 
+Hosts may opt into `independentStartup: true`. The selected Session reads and
+subscribes while the first catalogue page is pending. Catalogue failures are
+published separately as `listError`, with `listLoading` / `listLoadingMore` for
+navigation; a retry does not clear the selected conversation. Creation remains
+immediate and refreshes a pending initial catalogue in the background so paging
+can recover. The default startup ordering remains unchanged.
+
 ## UI extensions and state
+
+With `compactComposer: true`, `composerPresentation: "split-send"` places the
+running Turn's send-mode menu beside the send button. The menu also works with an
+empty draft, and its selected mode controls both the button and Enter. It opens
+upward, supports keyboard dismissal/navigation, and uses 44px controls. A model
+entry switches to a brain icon only when its actual container cannot fit the
+label. Other consumers retain their existing presentation. Hosts can supply
+`actions.onLoadExecutionOptions()` to read metadata when options are opened or
+focused; concurrent reads are deduplicated per Session, with a local retry on
+failure. This callback never changes Runtime ownership or authorization.
+
+The default `src/ui/markdown.jsx` entry renders synchronously, including SSR.
+Browser Hosts can resolve that internal module to `src/ui/markdown-lazy.jsx` in
+their bundler to split ordinary Markdown and math into separate imports. The
+optional entry preserves readable text while loading or after a resource error;
+formula code is requested only when non-user content contains math delimiters.
 
 Use list/header/composer/auxiliary-panel slots for product functionality. `SessionComposerUtilities` accepts Host-owned `voice.start()` and context read/compact callbacks; recording returns text into the draft and never submits automatically. Side Chat, Subagent, and Realtime use the public panels with Host actions.
 

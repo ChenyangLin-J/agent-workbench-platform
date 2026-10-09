@@ -1,9 +1,5 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import rehypeKatex from 'rehype-katex';
-import ReactMarkdown from 'react-markdown';
-import remarkBreaks from 'remark-breaks';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
+import { SessionMarkdown } from './markdown.jsx';
 import '../browser/realtime-controller.js';
 import '../browser/session-status-element.js';
 import '../browser/session-ui-elements.js';
@@ -60,10 +56,6 @@ import { useSessionUserInput } from '../ui-hooks.js';
 export { useSessionUserInput } from '../ui-hooks.js';
 
 const SESSION_COMPOSER_TEXT_LIMIT = 12000;
-const MARKDOWN_REMARK_PLUGINS = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]];
-const USER_MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkBreaks];
-const MARKDOWN_REHYPE_PLUGINS = [[rehypeKatex, { strict: false }]];
-const DOCUMENT_MARKDOWN_REHYPE_PLUGINS = [rehypeDocumentHeadingIds, ...MARKDOWN_REHYPE_PLUGINS];
 let temporaryAttachmentSequence = 0;
 
 export function CapabilityPanel({ manager, actions = {}, labels = {} }) {
@@ -170,7 +162,7 @@ export function CapabilityPanel({ manager, actions = {}, labels = {} }) {
             <div className="cwu-capability-preview-content">
               {componentPreview.loading ? <p>{labels.loadingPreview || 'Loading…'}</p> : null}
               {componentPreview.error ? <p role="alert">{componentPreview.error}</p> : null}
-              {!componentPreview.loading && !componentPreview.error ? <ReactMarkdown remarkPlugins={MARKDOWN_REMARK_PLUGINS}>{componentPreview.content}</ReactMarkdown> : null}
+              {!componentPreview.loading && !componentPreview.error ? <SessionMarkdown>{componentPreview.content}</SessionMarkdown> : null}
             </div>
           </section>
         </div>
@@ -966,6 +958,7 @@ function CommentaryGroup({ children, initiallyOpen = false, messageCount }) {
 export function SessionWorkspace({
   session,
   compactComposer = false,
+  composerPresentation = 'default',
   technicalDetailsPresentation = 'default',
   uiStateStore = null,
   attachmentPolicy = {},
@@ -998,6 +991,16 @@ export function SessionWorkspace({
   const messageActivityRef = useRef({ sessionId: view.sessionId, key: '' });
   const [composerOptionsOpen, setComposerOptionsOpen] = useState(false);
   const [mobileSubmitMode, setMobileSubmitMode] = useState('steer');
+  const splitSendComposer = compactComposer && composerPresentation === 'split-send';
+  const [sendModeOpen, setSendModeOpen] = useState(false);
+  const sendModeId = useId();
+  const sendModeGroupRef = useRef(null);
+  const sendModeButtonRef = useRef(null);
+  const sendModeMenuRef = useRef(null);
+  const composerOptionsWidthProbeRef = useRef(null);
+  const [composerOptionsIconOnly, setComposerOptionsIconOnly] = useState(false);
+  const executionOptionsRequestRef = useRef(null);
+  const [executionOptionsState, setExecutionOptionsState] = useState({ loading: false, error: '' });
   const composerOptionsRef = useRef(null);
   const composerOptionsButtonRef = useRef(null);
   const composerFooterRef = useRef(null);
@@ -1066,7 +1069,7 @@ export function SessionWorkspace({
     && !uploading
     && actions.onSubmit
     && composer.primaryMode);
-  const compactInputMode = compactComposer && running && mobileSubmitMode === 'queue' ? 'queue' : composer.primaryMode;
+  const compactInputMode = compactComposer && running && mobileSubmitMode === 'queue' && (!splitSendComposer || composer.showSecondary) ? 'queue' : composer.primaryMode;
   const compactInputLabel = compactInputMode === 'queue' ? '下一轮' : composer.primaryLabel;
   useEffect(() => {
     if (inlineExecutionControls && composerOptionsOpen) setComposerOptionsOpen(false);
@@ -1078,20 +1081,22 @@ export function SessionWorkspace({
     const actionRow = composerActionsRef.current;
     if (!footer || !probe || !actionRow) return;
     function measure() {
-      const controls = [...actionRow.children];
+      const controls = [...actionRow.children].filter(control => !splitSendComposer || control.getBoundingClientRect().width > 0);
       const actionGap = Number.parseFloat(getComputedStyle(actionRow).columnGap) || 0;
       const footerGap = Number.parseFloat(getComputedStyle(footer).columnGap) || 0;
       const metaGap = Number.parseFloat(getComputedStyle(footer.firstElementChild).columnGap) || 0;
       const actionWidth = controls.reduce((width, control) => width + control.getBoundingClientRect().width, 0) + actionGap * Math.max(0, controls.length - 1);
       const attachmentWidth = composerAttachmentRef.current?.getBoundingClientRect().width || 0;
-      const requiredWidth = probe.getBoundingClientRect().width + attachmentWidth + (attachmentWidth ? metaGap : 0) + actionWidth + footerGap;
+      const fixedWidth = attachmentWidth + (attachmentWidth ? metaGap : 0) + actionWidth + footerGap;
+      const requiredWidth = probe.getBoundingClientRect().width + fixedWidth;
       setInlineExecutionControls(previous => footer.clientWidth >= requiredWidth + (previous ? 0 : 12));
+      if (splitSendComposer) setComposerOptionsIconOnly(footer.clientWidth < (composerOptionsWidthProbeRef.current?.getBoundingClientRect().width || 0) + fixedWidth);
     }
     measure();
     const observer = new ResizeObserver(measure);
-    for (const element of [footer, probe, ...actionRow.children, composerAttachmentRef.current].filter(Boolean)) observer.observe(element);
+    for (const element of [footer, probe, composerOptionsWidthProbeRef.current, ...actionRow.children, composerAttachmentRef.current].filter(Boolean)) observer.observe(element);
     return () => observer.disconnect();
-  }, [compactComposer, view.sessionId, running, submitting, enabledFeatures.attachments]);
+  }, [compactComposer, splitSendComposer, view.sessionId, running, submitting, mobileSubmitMode, composer.showSecondary, executionModelLabel, enabledFeatures.attachments]);
   useEffect(() => {
     if (!composerOptionsOpen) return;
     const panel = composerOptionsRef.current;
@@ -1108,6 +1113,84 @@ export function SessionWorkspace({
     document.addEventListener('keydown', keydown);
     return () => { document.removeEventListener('keydown', keydown); (composerOptionsButtonRef.current || composerFooterRef.current?.querySelector('select:not(:disabled),button:not(:disabled)'))?.focus(); };
   }, [composerOptionsOpen]);
+  useEffect(() => {
+    executionOptionsRequestRef.current = null;
+    setExecutionOptionsState({ loading: false, error: '' });
+    setSendModeOpen(false);
+  }, [view.sessionId]);
+  useEffect(() => {
+    if (!running || !composer.showSecondary || !splitSendComposer) setSendModeOpen(false);
+  }, [running, composer.showSecondary, splitSendComposer]);
+  useEffect(() => {
+    if (!sendModeOpen) return;
+    const menu = sendModeMenuRef.current;
+    menu?.querySelector('[aria-checked="true"]')?.focus();
+    function closeOutside(event) {
+      if (!sendModeGroupRef.current?.contains(event.target)) setSendModeOpen(false);
+    }
+    function closeOnEscape(event) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setSendModeOpen(false);
+      sendModeButtonRef.current?.focus();
+    }
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [sendModeOpen]);
+
+  function loadExecutionOptions() {
+    if (!splitSendComposer || !actions.onLoadExecutionOptions) return;
+    const current = executionOptionsRequestRef.current;
+    if (current?.sessionId === view.sessionId && (current.loading || current.loaded)) return;
+    const request = { sessionId: view.sessionId, loading: true, loaded: false };
+    executionOptionsRequestRef.current = request;
+    setExecutionOptionsState({ loading: true, error: '' });
+    Promise.resolve().then(() => actions.onLoadExecutionOptions()).then(() => {
+      request.loaded = true;
+      if (executionOptionsRequestRef.current === request) setExecutionOptionsState({ loading: false, error: '' });
+    }).catch(error => {
+      if (executionOptionsRequestRef.current === request) setExecutionOptionsState({ loading: false, error: error?.message || '输入选项加载失败。' });
+    }).finally(() => { request.loading = false; });
+  }
+
+  function chooseSendMode(mode) {
+    setMobileSubmitMode(mode);
+    setSendModeOpen(false);
+    sendModeButtonRef.current?.focus();
+  }
+
+  function handleSendModeKeyDown(event) {
+    if (event.key === 'Tab') { event.preventDefault(); setSendModeOpen(false); sendModeButtonRef.current?.focus(); return; }
+    const items = [...(sendModeMenuRef.current?.querySelectorAll('[role="menuitemradio"]') || [])];
+    const index = items.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+      : event.key === 'ArrowDown' ? (index + 1) % items.length
+      : event.key === 'ArrowUp' ? (index - 1 + items.length) % items.length : null;
+    if (next == null) return;
+    event.preventDefault();
+    items[next]?.focus();
+  }
+
+  function renderComposerOptionsButton({ probe = false } = {}) {
+    const iconOnly = splitSendComposer && composerOptionsIconOnly && !probe;
+    return <button aria-label={splitSendComposer ? `输入选项 · ${executionModelLabel}` : '输入选项'} title={executionModelLabel}
+      aria-expanded={composerOptionsOpen} className={`cwu-composer-options-button${iconOnly ? ' is-icon-only' : ''}`}
+      ref={probe ? null : composerOptionsButtonRef} type="button" onClick={() => { setComposerOptionsOpen(true); loadExecutionOptions(); }}>
+      {iconOnly ? <svg className="cwu-composer-brain" aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M12 5a3 3 0 0 0-5.8-1A4 4 0 0 0 3 10a4 4 0 0 0 1 7.5A4 4 0 0 0 12 19V5Zm0 0a3 3 0 0 1 5.8-1A4 4 0 0 1 21 10a4 4 0 0 1-1 7.5A4 4 0 0 1 12 19M7 4v4M4 11h3l2 2M5 17h3M17 4v4M20 11h-3l-2 2M19 17h-3"/></svg>
+        : <><span>{executionModelLabel || '输入选项'}</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="m7 10 5 5 5-5"/></svg></>}
+    </button>;
+  }
+
+  function renderExecutionOptionsStatus() {
+    if (!splitSendComposer || (!executionOptionsState.loading && !executionOptionsState.error)) return null;
+    return <div className="cwu-execution-options-status" role={executionOptionsState.error ? 'alert' : 'status'}>
+      {executionOptionsState.loading ? '正在加载输入选项…' : <>{executionOptionsState.error}<button type="button" onClick={loadExecutionOptions}>重试</button></>}
+    </div>;
+  }
   const latestMessage = view.messages.at(-1);
   const latestMessageActivityKey = (latestMessage
     ? `${latestMessage.id}:${latestMessage.content.length}:${latestMessage.content.slice(-32)}`
@@ -1877,6 +1960,8 @@ export function SessionWorkspace({
                     <label title={labels.model || '模型'}>
                       <span>{labels.model || '模型'}</span>
                       <select
+                        onFocus={loadExecutionOptions}
+                        onPointerDown={loadExecutionOptions}
                         aria-label={labels.model || '模型'}
                         disabled={executionControlsDisabled}
                         onChange={(event) => {
@@ -1894,23 +1979,28 @@ export function SessionWorkspace({
                         }}
                         value={view.executionProfile.model}
                       >
-                        {!view.models.length ? <option value="">默认模型</option> : null}{view.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+                        {splitSendComposer ? !view.models.some(model => model.id === view.executionProfile.model) ? <option value={view.executionProfile.model}>{executionModelLabel}</option> : null : !view.models.length ? <option value="">默认模型</option> : null}{view.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
                       </select>
                     </label>
                     <label title={labels.reasoning || '思考强度'}>
                       <span>{labels.reasoning || '思考'}</span>
                       <select
+                        onFocus={loadExecutionOptions}
+                        onPointerDown={loadExecutionOptions}
                         aria-label={labels.reasoning || '思考强度'}
                         disabled={executionControlsDisabled}
                         onChange={(event) => updateExecutionProfile({ reasoningEffort: event.target.value })}
                         value={view.executionProfile.reasoningEffort}
                       >
+                        {splitSendComposer && !executionEfforts.includes(view.executionProfile.reasoningEffort) ? <option value={view.executionProfile.reasoningEffort}>{reasoningEffortLabel(view.executionProfile.reasoningEffort)}</option> : null}
                         {executionEfforts.map((effort) => <option key={effort} value={effort}>{reasoningEffortLabel(effort)}</option>)}
                       </select>
                     </label>
                     <label title={labels.permissions || '权限'}>
                       <span>{labels.permissions || '权限'}</span>
                       <select
+                        onFocus={loadExecutionOptions}
+                        onPointerDown={loadExecutionOptions}
                         aria-label={labels.permissions || '权限'}
                         disabled={executionControlsDisabled}
                         onChange={(event) => updateExecutionProfile({ accessMode: event.target.value })}
@@ -1932,12 +2022,12 @@ export function SessionWorkspace({
                     >⚡ Fast</button>
                   </div>); }
   function renderInlineExecutionControls() {
-    return <div className="cwu-inline-controls-row">{renderExecutionControls()}{running && composer.showSecondary ? <label className="cwu-inline-submit-mode" title="发送方式"><span>发送方式</span><select aria-label="发送方式" value={mobileSubmitMode} onChange={event => setMobileSubmitMode(event.target.value)}><option value="steer">追加当前</option><option value="queue">下一轮</option></select></label> : null}</div>;
+    return <div className="cwu-inline-controls-row">{renderExecutionControls()}{!splitSendComposer && running && composer.showSecondary ? <label className="cwu-inline-submit-mode" title="发送方式"><span>发送方式</span><select aria-label="发送方式" value={mobileSubmitMode} onChange={event => setMobileSubmitMode(event.target.value)}><option value="steer">追加当前</option><option value="queue">下一轮</option></select></label> : null}</div>;
   }
 
   return (
     <div
-      className={`cwu-session-shell ${compactComposer ? 'is-compact-composer' : ''} ${inlineExecutionControls ? 'has-inline-controls' : ''}`}
+      className={`cwu-session-shell ${compactComposer ? 'is-compact-composer' : ''} ${inlineExecutionControls ? 'has-inline-controls' : ''} ${splitSendComposer ? 'has-split-send-composer' : ''}`}
       data-status={view.status}
       onDragEnter={handleWorkspaceAttachmentDrag}
       onDragLeave={handleWorkspaceAttachmentDragLeave}
@@ -2286,6 +2376,7 @@ export function SessionWorkspace({
               rows={compactComposer ? 2 : 3}
               value={draft}
             />
+            {!composerOptionsOpen ? renderExecutionOptionsStatus() : null}
             <div className="cwu-composer-footer" ref={composerFooterRef}>
               <div className="cwu-composer-meta">
                 {enabledFeatures.attachments === 'visible' && actions.onUploadAttachments ? (
@@ -2306,7 +2397,7 @@ export function SessionWorkspace({
                     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14"/></svg>附件
                   </label>
                 ) : null}
-                {compactComposer ? inlineExecutionControls ? renderInlineExecutionControls() : <button aria-label="输入选项" aria-expanded={composerOptionsOpen} className="cwu-composer-options-button" ref={composerOptionsButtonRef} type="button" onClick={() => setComposerOptionsOpen(true)}><span>{executionModelLabel || '输入选项'}</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="m7 10 5 5 5-5"/></svg></button> : !executionSettingsLocked && view.models.length && actions.onExecutionProfileChange ? (
+                {compactComposer ? inlineExecutionControls ? renderInlineExecutionControls() : renderComposerOptionsButton() : !executionSettingsLocked && view.models.length && actions.onExecutionProfileChange ? (
                   renderExecutionControls()
                 ) : executionSettingsLocked ? (
                   <>
@@ -2341,17 +2432,32 @@ export function SessionWorkspace({
                     {composer.secondaryLabel}
                   </button>
                 ) : null}
-                <button className="cwu-send" disabled={!canSubmit} title={compactInputLabel} type="submit">
+                {splitSendComposer && running && composer.showSecondary ? <div className="cwu-send-action-group" ref={sendModeGroupRef}>
+                  <button className="cwu-send" disabled={!canSubmit} title={compactInputLabel} type="submit">{compactInputLabel}</button>
+                  <button className="cwu-send-mode-trigger" type="button" aria-label={`发送方式 · ${compactInputLabel}`}
+                    aria-haspopup="menu" aria-expanded={sendModeOpen} aria-controls={sendModeId} ref={sendModeButtonRef}
+                    onClick={() => setSendModeOpen(open => !open)}
+                    onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setSendModeOpen(true); } }}>
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                  {sendModeOpen ? <div id={sendModeId} className="cwu-send-mode-menu" role="menu" aria-label="发送方式" ref={sendModeMenuRef}
+                    onKeyDown={handleSendModeKeyDown} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget) && event.relatedTarget !== sendModeButtonRef.current) setSendModeOpen(false); }}>
+                    {[["steer", "追加当前", "接着处理这轮任务"], ["queue", "下一轮", "这轮完成后再处理"]].map(([mode, label, description]) => <button
+                      key={mode} type="button" role="menuitemradio" aria-checked={compactInputMode === mode} tabIndex={compactInputMode === mode ? 0 : -1}
+                      onClick={() => chooseSendMode(mode)}><strong>{label}</strong><span>{description}</span></button>)}
+                  </div> : null}
+                </div> : <button className="cwu-send" disabled={!canSubmit} title={compactInputLabel} type="submit">
                   {compactInputLabel}
-                </button>
+                </button>}
               </div>
             </div>
             {compactComposer ? <div aria-hidden="true" inert className="cwu-composer-width-probe" ref={composerWidthProbeRef}>{renderInlineExecutionControls()}</div> : null}
+            {splitSendComposer ? <div aria-hidden="true" inert className="cwu-composer-width-probe" ref={composerOptionsWidthProbeRef}>{renderComposerOptionsButton({ probe: true })}</div> : null}
           </form>
           </agent-session-composer>}
         </footer>
       </main>
-      {composerOptionsOpen ? <div className="cwu-composer-options-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOptionsOpen(false); }}><section className="cwu-composer-options-sheet" role="dialog" aria-modal="true" aria-label="输入选项" tabIndex={-1} ref={composerOptionsRef}><div className="cwu-sheet-handle"/><header><strong>输入选项</strong><button aria-label="关闭输入选项" type="button" onClick={() => setComposerOptionsOpen(false)}>×</button></header>{renderExecutionControls()}{extensions.renderComposerOptions?.({ session: view, draft, setDraft, disabled: composerDisabled, onRecordingChange: setComposerReadOnly, close: () => setComposerOptionsOpen(false) }) || null}{running ? <div className="cwu-mobile-submit-mode"><span>发送方式</span><div>{[['steer', '追加当前'], ['queue', '下一轮']].map(([mode, label]) => <button key={mode} type="button" aria-pressed={mobileSubmitMode === mode} onClick={() => setMobileSubmitMode(mode)}>{label}</button>)}</div></div> : null}<button className="cwu-send" type="button" onClick={() => setComposerOptionsOpen(false)}>完成</button></section></div> : null}
+      {composerOptionsOpen ? <div className="cwu-composer-options-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOptionsOpen(false); }}><section className="cwu-composer-options-sheet" role="dialog" aria-modal="true" aria-label="输入选项" tabIndex={-1} ref={composerOptionsRef}><div className="cwu-sheet-handle"/><header><strong>输入选项</strong><button aria-label="关闭输入选项" type="button" onClick={() => setComposerOptionsOpen(false)}>×</button></header>{renderExecutionOptionsStatus()}{renderExecutionControls()}{extensions.renderComposerOptions?.({ session: view, draft, setDraft, disabled: composerDisabled, onRecordingChange: setComposerReadOnly, close: () => setComposerOptionsOpen(false) }) || null}{!splitSendComposer && running ? <div className="cwu-mobile-submit-mode"><span>发送方式</span><div>{[['steer', '追加当前'], ['queue', '下一轮']].map(([mode, label]) => <button key={mode} type="button" aria-pressed={mobileSubmitMode === mode} onClick={() => setMobileSubmitMode(mode)}>{label}</button>)}</div></div> : null}<button className="cwu-send" type="button" onClick={() => setComposerOptionsOpen(false)}>完成</button></section></div> : null}
       {executionSettingsOpen ? (
         <div
           aria-label="当前执行设置"
@@ -2823,11 +2929,11 @@ function DocumentPreview({
           ) : file.format === 'markdown' && activeTab === 'preview' ? (
             file.rawAvailable !== false ? (
               <div className="cwu-document-content cwu-message-body">
-                <ReactMarkdown
+                <SessionMarkdown
                   components={documentMarkdownComponents({ documentResourceUrl, file, onOpenLink, onRevealLink, revealLabel })}
-                  rehypePlugins={DOCUMENT_MARKDOWN_REHYPE_PLUGINS}
-                  remarkPlugins={MARKDOWN_REMARK_PLUGINS}
-                >{normalizeMarkdownMath(file.rawText ?? file.content ?? '')}</ReactMarkdown>
+                  mode="document"
+                  headingPlugin={rehypeDocumentHeadingIds}
+                >{normalizeMarkdownMath(file.rawText ?? file.content ?? '')}</SessionMarkdown>
               </div>
             ) : <DocumentPreviewError error={file.rawError} />
           ) : file.format === 'markdown' && activeTab === 'raw' ? (
@@ -3075,11 +3181,10 @@ function Message({
     : [];
   const defaultContent = <>
     {markdownContent ? (
-      <ReactMarkdown
+      <SessionMarkdown
         components={markdownComponents}
-        rehypePlugins={isUser ? [] : MARKDOWN_REHYPE_PLUGINS}
-        remarkPlugins={isUser ? USER_MARKDOWN_REMARK_PLUGINS : MARKDOWN_REMARK_PLUGINS}
-      >{markdownContent}</ReactMarkdown>
+        mode={isUser ? 'user' : 'default'}
+      >{markdownContent}</SessionMarkdown>
     ) : null}
     {!markdownContent && !visualizations.length && !directiveContent.directives.length ? '…' : null}
   </>;
@@ -3399,7 +3504,7 @@ function TechnicalProcessItem({ item, onOpenArtifact, onResolveMedia, onRevealAr
         {item.output ? <button type="button" aria-label={`查看输出：${item.title}`} title={`${item.output.split('\n').length} 行输出`} aria-expanded={expanded === 'output'} aria-controls={expanded === 'output' ? panelId : undefined} onClick={() => toggle('output')}>输出</button> : null}
       </div>
     </header>
-    {item.text ? item.type === 'command' ? <pre className="cwu-process-command">{item.text}</pre> : <div className="cwu-process-copy"><ReactMarkdown remarkPlugins={MARKDOWN_REMARK_PLUGINS}>{item.text}</ReactMarkdown></div> : <p className="cwu-process-copy">{item.title}</p>}
+    {item.text ? item.type === 'command' ? <pre className="cwu-process-command">{item.text}</pre> : <div className="cwu-process-copy"><SessionMarkdown>{item.text}</SessionMarkdown></div> : <p className="cwu-process-copy">{item.title}</p>}
     {expanded ? <ScrollRegion className="cwu-process-detail" id={panelId} bounded ariaLabel={expanded === 'output' ? '命令或工具输出' : '调用详情'}><pre>{item[expanded]}</pre></ScrollRegion> : null}
     {item.media?.length ? <MediaGallery items={item.media} onResolveMedia={onResolveMedia} sessionId={sessionId}/> : null}
     {item.artifacts?.length ? <div className="cwu-technical-artifacts">{item.artifacts.map(artifact => <article key={artifact.id}><button disabled={!onOpenArtifact} type="button" onClick={() => onOpenArtifact?.(artifact, item)}><span><strong>{artifact.name}</strong><small>{artifact.status || '文件产物'}</small></span></button>{onRevealArtifact ? <button type="button" className="cwu-artifact-reveal" aria-label={`在文件夹中显示 ${artifact.name}`} onClick={() => onRevealArtifact(artifact, item)}><RevealFolderIcon/></button> : null}</article>)}</div> : null}
@@ -3543,10 +3648,10 @@ function ProgressiveProcessItem({ item, expanded, onToggle, onOpenArtifact, onRe
   const simpleText = !needsDisclosure && item.text && !item.detail && !item.output && !item.media?.length && !item.artifacts?.length;
   const row = <><span className="cwu-process-chevron" aria-hidden="true">{hasContent ? expanded ? '⌄' : '›' : '·'}</span><span className="cwu-process-summary-text">{summary.title}</span><small>{[summary.typeLabel, summary.statusLabel].filter(Boolean).join(' · ')}</small></>;
   return <article className={`cwu-process-row type-${item.type}`}>
-    {simpleText ? <div className="cwu-process-inline-text"><div className="cwu-process-copy"><ReactMarkdown remarkPlugins={MARKDOWN_REMARK_PLUGINS}>{item.text}</ReactMarkdown></div>{summary.statusLabel ? <small>{summary.statusLabel}</small> : null}</div> : <>
+    {simpleText ? <div className="cwu-process-inline-text"><div className="cwu-process-copy"><SessionMarkdown>{item.text}</SessionMarkdown></div>{summary.statusLabel ? <small>{summary.statusLabel}</small> : null}</div> : <>
     {needsDisclosure ? <button type="button" className="cwu-process-summary" aria-expanded={expanded} aria-controls={panelId} onClick={onToggle}>{row}</button> : <div className="cwu-process-summary is-inline"><span className="cwu-process-summary-text">{item.type === 'assistant' || summary.title === String(item.text || '').trim().split('\n')[0] ? summary.typeLabel : summary.title}</span>{summary.statusLabel ? <small>{summary.statusLabel}</small> : null}</div>}
     {hasContent && (!needsDisclosure || expanded) ? <div className={`cwu-process-body${needsDisclosure ? '' : ' is-inline'}`} id={panelId}>
-      {item.text ? item.type === 'command' ? <pre className="cwu-process-command">{item.text}</pre> : <div className="cwu-process-copy"><ReactMarkdown remarkPlugins={MARKDOWN_REMARK_PLUGINS}>{item.text}</ReactMarkdown></div> : null}
+      {item.text ? item.type === 'command' ? <pre className="cwu-process-command">{item.text}</pre> : <div className="cwu-process-copy"><SessionMarkdown>{item.text}</SessionMarkdown></div> : null}
       {[['detail', '调用详情'], ['output', '输出']].map(([field, label]) => item[field] ? <section key={field}><h4>{label}</h4><ScrollRegion className="cwu-process-detail" bounded ariaLabel={label}><pre>{item[field]}</pre></ScrollRegion></section> : null)}
       {item.media?.length ? <MediaGallery items={item.media} onOpenAttachment={onOpenArtifact ? attachment => onOpenArtifact(attachment, item) : null} onResolveMedia={onResolveMedia} sessionId={sessionId} /> : null}
       {item.artifacts?.length ? <div className="cwu-technical-artifacts">{item.artifacts.map(artifact => <article key={artifact.id}><button disabled={!onOpenArtifact} type="button" onClick={() => onOpenArtifact?.(artifact, item)}><span><strong>{artifact.name}</strong><small>{artifact.status || '文件产物'}</small></span></button>{onRevealArtifact ? <button type="button" className="cwu-artifact-reveal" aria-label={`在文件夹中显示 ${artifact.name}`} onClick={() => onRevealArtifact(artifact, item)}><RevealFolderIcon /></button> : null}</article>)}</div> : null}

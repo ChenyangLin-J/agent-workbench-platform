@@ -404,9 +404,10 @@ test('Session UI embeds visualizations in a sandbox and renders image media', as
   const [source, styles] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(stylesUrl, 'utf8')]);
   assert.match(source, /sandbox="allow-scripts"/);
   assert.match(source, /visualizationUrl/);
-  assert.match(source, /remarkMath/);
-  assert.match(source, /rehypeKatex/);
-  assert.match(source, /singleDollarTextMath: false/);
+  const mathSource = await readFile(new URL('../src/ui/markdown-math.jsx', import.meta.url), 'utf8');
+  assert.match(mathSource, /remarkMath/);
+  assert.match(mathSource, /rehypeKatex/);
+  assert.match(mathSource, /singleDollarTextMath: false/);
   assert.match(source, /const inlineMedia = \[\.\.\.\(publishesMedia \? message\.media \|\| \[\] : \[\]\)\]/);
   assert.match(source, /attachment\.kind === 'image' && \(attachment\.previewUrl \|\| onResolveMedia\)/);
   assert.match(source, /onResolveMedia=\{onResolveMedia\}/);

@@ -1,7 +1,7 @@
 import { SessionClientOperationController, mergeSessionItems, mergeSessionTurns } from './session-client.js';
 
 /** Product-neutral Session orchestration. Transport, authorization and storage stay in the Host. */
-export function createSessionHostController({ adapter, initialSessionId = null, capabilities = {}, operations = new SessionClientOperationController() } = {}) {
+export function createSessionHostController({ adapter, initialSessionId = null, capabilities = {}, independentStartup = false, operations = new SessionClientOperationController() } = {}) {
   if (!adapter || typeof adapter.listSessions !== 'function' || typeof adapter.readSession !== 'function') {
     throw new TypeError('A Session Host adapter must provide listSessions and readSession.');
   }
@@ -28,11 +28,19 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
 
   async function refreshSessions(options = {}) {
     const generation = ++listGeneration;
-    const page = await adapter.listSessions(options);
-    if (disposed || generation !== listGeneration) return null;
-    const sessions = Array.isArray(page) ? page : page?.sessions || [];
-    publish({ sessions: options.cursor ? mergeSessionSummaries(state.sessions, sessions) : sessions, nextCursor: page?.nextCursor ?? null, listPage: page, loaded: true });
-    return sessions;
+    if (independentStartup) publish({ listLoading: !options.cursor, listLoadingMore: Boolean(options.cursor), listError: '' });
+    try {
+      const page = await adapter.listSessions(options);
+      if (disposed || generation !== listGeneration) return null;
+      const sessions = Array.isArray(page) ? page : page?.sessions || [];
+      publish({ sessions: options.cursor ? mergeSessionSummaries(state.sessions, sessions) : sessions, nextCursor: page?.nextCursor ?? null, listPage: page, loaded: true });
+      return sessions;
+    } catch (error) {
+      if (independentStartup && generation === listGeneration && error?.name !== 'AbortError') publish({ listError: error?.message || String(error) });
+      throw error;
+    } finally {
+      if (independentStartup && generation === listGeneration) publish({ listLoading: false, listLoadingMore: false });
+    }
   }
 
   async function refreshSession(id = state.selectedId) {
@@ -157,8 +165,10 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
           if (sessionId(created) && !disposed) {
             // Creation already supplies the new row. An older history request must
             // not remove it, and listing unrelated Sessions must not delay selection.
+            const pendingInitialList = independentStartup && state.listLoading;
             listGeneration++;
-            publish({ sessions: mergeSessionSummaries(state.sessions, [created]) });
+            publish({ sessions: mergeSessionSummaries(state.sessions, [created]), ...(independentStartup ? { listLoading: false, listLoadingMore: false } : {}) });
+            if (pendingInitialList) void refreshSessions().catch(() => {});
             if (selectionGeneration === operationSelection) {
               const selected = await select(sessionId(created)).catch(() => null);
               if (selected && !disposed && adapter.patchSummary) publish({ sessions: adapter.patchSummary(state.sessions, selected) });
@@ -179,7 +189,16 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     operations,
     getSnapshot: () => state,
     subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
-    async start() { disposed = false; await refreshSessions(); if (state.selectedId) await select(state.selectedId); return state; },
+    async start() {
+      disposed = false;
+      if (!independentStartup) { await refreshSessions(); if (state.selectedId) await select(state.selectedId); return state; }
+      const initial = state.selectedId;
+      // Catalogue failures belong to navigation, never to the selected conversation.
+      const list = refreshSessions().catch(() => {});
+      const selection = initial ? select(initial) : Promise.resolve();
+      await Promise.all([list, selection]);
+      return state;
+    },
     select,
     refreshSession,
     refreshSessions,
