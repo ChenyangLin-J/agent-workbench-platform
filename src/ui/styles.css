@@ -705,6 +705,8 @@
 @media (pointer: coarse) { .is-progressive .cwu-technical-toggle { min-height: 44px; } }
 .cwu-process-chevron { flex: 0 0 14px; text-align: center; color: var(--cwu-muted); }
 .cwu-progressive-list { --cwu-scroll-max-height: min(400px, 48dvh); min-width: 0; padding-left: 12px; border-left: 1px solid var(--cwu-border); }
+.cwu-progressive-list.is-running { --cwu-scroll-max-height: min(1200px, 144dvh); }
+.cwu-technical-load { margin: 8px 10px; }
 .cwu-technical.is-tabbed { margin: 10px 0 14px; border: 1px solid var(--cwu-border); border-radius: 12px; background: var(--cwu-surface); overflow: hidden; }
 .cwu-turn-detail-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 0 14px; }
 .cwu-turn-detail-tabs { display: flex; align-self: stretch; gap: 20px; min-width: 0; }

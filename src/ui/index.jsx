@@ -34,6 +34,8 @@ import {
   shouldConvertPastedTextToAttachment,
   technicalProcessSummary,
   technicalProcessNeedsDisclosure,
+  mergeTechnicalItems,
+  technicalItemsWindow,
   turnDurationLabel,
 } from './model.js';
 import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
@@ -2148,6 +2150,9 @@ export function SessionWorkspace({
                         onLoad={actions.onLoadTechnicalDetails
                           ? () => actions.onLoadTechnicalDetails(trailingTurnKey)
                           : null}
+                        onLoadItem={actions.onLoadTechnicalItem
+                          ? (itemId) => actions.onLoadTechnicalItem(trailingTurnKey, itemId)
+                          : null}
                         onRevealArtifact={actions.onRevealArtifact}
                         sessionId={view.sessionId}
                         startedAt={trailingTurnMetadata?.startedAt || trailingMessage.createdAt}
@@ -3514,12 +3519,13 @@ function TechnicalProcessItem({ item, onOpenArtifact, onResolveMedia, onRevealAr
 
 function TechnicalDetails({
   items, itemCount = null, available = false, loading = false, onLoad = null,
+  onLoadItem = null,
   onOpenArtifact = null, onResolveMedia = null, onRevealArtifact = null,
   sessionId = null, startedAt = null, completedAt = null, running = false,
   turnStatus = null, manualOpen = null, onOpenChange = null, turnOrdinal = null, compactPresentation = false,
   progressive = false, loaded = false, detailTabs = null, manualTab = null, onTabChange = null,
 }) {
-  if (progressive) return <ProgressiveTechnicalDetails {...{ items, available, loaded, onLoad, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId, running, turnStatus, manualOpen, onOpenChange, detailTabs, manualTab, onTabChange }} />;
+  if (progressive) return <ProgressiveTechnicalDetails {...{ items, available, loaded, onLoad, onLoadItem, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId, running, turnStatus, manualOpen, onOpenChange, detailTabs, manualTab, onTabChange }} />;
   return <DefaultTechnicalDetails {...{ items, itemCount, available, loading, onLoad, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId, startedAt, completedAt, running, turnStatus, manualOpen, onOpenChange, turnOrdinal, compactPresentation }} />;
 }
 
@@ -3555,28 +3561,39 @@ function DefaultTechnicalDetails({
   </section>;
 }
 
-function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId, running, turnStatus, manualOpen, onOpenChange, detailTabs, manualTab, onTabChange }) {
+function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onLoadItem, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId, running, turnStatus, manualOpen, onOpenChange, detailTabs, manualTab, onTabChange }) {
   const panelId = useId();
   const [localOpen, setLocalOpen] = useState(false);
   const [localTab, setLocalTab] = useState('execution');
   const selectedTab = manualTab ?? localTab;
   const [expandedItems, setExpandedItems] = useState({});
   const [read, setRead] = useState({ status: 'idle', error: '' });
+  const [visibleCount, setVisibleCount] = useState(30);
+  const [needsCompletionRefresh, setNeedsCompletionRefresh] = useState(false);
+  const [itemDetails, setItemDetails] = useState({});
+  const [itemReadState, setItemReadState] = useState({});
   const pending = useRef(null);
   const open = manualOpen ?? (running || localOpen);
   const tabbed = detailTabs != null;
   const activeTab = detailTabs?.find(tab => tab.id === selectedTab);
   const executionOpen = open && (!tabbed || !activeTab);
-  const needsRead = available && onLoad && !running && !loaded && read.status !== 'complete';
+  const needsRead = available && onLoad && !running && (!loaded || needsCompletionRefresh) && read.status !== 'complete';
   const loadRef = useRef(onLoad);
   loadRef.current = onLoad;
   const mounted = useRef(true);
+  const wasRunning = useRef(running);
+  const runningRef = useRef(running);
+  runningRef.current = running;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const load = useCallback(() => {
     if (pending.current) return pending.current;
     setRead({ status: 'loading', error: '' });
     const task = Promise.resolve().then(() => loadRef.current?.()).then(result => {
-      if (mounted.current) setRead({ status: 'complete', error: '', items: result?.technicalItems });
+      if (mounted.current) {
+        const staleActiveRead = Boolean(result?.active && !runningRef.current);
+        setRead({ status: staleActiveRead ? 'idle' : 'complete', error: '', items: result?.technicalItems || result?.items });
+        setNeedsCompletionRefresh(staleActiveRead);
+      }
     }).catch(error => {
       if (mounted.current) setRead({ status: 'error', error: error?.message || '执行记录暂时无法读取。' });
     }).finally(() => { if (pending.current === task) pending.current = null; });
@@ -3584,19 +3601,56 @@ function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onOpenA
     return task;
   }, []);
   useEffect(() => {
-    if (executionOpen && needsRead && read.status === 'idle') void load();
+    if (executionOpen && needsRead && !running && read.status === 'idle') void load();
   }, [executionOpen, needsRead, read.status, load]);
-  const reading = needsRead && ['idle', 'loading'].includes(read.status);
+  useEffect(() => {
+    if (wasRunning.current && !running && available && onLoad) {
+      setRead({ status: 'idle', error: '' });
+      setNeedsCompletionRefresh(true);
+    }
+    wasRunning.current = running;
+  }, [running, available, onLoad]);
+  const reading = needsRead && read.status === 'loading';
   const complete = !running && (loaded || read.status === 'complete');
-  const visibleItems = !running && read.items ? read.items : items;
-  const error = !loaded && read.status === 'error';
+  const summaryItems = read.items ? mergeTechnicalItems(items, read.items) : items;
+  const allItems = summaryItems.map((item) => {
+    const detail = itemDetails[item.id];
+    return detail ? {
+      ...detail,
+      ...item,
+      text: detail.text,
+      detail: detail.detail,
+      output: detail.output,
+      media: detail.media,
+      artifacts: detail.artifacts,
+      previewTruncated: false,
+      detailsAvailable: false,
+    } : item;
+  });
+  const visibleItems = technicalItemsWindow(allItems, visibleCount);
+  const error = (!loaded || needsCompletionRefresh) && read.status === 'error';
   const title = running ? '正在执行' : turnStatus === 'interrupted' ? '执行已中断' : '执行记录';
+  async function loadItem(item) {
+    if (!onLoadItem || itemReadState[item.id]?.status === 'loading') return;
+    setItemReadState((current) => ({ ...current, [item.id]: { status: 'loading', error: '' } }));
+    try {
+      const result = await onLoadItem(item.id);
+      if (!mounted.current) return;
+      const technicalItem = result?.technicalItem || result?.item;
+      if (!technicalItem) throw new Error('执行记录暂时无法读取。');
+      setItemDetails((current) => ({ ...current, [item.id]: technicalItem }));
+      setItemReadState((current) => ({ ...current, [item.id]: { status: 'complete', error: '', refreshOnOpen: Boolean(result?.active) } }));
+    } catch (loadError) {
+      if (!mounted.current) return;
+      setItemReadState((current) => ({ ...current, [item.id]: { status: 'error', error: loadError?.message || '执行记录暂时无法读取。' } }));
+    }
+  }
   function setOpen(next) { setLocalOpen(next); onOpenChange?.(next); }
   function selectTab(id) {
     if (id === selectedTab && open) { setOpen(false); return; }
     setLocalTab(id); onTabChange?.(id); setOpen(true);
   }
-  const tabs = [{ id: 'execution', label: '执行记录', count: complete ? visibleItems.length : null }, ...(detailTabs || [])];
+  const tabs = [{ id: 'execution', label: '执行记录', count: complete ? allItems.length : null }, ...(detailTabs || [])];
   function onTabKey(event, index) {
     const target = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
       : event.key === 'ArrowRight' ? (index + 1) % tabs.length
@@ -3629,11 +3683,13 @@ function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onOpenA
     {open ? <div className={tabbed ? 'cwu-turn-detail-panel' : undefined} role={tabbed ? 'tabpanel' : undefined}
       id={tabbed ? `${panelId}-${selectedId}` : undefined} aria-labelledby={tabbed ? `${panelId}-${selectedId}-tab` : undefined}>
     {activeTab ? <ScrollRegion className="cwu-turn-detail-content" bounded={!running} ariaLabel={activeTab.label}>{activeTab.renderContent?.()}</ScrollRegion> :
-    <ScrollRegion className="cwu-progressive-list" id={panelId} bounded={!running} ariaBusy={reading} ariaLabel={running ? '当前公开执行过程' : '执行记录'}>
+    <ScrollRegion className={`cwu-progressive-list${running ? ' is-running' : ''}`} id={panelId} bounded ariaBusy={reading} ariaLabel={running ? '当前公开执行过程' : '执行记录'}>
       {reading ? <p className="cwu-technical-loading" role="status">正在读取执行记录…</p> : <>
         {error ? <div className="cwu-process-error" role="alert"><p>{read.error}</p><button type="button" onClick={() => void load()}>重试</button></div> : null}
-        {!tabbed && complete && visibleItems.length ? <p className="cwu-process-count">{visibleItems.length} 项执行记录</p> : null}
-        {visibleItems.map(item => <ProgressiveProcessItem key={item.id} {...{ item, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }} expanded={Boolean(expandedItems[item.id])} onToggle={() => setExpandedItems(current => ({ ...current, [item.id]: !current[item.id] }))} />)}
+        {running && available && onLoad && !loaded && read.status === 'idle' ? <button className="cwu-technical-load" type="button" onClick={() => { setVisibleCount((current) => current + 30); void load(); }}>加载更早记录</button> : null}
+        {!tabbed && complete && allItems.length ? <p className="cwu-process-count">{allItems.length} 项执行记录</p> : null}
+        {visibleCount < allItems.length ? <button className="cwu-technical-load" type="button" onClick={() => setVisibleCount((current) => current + 30)}>加载更早记录</button> : null}
+        {visibleItems.map(item => <ProgressiveProcessItem key={item.id} {...{ item, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }} expanded={Boolean(expandedItems[item.id])} itemReadState={itemReadState[item.id]} onLoadItem={onLoadItem ? () => void loadItem(item) : null} onToggle={() => setExpandedItems(current => ({ ...current, [item.id]: !current[item.id] }))} />)}
         {!visibleItems.length && !error ? <p className="cwu-technical-loading">{running ? '等待执行进度…' : '没有可展示的执行记录。'}</p> : null}
       </>}
     </ScrollRegion>}
@@ -3641,17 +3697,19 @@ function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onOpenA
   </section>;
 }
 
-function ProgressiveProcessItem({ item, expanded, onToggle, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }) {
+function ProgressiveProcessItem({ item, expanded, onToggle, onLoadItem, itemReadState, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }) {
   const panelId = useId();
   const summary = technicalProcessSummary(item);
-  const hasContent = Boolean(item.text || item.detail || item.output || item.media?.length || item.artifacts?.length);
-  const needsDisclosure = hasContent && technicalProcessNeedsDisclosure(item);
+  const hasContent = Boolean(item.text || item.detail || item.output || item.media?.length || item.artifacts?.length || item.detailsAvailable);
+  const needsDisclosure = hasContent && (item.detailsAvailable || itemReadState?.refreshOnOpen || technicalProcessNeedsDisclosure(item));
   const simpleText = !needsDisclosure && item.text && !item.detail && !item.output && !item.media?.length && !item.artifacts?.length;
   const row = <><span className="cwu-process-chevron" aria-hidden="true">{hasContent ? expanded ? '⌄' : '›' : '·'}</span><span className="cwu-process-summary-text">{summary.title}</span><small>{[summary.typeLabel, summary.statusLabel].filter(Boolean).join(' · ')}</small></>;
   return <article className={`cwu-process-row type-${item.type}`}>
     {simpleText ? <div className="cwu-process-inline-text"><div className="cwu-process-copy"><SessionMarkdown>{item.text}</SessionMarkdown></div>{summary.statusLabel ? <small>{summary.statusLabel}</small> : null}</div> : <>
-    {needsDisclosure ? <button type="button" className="cwu-process-summary" aria-expanded={expanded} aria-controls={panelId} onClick={onToggle}>{row}</button> : <div className="cwu-process-summary is-inline"><span className="cwu-process-summary-text">{item.type === 'assistant' || summary.title === String(item.text || '').trim().split('\n')[0] ? summary.typeLabel : summary.title}</span>{summary.statusLabel ? <small>{summary.statusLabel}</small> : null}</div>}
+    {needsDisclosure ? <button type="button" className="cwu-process-summary" aria-expanded={expanded} aria-controls={panelId} onClick={() => { onToggle(); if (!expanded && (item.detailsAvailable || itemReadState?.refreshOnOpen)) onLoadItem?.(); }}>{row}</button> : <div className="cwu-process-summary is-inline"><span className="cwu-process-summary-text">{item.type === 'assistant' || summary.title === String(item.text || '').trim().split('\n')[0] ? summary.typeLabel : summary.title}</span>{summary.statusLabel ? <small>{summary.statusLabel}</small> : null}</div>}
+    {itemReadState?.status === 'error' ? <div className="cwu-process-error" role="alert"><p>{itemReadState.error}</p><button type="button" onClick={onLoadItem}>重试</button></div> : null}
     {hasContent && (!needsDisclosure || expanded) ? <div className={`cwu-process-body${needsDisclosure ? '' : ' is-inline'}`} id={panelId}>
+      {itemReadState?.status === 'loading' ? <p className="cwu-technical-loading" role="status">正在读取明细…</p> : null}
       {item.text ? item.type === 'command' ? <pre className="cwu-process-command">{item.text}</pre> : <div className="cwu-process-copy"><SessionMarkdown>{item.text}</SessionMarkdown></div> : null}
       {[['detail', '调用详情'], ['output', '输出']].map(([field, label]) => item[field] ? <section key={field}><h4>{label}</h4><ScrollRegion className="cwu-process-detail" bounded ariaLabel={label}><pre>{item[field]}</pre></ScrollRegion></section> : null)}
       {item.media?.length ? <MediaGallery items={item.media} onOpenAttachment={onOpenArtifact ? attachment => onOpenArtifact(attachment, item) : null} onResolveMedia={onResolveMedia} sessionId={sessionId} /> : null}

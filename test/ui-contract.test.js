@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { appendComposerReferences, attachmentDragLeavesTarget, clipboardAttachmentFiles, composerDropPayload, dataTransferHasFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardHasComplexStructure, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment, turnDurationLabel } from '../src/ui/model.js';
+import { appendComposerReferences, attachmentDragLeavesTarget, clipboardAttachmentFiles, composerDropPayload, dataTransferHasFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, mergeTechnicalItems, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardHasComplexStructure, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment, technicalItemsWindow, turnDurationLabel } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -34,6 +34,34 @@ test('progressive disclosure keeps text progress and Host-designated observation
     ] });
     assert.deepEqual(view.technicalItems.map(technicalProcessNeedsDisclosure), [false, false, false, true, true]);
     assert.equal(view.technicalItems[1].disclosure, 'inline');
+  }
+});
+
+test('running technical records keep full loaded history while recent live records update', () => {
+  for (const projectId of [null, 'project-scoped']) {
+    const normalized = normalizeSessionViewModel({ projectId, technicalItems: [{ id: 'recent', text: 'preview', previewTruncated: true, detailsAvailable: true }] });
+    assert.equal(normalized.technicalItems[0].previewTruncated, true);
+    assert.equal(normalized.technicalItems[0].detailsAvailable, true);
+    const merged = mergeTechnicalItems([
+      { id: 'recent', text: 'summary', status: 'inProgress', detailsAvailable: true },
+      { id: 'new', text: 'newest live progress', status: 'inProgress' },
+    ], [
+      { id: 'earlier', text: 'older full record' },
+      { id: 'recent', text: 'complete loaded record', output: 'full output' },
+    ]);
+    assert.equal(merged[0].id, 'earlier');
+    assert.equal(merged[1].text, 'complete loaded record');
+    assert.equal(merged[1].output, 'full output');
+    assert.equal(merged[1].status, 'inProgress');
+    assert.equal(merged[1].previewTruncated, false);
+    assert.equal(merged[1].detailsAvailable, false);
+    assert.equal(merged[2].id, 'new');
+    const directory = mergeTechnicalItems([{ id: 'directory', text: 'new summary', detailsAvailable: true }],
+      [{ id: 'directory', text: 'old summary', detailsAvailable: true }]);
+    assert.equal(directory[0].detailsAvailable, true, 'merging directories cannot mark unread details as loaded');
+    assert.equal(mergeTechnicalItems([{ id: 'late-output', detailsAvailable: true }],
+      [{ id: 'late-output', detailsAvailable: false }])[0].detailsAvailable, true);
+    assert.deepEqual(technicalItemsWindow(Array.from({ length: 65 }, (_, index) => ({ id: String(index) }))), Array.from({ length: 30 }, (_, index) => ({ id: String(index + 35) })));
   }
 });
 

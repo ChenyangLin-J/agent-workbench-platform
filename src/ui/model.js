@@ -30,6 +30,33 @@ export function technicalProcessNeedsDisclosure(item = {}) {
   if (item.disclosure === 'inline' || item.type === 'assistant') return false;
   return item.type === 'command' || Boolean(item.detail || item.output);
 }
+
+export function mergeTechnicalItems(liveItems = [], loadedItems = []) {
+  const liveById = new Map(liveItems.map((item) => [item.id, item]));
+  const merged = loadedItems.map((loaded) => {
+    const live = liveById.get(loaded.id);
+    if (!live) return loaded;
+    liveById.delete(loaded.id);
+    if (live.detailsAvailable && (loaded.detailsAvailable || !(loaded.detail || loaded.output))) return live;
+    if (!live.previewTruncated && !live.detailsAvailable) return live;
+    return {
+      ...loaded,
+      ...live,
+      text: loaded.text,
+      detail: loaded.detail,
+      output: loaded.output,
+      media: loaded.media,
+      artifacts: loaded.artifacts,
+      previewTruncated: false,
+      detailsAvailable: false,
+    };
+  });
+  return [...merged, ...liveById.values()];
+}
+
+export function technicalItemsWindow(items = [], count = 30) {
+  return items.slice(-Math.max(1, count));
+}
 richTextTurndown.use(turndownGfm);
 richTextTurndown.addRule('styledStrong', {
   filter: (node) => node.nodeName === 'SPAN' && /(?:bold|[6-9]00)/i.test(node.style?.fontWeight || ''),
@@ -227,6 +254,8 @@ export function normalizeSessionViewModel(value = {}) {
           output: String(item?.output || ''),
           status: String(item?.status || ''),
           detail: String(item?.detail || ''),
+          previewTruncated: Boolean(item?.previewTruncated),
+          detailsAvailable: Boolean(item?.detailsAvailable),
           disclosure: item?.disclosure === 'inline' ? 'inline' : null,
           startedAt: item?.startedAt || item?.createdAt || null,
           turnId: stringOrNull(item?.turnId),
