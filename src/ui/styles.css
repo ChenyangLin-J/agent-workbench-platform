@@ -731,6 +731,18 @@
 @media (pointer: coarse) { .cwu-turn-detail-toggle { min-width: 44px; min-height: 44px; } }
 .cwu-process-count { margin: 0; padding: 4px 10px 8px; color: var(--cwu-muted); font-size: 11px; }
 .cwu-process-row + .cwu-process-row { border-top: 1px solid var(--cwu-border); }
+.cwu-process-group { border-top: 1px solid var(--cwu-border); }
+.cwu-process-group-toggle { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--cwu-text); padding: 8px 10px; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.cwu-process-group-toggle > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cwu-process-group-toggle > span:nth-child(2), .cwu-process-summary-text { display: inline-flex; align-items: center; gap: 6px; }
+.cwu-process-group-toggle small { margin-left: auto; flex: 0 0 auto; color: var(--cwu-muted); font-size: 10px; }
+.cwu-process-group.is-failed .cwu-process-group-toggle small { color: var(--cwu-error); }
+.cwu-process-group.is-inProgress .cwu-process-group-toggle small { color: var(--cwu-running); }
+.cwu-process-group-items { border-top: 1px solid var(--cwu-border); }
+.cwu-process-row.type-subagent { min-height: 44px; background: color-mix(in srgb, var(--cwu-accent) 4%, transparent); }
+.cwu-process-row.type-subagent .cwu-process-summary-text { display: inline-flex; align-items: center; gap: 6px; }
+.cwu-subagent-icon { color: color-mix(in srgb, var(--cwu-accent) 62%, var(--cwu-muted)); font-size: 14px; line-height: 1; }
+.cwu-tool-icon { color: color-mix(in srgb, var(--cwu-accent) 55%, var(--cwu-muted)); font-size: 12px; line-height: 1; }
 .cwu-process-summary { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; min-height: 44px; padding: 10px; border: 0; background: transparent; color: var(--cwu-text); text-align: left; font-size: 12px; }
 button.cwu-process-summary { cursor: pointer; }
 button.cwu-process-summary:hover, button.cwu-process-summary[aria-expanded='true'] { background: var(--cwu-soft); }

@@ -1,4 +1,5 @@
 import { parseSessionReferenceEnvelopes } from '../session-references.js';
+import { runtimeTechnicalIdentity, runtimeCollaborationDetail } from './runtime-technical-item.js';
 const TERMINAL_TURN_STATUSES = new Set(['completed', 'failed', 'interrupted', 'cancelled', 'canceled']);
 
 export function parseMinimalHostSessionEvent(envelope) {
@@ -182,12 +183,12 @@ function applyRuntimeItem(session, event) {
     turnId: event.runtimeTurnId || null,
     turnKey: event.runtimeTurnId || null,
     kind: String(item.type || 'runtimeItem'),
-    type: item.type === 'commandExecution' ? 'command' : item.type === 'fileChange' ? 'file' : 'tool',
+    ...runtimeTechnicalIdentity(item),
     text: item.type === 'commandExecution' ? String(item.command || '') : runtimeItemText(item),
     output: String(item.aggregatedOutput || item.output || ''),
     title: runtimeItemTitle(item),
     status: String(item.status || (event.type === 'item_completed' ? 'completed' : 'running')),
-    detail: runtimeItemText(item).slice(0, 16_000),
+    detail: item.type === 'collabAgentToolCall' ? runtimeCollaborationDetail(item) : runtimeItemText(item).slice(0, 16_000),
     startedAt: existing?.startedAt || eventTimestamp(event),
     updatedAt: eventTimestamp(event),
   };

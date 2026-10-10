@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { normalizeSessionReferences, parseSessionReferenceEnvelopes } from '../session-references.js';
 
 import { normalizeSessionAttachment } from '../attachments.js';
+import { runtimeTechnicalIdentity, runtimeCollaborationDetail } from './runtime-technical-item.js';
 
 const LEGACY_STORE_VERSION = 1;
 const SESSION_STORE_VERSION = 2;
@@ -1744,7 +1745,7 @@ function applyRuntimeItem(session, event) {
     id,
     turnId: event.runtimeTurnId,
     kind: String(item.type || 'runtimeItem'),
-    type: item.type === 'commandExecution' ? 'command' : item.type === 'fileChange' ? 'file' : 'tool',
+    ...runtimeTechnicalIdentity(item),
     text: item.type === 'commandExecution' ? String(item.command || '') : runtimeItemText(item),
     output: String(item.aggregatedOutput || item.output || ''),
     title: runtimeItemTitle(item),
@@ -1836,7 +1837,9 @@ function runtimeItemTitle(item) {
 
 function runtimeItemDetail(item) {
   const sections = [];
-  if (item.type === 'imageGeneration') {
+  if (item.type === 'collabAgentToolCall') {
+    return runtimeCollaborationDetail(item);
+  } else if (item.type === 'imageGeneration') {
     addRuntimeSection(
       sections,
       'Publication',

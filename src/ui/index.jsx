@@ -36,6 +36,10 @@ import {
   technicalProcessNeedsDisclosure,
   mergeTechnicalItems,
   technicalItemsWindow,
+  technicalGroupsInWindow,
+  technicalGroupSummary,
+  technicalStatusLabel,
+  technicalSubagentOperationLabel,
   turnDurationLabel,
 } from './model.js';
 import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
@@ -3567,6 +3571,7 @@ function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onLoadI
   const [localTab, setLocalTab] = useState('execution');
   const selectedTab = manualTab ?? localTab;
   const [expandedItems, setExpandedItems] = useState({});
+  const [expandedGroups, setExpandedGroups] = useState({});
   const [read, setRead] = useState({ status: 'idle', error: '' });
   const [visibleCount, setVisibleCount] = useState(30);
   const [needsCompletionRefresh, setNeedsCompletionRefresh] = useState(false);
@@ -3689,11 +3694,24 @@ function ProgressiveTechnicalDetails({ items, available, loaded, onLoad, onLoadI
         {running && available && onLoad && !loaded && read.status === 'idle' ? <button className="cwu-technical-load" type="button" onClick={() => { setVisibleCount((current) => current + 30); void load(); }}>加载更早记录</button> : null}
         {!tabbed && complete && allItems.length ? <p className="cwu-process-count">{allItems.length} 项执行记录</p> : null}
         {visibleCount < allItems.length ? <button className="cwu-technical-load" type="button" onClick={() => setVisibleCount((current) => current + 30)}>加载更早记录</button> : null}
-        {visibleItems.map(item => <ProgressiveProcessItem key={item.id} {...{ item, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }} expanded={Boolean(expandedItems[item.id])} itemReadState={itemReadState[item.id]} onLoadItem={onLoadItem ? () => void loadItem(item) : null} onToggle={() => setExpandedItems(current => ({ ...current, [item.id]: !current[item.id] }))} />)}
+        {technicalGroupsInWindow(allItems, visibleItems).map(entry => entry.kind === 'group'
+          ? <TechnicalItemGroup key={entry.id} group={entry} open={Boolean(expandedGroups[entry.id])} onToggle={() => setExpandedGroups(current => ({ ...current, [entry.id]: !current[entry.id] }))} {...{ expandedItems, itemReadState, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }} onLoadItem={onLoadItem ? item => void loadItem(item) : null} onToggleItem={item => setExpandedItems(current => ({ ...current, [item.id]: !current[item.id] }))} />
+          : <ProgressiveProcessItem key={entry.item.id} item={entry.item} {...{ onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }} expanded={Boolean(expandedItems[entry.item.id])} itemReadState={itemReadState[entry.item.id]} onLoadItem={onLoadItem ? () => void loadItem(entry.item) : null} onToggle={() => setExpandedItems(current => ({ ...current, [entry.item.id]: !current[entry.item.id] }))} />)}
         {!visibleItems.length && !error ? <p className="cwu-technical-loading">{running ? '等待执行进度…' : '没有可展示的执行记录。'}</p> : null}
       </>}
     </ScrollRegion>}
     </div> : null}
+  </section>;
+}
+
+function TechnicalItemGroup({ group, open, onToggle, expandedItems, itemReadState, onLoadItem, onToggleItem, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }) {
+  const summary = technicalGroupSummary(group);
+  const statusLabel = technicalStatusLabel(summary.status);
+  return <section className={`cwu-process-group is-${summary.status || 'unknown'}`}>
+    <button type="button" className="cwu-process-group-toggle" aria-expanded={open} onClick={onToggle}>
+      <span aria-hidden="true" className="cwu-process-chevron">{open ? '⌄' : '›'}</span><span>{group.identity.startsWith('tool:') ? <><span className="cwu-tool-icon" aria-hidden="true">⌘</span>{summary.label}</> : summary.label}</span><small>{[`${summary.count} 项`, statusLabel].filter(Boolean).join(' · ')}</small>
+    </button>
+    {open ? <div className="cwu-process-group-items">{group.items.map(item => <ProgressiveProcessItem key={item.id} {...{ item, onOpenArtifact, onResolveMedia, onRevealArtifact, sessionId }} expanded={Boolean(expandedItems[item.id])} itemReadState={itemReadState[item.id]} onLoadItem={onLoadItem ? () => onLoadItem(item) : null} onToggle={() => onToggleItem(item)} />)}</div> : null}
   </section>;
 }
 
@@ -3702,11 +3720,12 @@ function ProgressiveProcessItem({ item, expanded, onToggle, onLoadItem, itemRead
   const summary = technicalProcessSummary(item);
   const hasContent = Boolean(item.text || item.detail || item.output || item.media?.length || item.artifacts?.length || item.detailsAvailable);
   const needsDisclosure = hasContent && (item.detailsAvailable || itemReadState?.refreshOnOpen || technicalProcessNeedsDisclosure(item));
-  const simpleText = !needsDisclosure && item.text && !item.detail && !item.output && !item.media?.length && !item.artifacts?.length;
-  const row = <><span className="cwu-process-chevron" aria-hidden="true">{hasContent ? expanded ? '⌄' : '›' : '·'}</span><span className="cwu-process-summary-text">{summary.title}</span><small>{[summary.typeLabel, summary.statusLabel].filter(Boolean).join(' · ')}</small></>;
+  const simpleText = item.type !== 'subagent' && !needsDisclosure && item.text && !item.detail && !item.output && !item.media?.length && !item.artifacts?.length;
+  const agentOperation = technicalSubagentOperationLabel(item.agentOperation, item.status);
+  const row = <>{needsDisclosure ? <span className="cwu-process-chevron" aria-hidden="true">{expanded ? '⌄' : '›'}</span> : null}<span className="cwu-process-summary-text">{item.type === 'subagent' ? <><span className="cwu-subagent-icon" aria-hidden="true">◇</span>{summary.title}</> : item.type === 'tool' ? <><span className="cwu-tool-icon" aria-hidden="true">⌘</span>{summary.title}</> : summary.title}</span><small>{[summary.typeLabel, item.type === 'subagent' ? agentOperation : summary.statusLabel].filter(Boolean).join(' · ')}</small></>;
   return <article className={`cwu-process-row type-${item.type}`}>
     {simpleText ? <div className="cwu-process-inline-text"><div className="cwu-process-copy"><SessionMarkdown>{item.text}</SessionMarkdown></div>{summary.statusLabel ? <small>{summary.statusLabel}</small> : null}</div> : <>
-    {needsDisclosure ? <button type="button" className="cwu-process-summary" aria-expanded={expanded} aria-controls={panelId} onClick={() => { onToggle(); if (!expanded && (item.detailsAvailable || itemReadState?.refreshOnOpen)) onLoadItem?.(); }}>{row}</button> : <div className="cwu-process-summary is-inline"><span className="cwu-process-summary-text">{item.type === 'assistant' || summary.title === String(item.text || '').trim().split('\n')[0] ? summary.typeLabel : summary.title}</span>{summary.statusLabel ? <small>{summary.statusLabel}</small> : null}</div>}
+    {needsDisclosure ? <button type="button" className="cwu-process-summary" aria-expanded={expanded} aria-controls={panelId} onClick={() => { onToggle(); if (!expanded && (item.detailsAvailable || itemReadState?.refreshOnOpen)) onLoadItem?.(); }}>{row}</button> : <div className="cwu-process-summary is-inline">{row}</div>}
     {itemReadState?.status === 'error' ? <div className="cwu-process-error" role="alert"><p>{itemReadState.error}</p><button type="button" onClick={onLoadItem}>重试</button></div> : null}
     {hasContent && (!needsDisclosure || expanded) ? <div className={`cwu-process-body${needsDisclosure ? '' : ' is-inline'}`} id={panelId}>
       {itemReadState?.status === 'loading' ? <p className="cwu-technical-loading" role="status">正在读取明细…</p> : null}

@@ -17,18 +17,49 @@ const richTextTurndown = new TurndownService({
 });
 
 export function technicalProcessSummary(item) {
-  const typeLabel = { assistant: '进度说明', command: '运行命令', tool: '工具调用', plan: '执行计划', file: '文件变更' }[item.type] || '执行信息';
-  const statusLabel = { inProgress: '进行中', completed: '已完成', failed: '失败', interrupted: '已中断' }[item.status] || '';
+  const typeLabel = { assistant: '进度说明', command: '运行命令', tool: '工具调用', subagent: 'Subagent', plan: '执行计划', file: '文件变更' }[item.type] || '执行信息';
+  const statusLabel = technicalStatusLabel(item.status);
   const firstLine = String(item.text || '').trim().split('\n')[0].trim();
-  const title = item.type === 'command' || item.type === 'assistant'
+  const title = item.type === 'subagent'
+    ? item.agentName || item.agentOperation || typeLabel
+    : item.type === 'command' || item.type === 'assistant'
     ? firstLine || typeLabel
-    : item.label || item.title || firstLine || typeLabel;
+    : item.toolName || item.label || item.title || firstLine || typeLabel;
   return { title: ['assistant', 'command', 'tool'].includes(title) ? typeLabel : title, typeLabel, statusLabel };
+}
+
+export function technicalStatusState(status) {
+  return { running: 'inProgress', pending: 'inProgress', canceled: 'interrupted', cancelled: 'interrupted' }[status] || status || '';
+}
+
+export function technicalStatusLabel(status) {
+  return { inProgress: '进行中', completed: '已完成', failed: '失败', interrupted: '已中断' }[technicalStatusState(status)] || '';
+}
+
+export function technicalSubagentOperationLabel(operation, status) {
+  const normalized = String(operation || '');
+  const state = technicalStatusState(status);
+  if (state === 'failed') return '失败';
+  if (state === 'interrupted') return '已中断';
+  const labels = state === 'inProgress' ? {
+    spawnAgent: '派发中', spawn_agent: '派发中',
+    sendInput: '发送中', send_message: '发送中',
+    wait: '等待中', wait_agent: '等待中',
+    closeAgent: '关闭中', close_agent: '关闭中',
+  } : state === 'completed' ? {
+    spawnAgent: '已派发', spawn_agent: '已派发',
+    sendInput: '已发送', send_message: '已发送',
+    wait: '已返回', wait_agent: '已返回',
+    closeAgent: '已关闭', close_agent: '已关闭',
+  } : {};
+  return labels[normalized] || normalized;
 }
 
 export function technicalProcessNeedsDisclosure(item = {}) {
   if (item.disclosure === 'inline' || item.type === 'assistant') return false;
-  return item.type === 'command' || Boolean(item.detail || item.output);
+  return item.type === 'command' || item.type === 'subagent'
+    || (item.type === 'tool' && Boolean(item.toolName) && !item.media?.length && !item.artifacts?.length)
+    || Boolean(item.detail || item.output);
 }
 
 export function mergeTechnicalItems(liveItems = [], loadedItems = []) {
@@ -56,6 +87,72 @@ export function mergeTechnicalItems(liveItems = [], loadedItems = []) {
 
 export function technicalItemsWindow(items = [], count = 30) {
   return items.slice(-Math.max(1, count));
+}
+
+// Display-only grouping.  The original directory remains the source of truth for
+// order, item reads, and counts.
+export function groupTechnicalItems(items = []) {
+  const groups = [];
+  let current = null;
+  for (const item of items) {
+    const identity = technicalGroupIdentity(item);
+    if (identity && current?.identity === identity && sameTechnicalTurn(current.item, item)) {
+      current.items.push(item);
+      continue;
+    }
+    if (current) groups.push(current);
+    current = identity ? { kind: 'group', id: `technical-group:${identity}:${item.id}`, identity, item, items: [item] } : null;
+    if (!identity) groups.push({ kind: 'item', id: item.id, item });
+  }
+  if (current) groups.push(current);
+  return groups.map((entry) => entry.kind === 'group' && entry.items.length === 1
+    ? { kind: 'item', id: entry.items[0].id, item: entry.items[0] }
+    : entry);
+}
+
+export function technicalGroupsInWindow(items = [], windowItems = []) {
+  const visible = new Set(windowItems.map((item) => item.id));
+  return groupTechnicalItems(items).flatMap((entry) => {
+    if (entry.kind === 'item') return visible.has(entry.item.id) ? [entry] : [];
+    const visibleItems = entry.items.filter((item) => visible.has(item.id));
+    return visibleItems.length ? [{ ...entry, items: visibleItems }] : [];
+  });
+}
+
+export function technicalGroupSummary(group) {
+  const items = group?.items || [];
+  const states = items.map((item) => technicalStatusState(item.status));
+  const status = states.includes('failed') ? 'failed'
+    : states.includes('inProgress') ? 'inProgress'
+      : states.includes('interrupted') ? 'interrupted'
+        : states.includes('completed') ? 'completed' : '';
+  const first = items[0] || {};
+  const label = group?.identity === 'command:python' ? 'Python 命令'
+    : group?.identity === 'command' ? '运行命令'
+      : first.toolName || first.label || first.title || '工具调用';
+  return { label, status, count: items.length };
+}
+
+function technicalGroupIdentity(item = {}) {
+  // Rich/inline records are intentional transcript boundaries, including every
+  // Subagent row. Generic tool records are deliberately not guessed together.
+  if (['assistant', 'plan', 'inline', 'image', 'file', 'subagent'].includes(item.type)
+    || item.disclosure === 'inline' || item.media?.length || item.artifacts?.length) return null;
+  if (item.type === 'command') return isPythonTechnicalItem(item) ? 'command:python' : 'command';
+  if (item.type === 'tool' && item.toolName && !isPythonTechnicalItem(item)) return `tool:${item.toolName}`;
+  if (item.type === 'tool' && item.toolName && isPythonTechnicalItem(item)) return 'tool:python';
+  return null;
+}
+
+function isPythonTechnicalItem(item = {}) {
+  const toolName = String(item.toolName || '').trim();
+  const command = String(item.text || '').trim();
+  return /^python(?:3(?:\.\d+)?)?$/i.test(toolName)
+    || /^python(?:3(?:\.\d+)?)?(?:\s|$)/i.test(command);
+}
+
+function sameTechnicalTurn(left = {}, right = {}) {
+  return String(left.turnKey ?? left.turnId ?? '') === String(right.turnKey ?? right.turnId ?? '');
 }
 richTextTurndown.use(turndownGfm);
 richTextTurndown.addRule('styledStrong', {
@@ -250,6 +347,9 @@ export function normalizeSessionViewModel(value = {}) {
           title: String(item?.title || '执行步骤'),
           type: String(item?.type || 'tool'),
           label: String(item?.label || ''),
+          toolName: String(item?.toolName || ''),
+          agentName: String(item?.agentName || ''),
+          agentOperation: String(item?.agentOperation || ''),
           text: String(item?.text || ''),
           output: String(item?.output || ''),
           status: String(item?.status || ''),

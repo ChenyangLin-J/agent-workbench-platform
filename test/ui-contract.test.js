@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import katex from 'katex';
-import { appendComposerReferences, attachmentDragLeavesTarget, clipboardAttachmentFiles, composerDropPayload, dataTransferHasFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, mergeTechnicalItems, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardHasComplexStructure, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment, technicalItemsWindow, turnDurationLabel } from '../src/ui/model.js';
+import { appendComposerReferences, attachmentDragLeavesTarget, clipboardAttachmentFiles, composerDropPayload, dataTransferHasFiles, documentPreviewPresentation, extractInlineVisualizations, extractRemarkDirectives, extractVisualizationReferences, groupSessionMessages, groupTechnicalItems, technicalGroupsInWindow, isDocumentResourceHref, isLocalFileHref, localFileBrowserHref, markdownHeadingId, mergeTechnicalItems, normalizeCapabilityManagerViewModel, normalizeMarkdownMath, normalizeSessionBrowserViewModel, normalizeSessionViewModel, normalizeSideChatPanelViewModel, renderFileCitationsAsMarkdown, resolveDocumentResourceHref, richClipboardHasComplexStructure, richClipboardText, sessionTranscriptAwayFromLatest, shouldConvertPastedTextToAttachment, technicalGroupSummary, technicalItemsWindow, technicalStatusLabel, technicalStatusState, technicalSubagentOperationLabel, turnDurationLabel } from '../src/ui/model.js';
 
 const uiUrl = new URL('../src/ui/index.jsx', import.meta.url);
 const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
@@ -15,6 +15,7 @@ test('progressive records use human summaries and do not invent unknown statuses
   assert.equal(technicalProcessSummary({ type: 'assistant', title: 'assistant', text: '检查最近的执行结果\n后续说明' }).title, '检查最近的执行结果');
   assert.equal(technicalProcessSummary({ type: 'tool', title: 'tool', status: 'unknown' }).statusLabel, '');
   assert.equal(technicalProcessSummary({ type: 'tool', title: 'tool' }).title, '工具调用');
+  assert.equal(technicalProcessSummary({ type: 'tool', toolName: 'read_file', title: 'tool' }).title, 'read_file');
   for (const projectId of [null, 'project-scoped']) {
     const view = normalizeSessionViewModel({ sessionId: 'session', projectId, technicalDetailsAvailable: ['turn'], technicalItemCount: 99 });
     assert.deepEqual(view.technicalDetailsLoaded, []);
@@ -34,6 +35,8 @@ test('progressive disclosure keeps text progress and Host-designated observation
     ] });
     assert.deepEqual(view.technicalItems.map(technicalProcessNeedsDisclosure), [false, false, false, true, true]);
     assert.equal(view.technicalItems[1].disclosure, 'inline');
+    assert.equal(technicalProcessNeedsDisclosure({ type: 'tool', toolName: 'webSearch', text: 'a query' }), true);
+    assert.equal(technicalProcessNeedsDisclosure({ type: 'subagent', text: 'reviewer · activity' }), true);
   }
 });
 
@@ -63,6 +66,55 @@ test('running technical records keep full loaded history while recent live recor
       [{ id: 'late-output', detailsAvailable: false }])[0].detailsAvailable, true);
     assert.deepEqual(technicalItemsWindow(Array.from({ length: 65 }, (_, index) => ({ id: String(index) }))), Array.from({ length: 30 }, (_, index) => ({ id: String(index + 35) })));
   }
+});
+
+test('technical display projection groups only adjacent named execution records and preserves boundaries', () => {
+  for (const projectId of [null, 'project-scoped']) {
+    const items = normalizeSessionViewModel({ projectId, technicalItems: [
+      { id: 'one', type: 'command', text: 'git status', status: 'completed' },
+      { id: 'two', type: 'command', text: 'git diff', status: 'failed' },
+      { id: 'note', type: 'assistant', text: '检查结果' },
+      { id: 'py', type: 'command', text: 'python check.py' },
+      { id: 'py2', type: 'command', text: 'python test.py' },
+      { id: 'tool-one', type: 'tool', toolName: 'read_file' },
+      { id: 'tool-two', type: 'tool', toolName: 'read_file', status: 'inProgress' },
+      { id: 'sub', type: 'subagent', agentName: 'reviewer' },
+      { id: 'generic-a', type: 'tool', title: '工具调用' },
+      { id: 'generic-b', type: 'tool', title: '工具调用' },
+    ] }).technicalItems;
+    const projection = groupTechnicalItems(items);
+    assert.deepEqual(projection.map(entry => entry.kind === 'group' ? entry.items.map(item => item.id) : entry.item.id), [['one', 'two'], 'note', ['py', 'py2'], ['tool-one', 'tool-two'], 'sub', 'generic-a', 'generic-b']);
+    assert.deepEqual(technicalGroupSummary(projection[0]), { label: '运行命令', status: 'failed', count: 2 });
+    assert.equal(items.map(item => item.id).join(','), 'one,two,note,py,py2,tool-one,tool-two,sub,generic-a,generic-b');
+    const liveGroup = groupTechnicalItems(items.slice(3, 5))[0];
+    const appendedGroup = groupTechnicalItems([...items.slice(3, 5), { id: 'py3', type: 'command', text: 'python report.py' }])[0];
+    assert.equal(appendedGroup.id, liveGroup.id, 'tail append retains the open group identity');
+    assert.deepEqual(technicalItemsWindow(Array.from({ length: 32 }, (_, index) => ({ id: `command-${index}`, type: 'command', text: 'git status' }))).map(item => item.id), Array.from({ length: 30 }, (_, index) => `command-${index + 2}`));
+    const thirtyOne = Array.from({ length: 31 }, (_, index) => ({ id: `live-${index}`, type: 'command', text: 'git status', turnKey: 'turn' }));
+    const previousWindowGroup = technicalGroupsInWindow(thirtyOne.slice(0, 30), technicalItemsWindow(thirtyOne.slice(0, 30)))[0];
+    const shiftedWindowGroup = technicalGroupsInWindow(thirtyOne, technicalItemsWindow(thirtyOne))[0];
+    assert.equal(shiftedWindowGroup.id, previousWindowGroup.id, 'sliding the latest-30 window does not remount an open group');
+  }
+});
+
+test('technical groups distinguish real Python commands, turns, and native statuses', () => {
+  const projection = groupTechnicalItems([
+    { id: 'python-a', type: 'command', text: 'python3 -c "print(1)"', turnKey: 'one', status: 'running' },
+    { id: 'python-b', type: 'command', text: 'python test.py', turnKey: 'one', status: 'pending' },
+    { id: 'shell', type: 'tool', toolName: 'exec_command', text: 'echo python', turnKey: 'one' },
+    { id: 'next-turn', type: 'command', text: 'git status', turnKey: 'two', status: 'canceled' },
+    { id: 'next-turn-2', type: 'command', text: 'git diff', turnKey: 'three' },
+  ]);
+  assert.equal(projection[0].identity, 'command:python');
+  assert.deepEqual(projection[0].items.map(item => item.id), ['python-a', 'python-b']);
+  assert.equal(projection[1].item.toolName, 'exec_command', 'a shell string mentioning python is not a Python tool');
+  assert.deepEqual(projection.slice(2).map(entry => entry.item.id), ['next-turn', 'next-turn-2'], 'adjacent commands never cross a turn boundary');
+  assert.deepEqual(technicalGroupSummary(projection[0]), { label: 'Python 命令', status: 'inProgress', count: 2 });
+  assert.equal(technicalStatusState('canceled'), 'interrupted');
+  assert.equal(technicalStatusLabel('running'), '进行中');
+  assert.equal(technicalSubagentOperationLabel('spawnAgent', 'completed'), '已派发');
+  assert.equal(technicalSubagentOperationLabel('wait_agent', 'pending'), '等待中');
+  assert.equal(technicalSubagentOperationLabel('sendInput', 'failed'), '失败');
 });
 
 test('attachment drag feedback survives child transitions but clears outside the Session', () => {

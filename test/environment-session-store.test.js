@@ -5,6 +5,43 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { EnvironmentSessionRuntimeStore, EnvironmentSessionStore } from '../src/environment/index.js';
+import { applyMinimalHostSessionEvent } from '../src/environment/host-session-events.js';
+
+test('durable and streamed execution records preserve bounded Subagent and named tool identities', async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'awb-execution-identity-'));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  const store = new EnvironmentSessionStore({ stateRoot });
+  const created = await store.create({ title: 'Execution identities' });
+  let streamed = { ...created, technicalItems: [] };
+  for (const item of [
+    { id: 'child-start', type: 'collabAgentToolCall', tool: 'spawnAgent', status: 'completed',
+      receiverThreadIds: ['child-1'], prompt: 'Inspect grouping without changing files.',
+      agentsStates: { 'child-1': { status: 'running' } }, model: 'example-model' },
+    { id: 'named-tool', type: 'mcpToolCall', server: 'docs', tool: 'search', status: 'completed',
+      arguments: { query: 'process display' } },
+    { id: 'long-name', type: 'dynamicToolCall', tool: 'x'.repeat(200), status: 'completed' },
+  ]) {
+    const event = { sessionId: created.sessionId, type: 'item_completed', runtimeTurnId: 'turn-identity', payload: { item } };
+    await store.applyEvent(event);
+    streamed = applyMinimalHostSessionEvent(streamed, event).session;
+  }
+  const restored = await new EnvironmentSessionStore({ stateRoot }).get(created.sessionId);
+  for (const [index, identity] of [
+    { type: 'subagent', toolName: 'spawnAgent', agentOperation: 'spawnAgent', agentName: 'child-1' },
+    { type: 'tool', toolName: 'docs.search', agentOperation: '', agentName: '' },
+    { type: 'tool', toolName: 'x'.repeat(160), agentOperation: '', agentName: '' },
+  ].entries()) {
+    for (const view of [restored, streamed]) {
+      for (const [field, value] of Object.entries(identity)) assert.equal(view.technicalItems[index][field], value);
+    }
+  }
+  for (const view of [restored, streamed]) {
+    assert.match(view.technicalItems[0].detail, /Inspect grouping/);
+    assert.match(view.technicalItems[0].detail, /running/);
+    assert.equal(view.technicalItems[0].status, 'completed'); // The call completed, the child is still running.
+    assert.equal(view.technicalItems[0].agentName.includes('Inspect grouping'), false);
+  }
+});
 
 test('project-free Session store persists bindings and Runtime events', async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'awb-sessions-'));
