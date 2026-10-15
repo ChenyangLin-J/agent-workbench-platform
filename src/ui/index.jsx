@@ -1016,6 +1016,9 @@ export function SessionWorkspace({
   const [inlineExecutionControls, setInlineExecutionControls] = useState(false);
   const cachedUi = uiStateStore?.get(view.sessionId);
   const [draft, setDraft] = useState(cachedUi?.draft ?? view.draft);
+  // This changes for intent, rather than draft text, so typing and then erasing
+  // still prevents a background voice task from replacing the Composer.
+  const [draftRevision, setDraftRevision] = useState(0);
   const [processOpenByTurn, setProcessOpenByTurn] = useState(cachedUi?.processOpenByTurn || {});
   const [detailTabByTurn, setDetailTabByTurn] = useState(cachedUi?.detailTabByTurn || {});
   const [attachments, setAttachments] = useState(cachedUi?.attachments || []);
@@ -1224,6 +1227,7 @@ export function SessionWorkspace({
     if (restored?.awayFromLatest) requestAnimationFrame(() => { if (transcriptRef.current) transcriptRef.current.scrollTop = restored.scrollTop; });
     transcriptTouchYRef.current = null;
     setDraft(restored?.draft ?? view.draft);
+    setDraftRevision((current) => current + 1);
     setAttachments(restored?.attachments || []);
     setReferences(restored?.references || []);
     setReferenceMention(null);
@@ -1501,6 +1505,7 @@ export function SessionWorkspace({
     if (!referenceMention || !addSessionReference(reference)) return;
     const nextDraft = removeComposerSessionMention(draft, referenceMention);
     setDraft(nextDraft);
+    setDraftRevision((current) => current + 1);
     actions.onDraftChange?.(nextDraft);
     setReferenceMention(null);
     setReferenceOptions([]);
@@ -1557,6 +1562,7 @@ export function SessionWorkspace({
     submitFollowRef.current = true;
     followLatest();
     setDraft('');
+    setDraftRevision((current) => current + 1);
     setAttachments((current) => current.filter((attachment) => attachment.status === 'error'));
     setReferences([]);
     setReferenceMention(null);
@@ -1794,6 +1800,7 @@ export function SessionWorkspace({
           });
           if (nextDraft !== currentDraft) {
             setDraft(nextDraft);
+            setDraftRevision((current) => current + 1);
             actions.onDraftChange?.(nextDraft);
           }
           const warning = String(result?.warning || '').trim();
@@ -1855,6 +1862,7 @@ export function SessionWorkspace({
       const end = Number.isInteger(target.selectionEnd) ? target.selectionEnd : start;
       const nextDraft = `${value.slice(0, start)}${text}${value.slice(end)}`;
       setDraft(nextDraft);
+      setDraftRevision((current) => current + 1);
       actions.onDraftChange?.(nextDraft);
       requestAnimationFrame(() => {
         target.focus();
@@ -2376,6 +2384,7 @@ export function SessionWorkspace({
               maxLength={SESSION_COMPOSER_TEXT_LIMIT}
               onChange={(event) => {
                 setDraft(event.target.value);
+                setDraftRevision((current) => current + 1);
                 actions.onDraftChange?.(event.target.value);
                 updateReferenceMention(event.target.value, event.target.selectionStart);
               }}
@@ -2428,7 +2437,7 @@ export function SessionWorkspace({
                 ) : view.executionProfile.label ? <span className="cwu-execution-profile">{view.executionProfile.label}</span> : null}
               </div>
               <div className="cwu-composer-actions" ref={composerActionsRef}>
-                {extensions.renderComposerActions?.({ session: view, draft, setDraft, disabled: composerDisabled, onRecordingChange: setComposerReadOnly }) || null}
+                {extensions.renderComposerActions?.({ session: view, draft, draftRevision, setDraft, disabled: composerDisabled, onRecordingChange: setComposerReadOnly }) || null}
                 {running && actions.onInterrupt ? (
                   <button
                     aria-label="停止当前处理"
@@ -2468,7 +2477,7 @@ export function SessionWorkspace({
           </agent-session-composer>}
         </footer>
       </main>
-      {composerOptionsOpen ? <div className="cwu-composer-options-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOptionsOpen(false); }}><section className="cwu-composer-options-sheet" role="dialog" aria-modal="true" aria-label="输入选项" tabIndex={-1} ref={composerOptionsRef}><div className="cwu-sheet-handle"/><header><strong>输入选项</strong><button aria-label="关闭输入选项" type="button" onClick={() => setComposerOptionsOpen(false)}>×</button></header>{renderExecutionOptionsStatus()}{renderExecutionControls()}{extensions.renderComposerOptions?.({ session: view, draft, setDraft, disabled: composerDisabled, onRecordingChange: setComposerReadOnly, close: () => setComposerOptionsOpen(false) }) || null}{!splitSendComposer && running ? <div className="cwu-mobile-submit-mode"><span>发送方式</span><div>{[['steer', '追加当前'], ['queue', '下一轮']].map(([mode, label]) => <button key={mode} type="button" aria-pressed={mobileSubmitMode === mode} onClick={() => setMobileSubmitMode(mode)}>{label}</button>)}</div></div> : null}<button className="cwu-send" type="button" onClick={() => setComposerOptionsOpen(false)}>完成</button></section></div> : null}
+      {composerOptionsOpen ? <div className="cwu-composer-options-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setComposerOptionsOpen(false); }}><section className="cwu-composer-options-sheet" role="dialog" aria-modal="true" aria-label="输入选项" tabIndex={-1} ref={composerOptionsRef}><div className="cwu-sheet-handle"/><header><strong>输入选项</strong><button aria-label="关闭输入选项" type="button" onClick={() => setComposerOptionsOpen(false)}>×</button></header>{renderExecutionOptionsStatus()}{renderExecutionControls()}{extensions.renderComposerOptions?.({ session: view, draft, draftRevision, setDraft, disabled: composerDisabled, onRecordingChange: setComposerReadOnly, close: () => setComposerOptionsOpen(false) }) || null}{!splitSendComposer && running ? <div className="cwu-mobile-submit-mode"><span>发送方式</span><div>{[['steer', '追加当前'], ['queue', '下一轮']].map(([mode, label]) => <button key={mode} type="button" aria-pressed={mobileSubmitMode === mode} onClick={() => setMobileSubmitMode(mode)}>{label}</button>)}</div></div> : null}<button className="cwu-send" type="button" onClick={() => setComposerOptionsOpen(false)}>完成</button></section></div> : null}
       {executionSettingsOpen ? (
         <div
           aria-label="当前执行设置"
