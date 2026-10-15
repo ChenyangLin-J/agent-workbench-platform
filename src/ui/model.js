@@ -316,6 +316,7 @@ export function normalizeSessionViewModel(value = {}) {
           turnKey: stringOrNull(message?.turnKey ?? message?.turnId),
           turnStatus: stringOrNull(message?.turnStatus),
           deliveryState: stringOrNull(message?.deliveryState),
+          submissionId: stringOrNull(message?.submissionId),
           canEdit: Boolean(message?.canEdit),
           canFork: Boolean(message?.canFork),
           references: normalizeSessionReferences(message?.references),

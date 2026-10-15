@@ -16,17 +16,27 @@ export function SessionComposerUtilities({ voice = null, context = null, session
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [recoveries, setRecoveries] = useState([]);
+  const [recoveringId, setRecoveringId] = useState(null);
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState(null);
   const dialog = useRef(null);
   useEffect(() => {
-    generation.current++;
+    const expected = ++generation.current;
     capture.current?.dispose?.(); capture.current = null;
-    setRecording(false); setBusy(false); setError(''); setOpen(false); setStatus(null);
+    setRecording(false); setBusy(false); setError(''); setRecoveries([]); setRecoveringId(null); setOpen(false); setStatus(null);
     onRecordingChange?.(false);
+    void refreshRecoveries(expected);
     return () => { generation.current++; capture.current?.dispose?.(); capture.current = null; onRecordingChange?.(false); };
   }, [sessionId]);
   useEffect(() => { if (open) dialog.current?.showModal(); }, [open]);
+  async function refreshRecoveries(expected = generation.current) {
+    if (typeof voice?.listRecoveries !== 'function') return;
+    try {
+      const items = await voice.listRecoveries();
+      if (generation.current === expected) setRecoveries(Array.isArray(items) ? items : []);
+    } catch { /* A recovery read must not replace the capture error. */ }
+  }
   async function toggleVoice() {
     const expected = generation.current;
     setError(''); setBusy(true);
@@ -37,6 +47,7 @@ export function SessionComposerUtilities({ voice = null, context = null, session
         if (generation.current !== expected) return;
         setRecording(false); onRecordingChange?.(false);
         setDraft(() => joinVoiceDraft(voiceBase.current, text));
+        try { await active.acknowledge?.(); } catch { /* Keep the completed recording recoverable if cleanup fails. */ }
       } else {
         voiceBase.current = String(draft || '');
         onRecordingChange?.(true);
@@ -45,8 +56,26 @@ export function SessionComposerUtilities({ voice = null, context = null, session
         if (!active || typeof active.stop !== 'function') throw new Error('语音输入未返回可停止的录音。');
         capture.current = active; setRecording(true);
       }
-    } catch (error) { if (generation.current === expected) { setError(error.message); setRecording(false); onRecordingChange?.(false); setDraft(() => voiceBase.current); } }
+    } catch (error) { if (generation.current === expected) { setError(error.message); setRecording(false); onRecordingChange?.(false); setDraft(() => voiceBase.current); void refreshRecoveries(expected); } }
     finally { if (generation.current === expected) setBusy(false); }
+  }
+  async function recoverVoice(recovery) {
+    const expected = generation.current;
+    if (recording || busy || recoveringId || !recovery?.id || typeof voice?.recover !== 'function') return;
+    setBusy(true); setRecoveringId(recovery.id); setError('');
+    try {
+      const text = await voice.recover(recovery.id);
+      if (generation.current !== expected) return;
+      // Recovery is full text. Keep anything typed since capture failed and add
+      // the completed transcription only after it.
+      setDraft((current) => joinVoiceDraft(current, text));
+      try { await voice.acknowledgeRecovery?.(recovery.id); } catch { /* Keep the recovery when cleanup fails. */ }
+      await refreshRecoveries(expected);
+    } catch (error) {
+      if (generation.current === expected) setError(error.message);
+    } finally {
+      if (generation.current === expected) { setBusy(false); setRecoveringId(null); }
+    }
   }
   async function readContext() {
     const expected = generation.current;
@@ -75,6 +104,7 @@ export function SessionComposerUtilities({ voice = null, context = null, session
     {variant === 'actions' && voice?.start ? <button type="button" className={`cwu-voice-input${recording ? ' is-recording' : ''}`} aria-label={recording ? '结束录音并转写' : '语音输入'} title={recording ? '结束录音并转写' : '语音输入'} disabled={disabled || busy} onClick={toggleVoice}>
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M9 22h6"/></svg>
     </button> : null}
+    {recoveries.length ? <span className="cwu-voice-recoveries" role="status">{recoveries.map((recovery) => <button key={recovery.id} type="button" aria-label={`重试转写 ${recovery.createdAt || recovery.id}`} disabled={disabled || busy || recording} onClick={() => recoverVoice(recovery)}>{recoveringId === recovery.id ? '正在转写…' : '重试转写'}</button>)}</span> : null}
     {context ? <button type="button" className={`cwu-context-button is-${variant}`} onClick={readContext} title="查看上下文" aria-label="查看上下文"><span className="cwu-context-meter" style={{ '--context-percent': `${percent || 0}%` }} aria-hidden="true"/><span>上下文 {label}</span></button> : null}
     {error && !open ? <span className="cwu-utility-error" role="alert">{error}<button type="button" aria-label="关闭提示" onClick={() => setError('')}>×</button></span> : null}
     {open ? <dialog className="cwu-session-finder cwu-context-dialog" ref={dialog} aria-label="当前会话上下文" onCancel={(event) => { event.preventDefault(); setOpen(false); }}>

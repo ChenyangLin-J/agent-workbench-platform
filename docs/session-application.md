@@ -34,6 +34,8 @@ Snapshots and events carry monotonically comparable `revision` values when the H
 
 `execute` retains an operation ID until acceptance is known. The Host must deduplicate that ID durably. A timeout is an unknown outcome; it is not permission to submit a second operation. Definitive client rejection can set `knownResult=true`, allowing a corrected retry. Accepted operations stay accepted when a subsequent snapshot read fails.
 
+When `submissionFeedback` is enabled, `SessionApplication` supplies its controller's `retrySubmission(submissionId)` action by default. The shared message card offers it only for an unknown submission, and the controller repeats the saved action and payload with the original idempotency key after confirming that the original Session is still selected.
+
 Accepted creation inserts the returned Session into the local list and selects it without waiting for another history list request. Older in-flight lists cannot remove that row. If the user has selected another Session while creation was pending, that newer selection wins. Hosts may explicitly refresh lists for their own paging or metadata needs.
 
 Hosts may opt into `independentStartup: true`. The selected Session reads and
@@ -61,7 +63,7 @@ their bundler to split ordinary Markdown and math into separate imports. The
 optional entry preserves readable text while loading or after a resource error;
 formula code is requested only when non-user content contains math delimiters.
 
-Use list/header/composer/auxiliary-panel slots for product functionality. `SessionComposerUtilities` accepts Host-owned `voice.start()` and context read/compact callbacks; recording returns text into the draft and never submits automatically. Side Chat, Subagent, and Realtime use the public panels with Host actions.
+Use list/header/composer/auxiliary-panel slots for product functionality. `SessionComposerUtilities` accepts Host-owned `voice.start()` and context read/compact callbacks; recording returns text into the draft and never submits automatically. A Host may additionally provide `voice.listRecoveries()` for the selected Session and `voice.recover(id)` for a retained failed transcription; Platform lists those recoveries, appends completed text to the current draft, and never submits automatically. `voice.acknowledgeRecovery(id)` and a capture's `acknowledge()` are optional cleanup callbacks: Platform calls them only after a current Session has accepted the completed text, so a late result after a Session switch remains recoverable. Side Chat, Subagent, and Realtime use the public panels with Host actions.
 
 Context usage stays live through `context.usage`, including an explicit `null` when the Host has no current capacity. A dialog read's `tokenUsage` is retained only until a newer Host usage snapshot arrives. Hosts can set `context.isDraft` to label an unsent draft as “未开始”; Platform does not infer a model capacity.
 

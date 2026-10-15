@@ -29,12 +29,17 @@ function ControlledApplication({ controller, browser, detail, actions, extension
   const suppliedBrowser = typeof browser === 'function' ? browser(state) : browser;
   const suppliedDetail = typeof detail === 'function' ? detail(state) : detail;
   const select = actions.onSelect || ((session) => controller.select(session.id || session.sessionId));
-  const effectiveDetail = suppliedDetail ? { compactComposer: true, ...suppliedDetail } : null;
+  const retrySubmission = actions.onRetrySubmission || controller.retrySubmission;
+  const effectiveDetail = suppliedDetail ? {
+    compactComposer: true,
+    ...suppliedDetail,
+    actions: { onRetrySubmission: retrySubmission, ...suppliedDetail.actions },
+  } : null;
   return <div className="cwu-session-application"><SessionBrowser
     {...props}
     browser={{ sessions: state.sessions, selectedSessionId: state.selectedId, groupMode: 'time', listCollapsed, showSessionCount: false, ...suppliedBrowser }}
     detail={effectiveDetail}
-    actions={{ onSelect: select, onCreate: () => controller.execute('create'), onToggleList: toggleList, ...actions, onOpenHistory: null,
+    actions={{ onSelect: select, onCreate: () => controller.execute('create'), onRetrySubmission: retrySubmission, onToggleList: toggleList, ...actions, onOpenHistory: null,
       onOpenSessionFinder: () => setFinderOpen(true) }}
     extensions={extensions}
     labels={{ searchAriaLabel: '搜索与历史', searchPlaceholder: '搜索标题或正文', ...labels }}

@@ -59,6 +59,10 @@ export class SessionClientOperationController {
     return this.#remove(operation);
   }
 
+  isCurrent(operation) {
+    return Boolean(operation?.lookupKey && this.operations.get(operation.lookupKey) === operation);
+  }
+
   clearTarget(targetId) {
     const normalizedTargetId = String(targetId || 'new');
     for (const [lookupKey, operation] of this.operations) {

@@ -2120,6 +2120,8 @@ export function SessionWorkspace({
                     onOpenAttachment={actions.onOpenAttachment}
                     onOpenLink={actions.onOpenLink}
                     onOpenSessionReference={actions.onOpenSessionReference}
+                    onRetrySubmission={actions.onRetrySubmission}
+                    onError={actions.onError}
                     onResolveMedia={actions.onResolveMedia}
                     onRevealLink={actions.onRevealLink}
                     revealLabel={labels.revealFile}
@@ -3128,6 +3130,8 @@ function Message({
   onOpenAttachment,
   onOpenLink,
   onOpenSessionReference,
+  onRetrySubmission,
+  onError,
   onResolveMedia,
   onRevealLink,
   revealLabel,
@@ -3146,8 +3150,11 @@ function Message({
   const [editDraft, setEditDraft] = useState(message.content);
   const [savingEdit, setSavingEdit] = useState(false);
   const [forking, setForking] = useState(false);
+  const [retryingSubmission, setRetryingSubmission] = useState(false);
+  const [retrySubmissionError, setRetrySubmissionError] = useState('');
   const canEdit = isUser && message.canEdit && typeof onEditMessage === 'function';
   const canFork = isUser && message.canFork && typeof onForkMessage === 'function';
+  const canRetrySubmission = message.deliveryState === 'unknown' && message.submissionId && typeof onRetrySubmission === 'function';
   const markdownComponents = {
     ...(markdownLinkComponents(onOpenLink, onRevealLink, revealLabel) || {}),
     ...(!publishesMedia ? { img: () => null } : {}),
@@ -3249,6 +3256,20 @@ function Message({
     }
   }
 
+  async function retrySubmission() {
+    if (retryingSubmission || !canRetrySubmission) return;
+    setRetryingSubmission(true);
+    setRetrySubmissionError('');
+    try {
+      await onRetrySubmission(message.submissionId);
+    } catch (error) {
+      setRetrySubmissionError(error?.message || '重试确认失败。');
+      onError?.(error);
+    } finally {
+      setRetryingSubmission(false);
+    }
+  }
+
   const messageContent = editing ? (
     <div className="cwu-message-editor">
       <textarea
@@ -3280,7 +3301,7 @@ function Message({
   return (
     <agent-session-message className={`cwu-message ${isUser ? 'is-user' : isCommentary ? 'is-commentary' : 'is-assistant'} ${!isUser && message.turnStatus === 'inProgress' ? 'is-streaming' : ''} ${editing ? 'is-editing' : ''}`} data-message-id={message.id} ref={messageRef} phase={message.phase} role={message.role}>
       {isCommentary ? <div className="cwu-message-label">{message.label}</div> : null}
-      {message.deliveryState ? <div className="cwu-message-label" role="status">{({ sending: '正在发送…', accepted: '已提交，等待同步…', unknown: '发送结果待确认，请重试确认' })[message.deliveryState]}</div> : null}
+      {message.deliveryState ? <div className="cwu-message-label" role="status">{({ sending: '正在发送…', accepted: '已提交，等待同步…', unknown: '发送结果待确认', expired: '发送确认记录已过期，请核对会话内容' })[message.deliveryState]}{canRetrySubmission ? <button type="button" disabled={retryingSubmission} onClick={retrySubmission}>{retryingSubmission ? '确认中…' : '重试确认'}</button> : null}{retrySubmissionError ? <span role="alert">{retrySubmissionError}</span> : null}</div> : null}
       {isUser && message.references?.length ? (
         <div aria-label="引用的 Sessions" className="cwu-message-references">
           {message.references.map((reference) => (

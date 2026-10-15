@@ -35,3 +35,15 @@ test('voice input streams live partial transcripts into the draft and locks the 
   // Utility errors are dismissable.
   assert.match(source, /aria-label="关闭提示" onClick=\{\(\) => setError\(''\)\}/);
 });
+
+test('voice recovery remains optional, is scoped to the active composer generation, and appends complete text', async () => {
+  const source = await readFile(componentUrl, 'utf8');
+  assert.match(source, /voice\?\.listRecoveries/);
+  assert.match(source, /voice\.recover\(recovery\.id\)/);
+  assert.match(source, /generation\.current !== expected\) return/);
+  assert.match(source, /setDraft\(\(current\) => joinVoiceDraft\(current, text\)\)/);
+  assert.match(source, /await voice\.acknowledgeRecovery\?\.\(recovery\.id\)/);
+  assert.match(source, /await active\.acknowledge\?\.\(\)/);
+  assert.match(source, /'重试转写'/);
+  assert.match(source, /void refreshRecoveries\(expected\)/);
+});

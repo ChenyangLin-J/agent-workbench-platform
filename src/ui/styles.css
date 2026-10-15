@@ -836,6 +836,9 @@ button.cwu-process-summary:hover, button.cwu-process-summary[aria-expanded='true
 .cwu-context-button.is-options { display: none; }
 .cwu-utility-error { display: inline-flex; align-items: center; gap: 7px; border: 1px solid color-mix(in srgb, var(--cwu-error) 30%, var(--cwu-border)); border-radius: 10px; background: color-mix(in srgb, var(--cwu-error) 7%, var(--cwu-surface)); color: var(--cwu-error); font-size: 12px; padding: 5px 9px; }
 .cwu-utility-error button { border: 0; background: transparent; color: var(--cwu-muted); font: inherit; font-size: 12px; cursor: pointer; padding: 0 2px; }
+.cwu-voice-recoveries { display: inline-flex; align-items: center; gap: 6px; }
+.cwu-voice-recoveries button, .cwu-message-label button { border: 0; border-radius: 7px; background: var(--cwu-soft); color: var(--cwu-text); font: inherit; font-size: 11px; padding: 3px 7px; cursor: pointer; }
+.cwu-voice-recoveries button:disabled, .cwu-message-label button:disabled { cursor: default; opacity: .6; }
 @media(max-width:640px) { .cwu-context-button.is-actions { display: none; } .cwu-context-button.is-options { display: inline-flex; } }
 
 /* Application chrome is shared by full-page Hosts; embedded consumers retain their layout. */

@@ -92,7 +92,11 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
       for (const [key, submission] of submissions) {
         if (submission.target !== state.selectedId) continue;
         if (adapter.isSubmissionEcho?.(base, submission)) { submissions.delete(key); continue; }
-        projected.push({ ...submission.message, id: `submission:${key}`, submissionId: key, deliveryState: submission.status, canEdit: false, canFork: false });
+        const status = submission.status === 'unknown' && !operations.isCurrent(submission.operation)
+          ? 'expired'
+          : submission.status;
+        if (status !== submission.status) submissions.set(key, { ...submission, status });
+        projected.push({ ...submission.message, id: `submission:${key}`, submissionId: key, deliveryState: status, canEdit: false, canFork: false });
       }
       state.session = { ...base, messages: [...(base.messages || []), ...projected] };
     }
@@ -264,7 +268,7 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     if (message) {
       const previous = submissions.get(operation.idempotencyKey);
       submissions.set(operation.idempotencyKey, previous ? { ...previous, status: 'sending' } : {
-        target, message, payload: operation.payload, idempotencyKey: operation.idempotencyKey, status: 'sending',
+        action, target, message, payload: operation.payload, operation, idempotencyKey: operation.idempotencyKey, status: 'sending',
         baseline: (state.session?.messages || []).filter(item => !item.submissionId).map(item => item.id),
       });
       publish({});
@@ -340,6 +344,17 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
     reconcileSelectedSession,
     searchSessions: (options = {}) => adapter.listSessions(options),
     execute,
+    async retrySubmission(submissionId) {
+      const submission = submissions.get(submissionId);
+      if (!submission || submission.status !== 'unknown') throw new Error('这条发送不再需要重试确认。');
+      // A stale message must not submit into a newly selected Session. Its
+      // original operation remains available when that Session is selected.
+      if (submission.target !== state.selectedId) throw new Error('请先回到原会话后再重试确认。');
+      if (!operations.isCurrent(submission.operation)) {
+        throw new Error('原发送操作已过期，不能安全地重试确认。');
+      }
+      return execute(submission.action, submission.payload, { sessionId: submission.target });
+    },
     receiveEvent: (event) => receive(event, state.selectedId, selectionGeneration),
     updateSession: (updater) => { forgetSnapshot(state.selectedId); publish({ session: typeof updater === 'function' ? updater(state.session) : updater }); },
     updateSessions: (updater) => { publish({ sessions: typeof updater === 'function' ? updater(state.sessions) : updater }); void reconcileSelectedSession(); },

@@ -9,6 +9,18 @@ const stylesUrl = new URL('../src/ui/styles.css', import.meta.url);
 const hooksUrl = new URL('../src/ui-hooks.js', import.meta.url);
 const katexStylesUrl = new URL('../node_modules/katex/dist/katex.css', import.meta.url);
 
+test('unknown submission identity survives the view projection used by retry controls', () => {
+  for (const projectId of [null, 'project-scoped']) {
+    const view = normalizeSessionViewModel({ sessionId: 'session', projectId, messages: [
+      { id: 'submission:send-1', role: 'user', content: '保留附件的消息', submissionId: 'send-1', deliveryState: 'unknown' },
+      { id: 'native-user', role: 'user', content: '已确认消息' },
+    ] });
+    assert.equal(view.messages[0].submissionId, 'send-1');
+    assert.equal(view.messages[0].deliveryState, 'unknown');
+    assert.equal(view.messages[1].submissionId, null);
+  }
+});
+
 test('progressive records use human summaries and do not invent unknown statuses or completed-read metadata', async () => {
   const { technicalProcessSummary } = await import('../src/ui/model.js');
   assert.deepEqual(technicalProcessSummary({ type: 'command', title: 'command', text: 'node inspect.js\nfull multiline command', status: 'completed' }), { title: 'node inspect.js', typeLabel: '运行命令', statusLabel: '已完成' });
@@ -294,6 +306,11 @@ test('Session UI keeps attachment lifecycle and technical file artifacts host-ne
   assert.match(source, /opaqueFilePreview/);
   assert.match(source, /onProgress: \(progress\) =>/);
   assert.match(source, /retryAttachment\(attachment\)/);
+  assert.match(source, /onRetrySubmission=\{actions\.onRetrySubmission\}/);
+  assert.match(source, /unknown: '发送结果待确认'/);
+  assert.match(source, /expired: '发送确认记录已过期，请核对会话内容'/);
+  assert.match(source, /'重试确认'/);
+  assert.match(source, /disabled=\{retryingSubmission\}/);
   assert.match(source, /className="cwu-technical-artifacts"/);
   assert.match(source, /onOpenArtifact/);
   assert.match(source, /onRevealArtifact/);
