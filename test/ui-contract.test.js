@@ -642,10 +642,16 @@ test('Session UI keeps explicit submissions visible across mobile viewport chang
 
   assert.match(source, /submitFollowRef\.current = true;/);
   assert.match(source, /window\.visualViewport\?\.addEventListener\('resize', followAfterViewportChange\)/);
-  assert.match(source, /onPointerDown=\{stopSubmitFollow\}/);
+  assert.match(source, /onPointerDown=\{handleTranscriptPointerDown\}/);
   assert.match(source, /onWheel=\{handleTranscriptWheel\}/);
-  assert.match(source, /if \(scrollingUp\) \{\s*pauseLatestFollow\(\);/);
+  assert.match(source, /if \(scrollingUp && userScrolled\) \{\s*pauseLatestFollow\(\);/);
   assert.match(source, /if \(event\.deltaY < 0\) pauseLatestFollow\(\);/);
+  assert.match(source, /const transcript = transcriptRef\.current;/);
+  assert.match(source, /const scrollTop = transcript\?\.scrollTop \?\? transcriptScrollTopRef\.current;/);
+  assert.match(source, /new ResizeObserver\(followResizedContent\)/);
+  assert.match(source, /if \(scrollingUp && userScrolled\)/);
+  assert.match(source, /if \(userScrolled && \(!followLatestRef\.current \|\| sessionTranscriptAwayFromLatest\(target\)\)\)/);
+  assert.match(source, /onPointerUp=\{handleTranscriptPointerUp\}/);
   assert.match(source, /onTouchMove=\{handleTranscriptTouchMove\}/);
   assert.match(styles, /\.cwu-session-shell \{[^}]*height: 100vh;[^}]*height: 100dvh;/);
   assert.match(styles, /\.cwu-session-main \{[^}]*height: calc\(100vh - 64px\);[^}]*height: calc\(100dvh - 64px\);/);
@@ -712,6 +718,7 @@ test('Session UI owns search, row archive, history pagination, and queued-turn p
   assert.match(source, /actions\.onArchive/);
   assert.match(source, /export function SessionList/);
   assert.match(source, /actions\.onFavorite/);
+  assert.match(source, /async function setFavorited[\s\S]*?await actions\.onFavorite\(session, favorited\);\s*} catch \{/);
   assert.match(source, /actions\.onEnd/);
   assert.match(source, /actions\.onFullTextSearch/);
   assert.match(source, /extensions\.renderListFilters/);

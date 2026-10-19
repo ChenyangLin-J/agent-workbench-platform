@@ -300,8 +300,14 @@ export function createSessionHostController({ adapter, initialSessionId = null, 
             }
           }
         } else if (target === state.selectedId && selectionGeneration === operationSelection) {
-          const refresh = refreshSession(target).catch((error) => { if (current(target, operationSelection)) fail(error); });
-          if (!message) await refresh;
+          // Metadata-only actions can update the selected list row locally. The
+          // adapter decides only after it has the accepted result; absent this
+          // optional hook, preserve the established selected-snapshot refresh.
+          const shouldRefresh = adapter.shouldRefreshAfterAction?.(action, result) !== false;
+          if (shouldRefresh) {
+            const refresh = refreshSession(target).catch((error) => { if (current(target, operationSelection)) fail(error); });
+            if (!message) await refresh;
+          }
         }
         return result;
       } catch (error) {

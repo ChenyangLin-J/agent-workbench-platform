@@ -227,6 +227,44 @@ test('Accepted operation remains successful when its follow-up snapshot cannot b
   host.dispose();
 });
 
+test('adapter may skip a selected metadata action snapshot reread after patching its own row', async () => {
+  let reads = 0;
+  const actions = [];
+  const host = createSessionHostController({ initialSessionId: 'a', adapter: {
+    listSessions: async () => [],
+    readSession: async () => { reads++; return snapshot('a'); },
+    execute: async (_id, action) => ({ accepted: true, action }),
+    shouldRefreshAfterAction: (action, result) => {
+      actions.push({ action, result });
+      return false;
+    },
+  } });
+  await host.start();
+  assert.deepEqual(await host.execute('favorite'), { accepted: true, action: 'favorite' });
+  assert.equal(reads, 1);
+  assert.deepEqual(actions, [{ action: 'favorite', result: { accepted: true, action: 'favorite' } }]);
+  host.dispose();
+});
+
+test('selected actions still await their snapshot reread unless the adapter opts out', async () => {
+  const reread = deferred();
+  let reads = 0;
+  const host = createSessionHostController({ initialSessionId: 'a', adapter: {
+    listSessions: async () => [],
+    readSession: async () => ++reads === 1 ? snapshot('a') : reread.promise,
+    execute: async () => ({ accepted: true }),
+  } });
+  await host.start();
+  let settled = false;
+  const operation = host.execute('rename').then(() => { settled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  reread.resolve(snapshot('a', 2));
+  await operation;
+  assert.equal(reads, 2);
+  host.dispose();
+});
+
 test('Snapshot merge preserves earlier messages and replaces authoritative queue/request state', () => {
   const current = { messages: [{ id: 'old', content: 'history' }, { id: 'new', content: 'draft delta' }], pendingRequests: [{ token: 'resolved' }], queuedTurns: [{ id: 'submitted' }], turnsCursor: 'old-page', loadedTurnCount: 8 };
   const latest = { messages: [{ id: 'new', content: 'complete' }], pendingRequests: [], queuedTurns: [], loadedTurnCount: 5, turnsCursor: 'new-page' };

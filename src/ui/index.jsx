@@ -574,6 +574,9 @@ export function SessionBrowser({
     setFavoritingIds((current) => new Set(current).add(session.id));
     try {
       await actions.onFavorite(session, favorited);
+    } catch {
+      // The Host publishes the operation error. Clearing the pending state
+      // below leaves this same control available for an explicit retry.
     } finally {
       setFavoritingIds((current) => {
         const next = new Set(current);
@@ -994,6 +997,9 @@ export function SessionWorkspace({
   const submitFollowRef = useRef(false);
   const transcriptScrollTopRef = useRef(0);
   const transcriptTouchYRef = useRef(null);
+  const transcriptPointerActiveRef = useRef(false);
+  const transcriptUserScrollUntilRef = useRef(0);
+  const transcriptRestoreFrameRef = useRef(null);
   const messageActivityRef = useRef({ sessionId: view.sessionId, key: '' });
   const [composerOptionsOpen, setComposerOptionsOpen] = useState(false);
   const [mobileSubmitMode, setMobileSubmitMode] = useState('steer');
@@ -1224,8 +1230,17 @@ export function SessionWorkspace({
     followLatestRef.current = !restored?.awayFromLatest;
     submitFollowRef.current = false;
     transcriptScrollTopRef.current = restored?.scrollTop || 0;
-    if (restored?.awayFromLatest) requestAnimationFrame(() => { if (transcriptRef.current) transcriptRef.current.scrollTop = restored.scrollTop; });
+    if (restored?.awayFromLatest) {
+      transcriptRestoreFrameRef.current = requestAnimationFrame(() => {
+        const target = transcriptRef.current;
+        if (!target || followLatestRef.current) return;
+        target.scrollTop = restored.scrollTop;
+        transcriptScrollTopRef.current = target.scrollTop;
+      });
+    }
     transcriptTouchYRef.current = null;
+    transcriptPointerActiveRef.current = false;
+    transcriptUserScrollUntilRef.current = 0;
     setDraft(restored?.draft ?? view.draft);
     setDraftRevision((current) => current + 1);
     setAttachments(restored?.attachments || []);
@@ -1253,6 +1268,10 @@ export function SessionWorkspace({
       : null;
     return () => {
       if (focusFrame != null) cancelAnimationFrame(focusFrame);
+      if (transcriptRestoreFrameRef.current != null) {
+        cancelAnimationFrame(transcriptRestoreFrameRef.current);
+        transcriptRestoreFrameRef.current = null;
+      }
     };
   }, [view.sessionId]);
 
@@ -1260,8 +1279,13 @@ export function SessionWorkspace({
   uiSnapshot.current = { draft, attachments, references, processOpenByTurn, detailTabByTurn, awayFromLatest };
   useEffect(() => {
     if (!uiStateStore) return undefined;
+    // A passive cleanup can observe a cleared ref and overwrite a real
+    // position with zero when SessionWorkspace is keyed for the next Session.
+    const transcript = transcriptRef.current;
     const save = () => {
-      uiStateStore.set(view.sessionId, { ...uiSnapshot.current, scrollTop: transcriptRef.current?.scrollTop || 0 });
+      const scrollTop = transcript?.scrollTop ?? transcriptScrollTopRef.current;
+      transcriptScrollTopRef.current = scrollTop;
+      uiStateStore.set(view.sessionId, { ...uiSnapshot.current, scrollTop });
     };
     window.addEventListener('pagehide', save);
     document.addEventListener('visibilitychange', save);
@@ -1356,10 +1380,10 @@ export function SessionWorkspace({
 
   useEffect(() => {
     const followAfterViewportChange = () => {
-      if (!submitFollowRef.current) return;
+      if (!followLatestRef.current) return;
       requestAnimationFrame(() => {
         const target = transcriptRef.current;
-        if (!target) return;
+        if (!target || !followLatestRef.current) return;
         target.scrollTop = target.scrollHeight;
         transcriptScrollTopRef.current = target.scrollTop;
         setAwayFromLatest(false);
@@ -1371,6 +1395,30 @@ export function SessionWorkspace({
     return () => {
       window.removeEventListener('resize', followAfterViewportChange);
       window.visualViewport?.removeEventListener('resize', followAfterViewportChange);
+    };
+  }, [view.sessionId]);
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    const content = transcript?.querySelector('.cwu-message-column');
+    if (!transcript || !content || typeof ResizeObserver === 'undefined') return undefined;
+    let frame = null;
+    const followResizedContent = () => {
+      if (!followLatestRef.current || frame != null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (!followLatestRef.current || !transcript.isConnected) return;
+        transcript.scrollTop = transcript.scrollHeight;
+        transcriptScrollTopRef.current = transcript.scrollTop;
+        setAwayFromLatest(false);
+        setHasNewMessagesBelow(false);
+      });
+    };
+    const observer = new ResizeObserver(followResizedContent);
+    observer.observe(content);
+    return () => {
+      observer.disconnect();
+      if (frame != null) cancelAnimationFrame(frame);
     };
   }, [view.sessionId]);
 
@@ -1416,7 +1464,8 @@ export function SessionWorkspace({
     const previousScrollTop = transcriptScrollTopRef.current;
     const scrollingUp = target.scrollTop < previousScrollTop - 1;
     transcriptScrollTopRef.current = target.scrollTop;
-    if (scrollingUp) {
+    const userScrolled = transcriptPointerActiveRef.current || Date.now() < transcriptUserScrollUntilRef.current;
+    if (scrollingUp && userScrolled) {
       pauseLatestFollow();
       return;
     }
@@ -1427,7 +1476,7 @@ export function SessionWorkspace({
       setHasNewMessagesBelow(false);
       return;
     }
-    if (!followLatestRef.current || sessionTranscriptAwayFromLatest(target)) {
+    if (userScrolled && (!followLatestRef.current || sessionTranscriptAwayFromLatest(target))) {
       followLatestRef.current = false;
       submitFollowRef.current = false;
       setAwayFromLatest(true);
@@ -1446,15 +1495,33 @@ export function SessionWorkspace({
 
   function handleTranscriptWheel(event) {
     stopSubmitFollow();
+    transcriptUserScrollUntilRef.current = Date.now() + 400;
     if (event.deltaY < 0) pauseLatestFollow();
+  }
+
+  function handleTranscriptPointerDown() {
+    stopSubmitFollow();
+    transcriptPointerActiveRef.current = true;
+  }
+
+  function handleTranscriptPointerUp() {
+    transcriptPointerActiveRef.current = false;
+  }
+
+  function handleTranscriptKeyDown(event) {
+    if (!['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) return;
+    transcriptUserScrollUntilRef.current = Date.now() + 400;
+    if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) pauseLatestFollow();
   }
 
   function handleTranscriptTouchStart(event) {
     stopSubmitFollow();
+    transcriptUserScrollUntilRef.current = Date.now() + 400;
     transcriptTouchYRef.current = event.touches?.[0]?.clientY ?? null;
   }
 
   function handleTranscriptTouchMove(event) {
+    transcriptUserScrollUntilRef.current = Date.now() + 400;
     const nextY = event.touches?.[0]?.clientY ?? null;
     const previousY = transcriptTouchYRef.current;
     if (nextY != null && previousY != null && nextY > previousY + 2) pauseLatestFollow();
@@ -2086,7 +2153,9 @@ export function SessionWorkspace({
       <main className="cwu-session-main">
         <agent-session-stream
           className="cwu-transcript"
-          onPointerDown={stopSubmitFollow}
+          onKeyDown={handleTranscriptKeyDown}
+          onPointerDown={handleTranscriptPointerDown}
+          onPointerUp={handleTranscriptPointerUp}
           onScroll={updateFollowState}
           onTouchCancel={handleTranscriptTouchEnd}
           onTouchEnd={handleTranscriptTouchEnd}
