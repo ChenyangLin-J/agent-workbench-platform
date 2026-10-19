@@ -1279,11 +1279,12 @@ export function SessionWorkspace({
   uiSnapshot.current = { draft, attachments, references, processOpenByTurn, detailTabByTurn, awayFromLatest };
   useEffect(() => {
     if (!uiStateStore) return undefined;
-    // A passive cleanup can observe a cleared ref and overwrite a real
-    // position with zero when SessionWorkspace is keyed for the next Session.
+    // React can detach the old stream before passive cleanup. Its scrollTop is
+    // then reset to zero, so only read the DOM while it remains connected and
+    // otherwise keep the last scroll event position.
     const transcript = transcriptRef.current;
     const save = () => {
-      const scrollTop = transcript?.scrollTop ?? transcriptScrollTopRef.current;
+      const scrollTop = transcript?.isConnected ? transcript.scrollTop : transcriptScrollTopRef.current;
       transcriptScrollTopRef.current = scrollTop;
       uiStateStore.set(view.sessionId, { ...uiSnapshot.current, scrollTop });
     };
