@@ -44,7 +44,7 @@ import {
 } from './model.js';
 import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
 import { normalizeSessionFeatures } from '../capabilities.js';
-import { createSessionUiStateStore, restoreSessionScrollPosition } from './session-ui-state.js';
+import { createSessionUiStateStore, restoreSessionScrollPosition, sessionScrollTopForPersistence } from './session-ui-state.js';
 import { normalizeAttachmentPolicy, normalizeSessionAttachment } from '../attachments.js';
 import {
   MAX_SESSION_REFERENCES,
@@ -1246,7 +1246,7 @@ export function SessionWorkspace({
     submitFollowRef.current = false;
     transcriptScrollTopRef.current = restored?.scrollTop || 0;
     transcriptRestorePendingRef.current = restored?.awayFromLatest
-      ? { scrollTop: Math.max(0, Number(restored.scrollTop) || 0) }
+      ? { sessionId: view.sessionId, scrollTop: Math.max(0, Number(restored.scrollTop) || 0) }
       : null;
     if (restored?.awayFromLatest) {
       transcriptRestoreFrameRef.current = requestAnimationFrame(() => {
@@ -1288,7 +1288,6 @@ export function SessionWorkspace({
         cancelAnimationFrame(transcriptRestoreFrameRef.current);
         transcriptRestoreFrameRef.current = null;
       }
-      cancelTranscriptRestore();
     };
   }, [view.sessionId]);
 
@@ -1301,13 +1300,25 @@ export function SessionWorkspace({
     // otherwise keep the last scroll event position.
     const transcript = transcriptRef.current;
     const save = () => {
-      const scrollTop = transcript?.isConnected ? transcript.scrollTop : transcriptScrollTopRef.current;
+      const pending = transcriptRestorePendingRef.current?.sessionId === view.sessionId
+        ? transcriptRestorePendingRef.current
+        : null;
+      const scrollTop = sessionScrollTopForPersistence(transcript, transcriptScrollTopRef.current, pending?.scrollTop);
       transcriptScrollTopRef.current = scrollTop;
-      uiStateStore.set(view.sessionId, { ...uiSnapshot.current, scrollTop });
+      uiStateStore.set(view.sessionId, {
+        ...uiSnapshot.current,
+        awayFromLatest: Boolean(pending || !followLatestRef.current || uiSnapshot.current.awayFromLatest),
+        scrollTop,
+      });
     };
     window.addEventListener('pagehide', save);
     document.addEventListener('visibilitychange', save);
-    return () => { save(); window.removeEventListener('pagehide', save); document.removeEventListener('visibilitychange', save); };
+    return () => {
+      save();
+      if (transcriptRestorePendingRef.current?.sessionId === view.sessionId) cancelTranscriptRestore();
+      window.removeEventListener('pagehide', save);
+      document.removeEventListener('visibilitychange', save);
+    };
   }, [view.sessionId, uiStateStore]);
 
   useEffect(() => {

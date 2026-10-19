@@ -647,9 +647,10 @@ test('Session UI keeps explicit submissions visible across mobile viewport chang
   assert.match(source, /if \(scrollingUp && userScrolled\) \{\s*pauseLatestFollow\(\);/);
   assert.match(source, /if \(event\.deltaY < 0\) pauseLatestFollow\(\);/);
   assert.match(source, /const transcript = transcriptRef\.current;/);
-  assert.match(source, /const scrollTop = transcript\?\.isConnected \? transcript\.scrollTop : transcriptScrollTopRef\.current;/);
   assert.match(source, /const transcriptRestorePendingRef = useRef\(null\);/);
   assert.match(source, /restoreSessionScrollPosition\(target, pending\.scrollTop\)/);
+  assert.match(source, /sessionScrollTopForPersistence\(transcript, transcriptScrollTopRef\.current, pending\?\.scrollTop\)/);
+  assert.match(source, /if \(transcriptRestorePendingRef\.current\?\.sessionId === view\.sessionId\) cancelTranscriptRestore\(\);/);
   assert.match(source, /if \(transcriptRestorePendingRef\.current\) return;/);
   assert.match(source, /new ResizeObserver\(followResizedContent\)/);
   assert.match(source, /if \(scrollingUp && userScrolled\)/);

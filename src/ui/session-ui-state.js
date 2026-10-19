@@ -8,6 +8,13 @@ export function restoreSessionScrollPosition(target, scrollTop) {
   return { restored: maximum >= requested - 1, scrollTop: target.scrollTop };
 }
 
+export function sessionScrollTopForPersistence(target, fallbackScrollTop, pendingScrollTop = null) {
+  const pending = Number(pendingScrollTop);
+  if (pendingScrollTop != null && Number.isFinite(pending) && pending >= 0) return pending;
+  const current = target?.isConnected ? target.scrollTop : fallbackScrollTop;
+  return Number.isFinite(Number(current)) && Number(current) >= 0 ? Number(current) : 0;
+}
+
 export function createSessionUiStateStore(storage = null, key = 'agent-workbench.session-ui-state') {
   let entries = [];
   try { entries = JSON.parse(storage?.getItem(key) || '[]'); } catch { /* Private browsing and corrupt cache are recoverable. */ }

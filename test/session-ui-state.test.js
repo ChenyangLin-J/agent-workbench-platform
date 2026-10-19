@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createSessionUiStateStore, restoreSessionScrollPosition } from '../src/ui/session-ui-state.js';
+import { createSessionUiStateStore, restoreSessionScrollPosition, sessionScrollTopForPersistence } from '../src/ui/session-ui-state.js';
 
 test('reading and draft state survive remount while unresolved uploads do not become ready', () => {
   const values = new Map();
@@ -33,4 +33,10 @@ test('a persisted reading position retries after a short lazy transcript grows',
 test('a deliberate top reading position is already restored, rather than treated as a missing position', () => {
   const transcript = { scrollTop: 240, scrollHeight: 1_200, clientHeight: 300 };
   assert.deepEqual(restoreSessionScrollPosition(transcript, 0), { restored: true, scrollTop: 0 });
+});
+
+test('an interrupted lazy restore persists its original target rather than the clamp position', () => {
+  const detachedOrShortTranscript = { isConnected: false, scrollTop: 0 };
+  assert.equal(sessionScrollTopForPersistence(detachedOrShortTranscript, 0, 1_200), 1_200);
+  assert.equal(sessionScrollTopForPersistence(detachedOrShortTranscript, 0, 0), 0);
 });
