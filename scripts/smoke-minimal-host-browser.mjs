@@ -464,9 +464,19 @@ try {
   await generatedImage.click();
   await page.getByRole('dialog', { name: '文件预览：generated-browser-smoke-generated.png' }).waitFor();
   await page.getByRole('button', { name: '关闭文件预览' }).click();
+  const savedReadingPosition = await page.locator('.cwu-transcript').evaluate((element) => {
+    const position = Math.max(0, element.scrollHeight - element.clientHeight - 260);
+    if (position < 120) throw new Error('Reload reading-position fixture was not tall enough.');
+    element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -80 }));
+    element.scrollTop = position;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    return position;
+  });
+  await page.getByRole('button', { name: '滚动到最新消息' }).waitFor();
   await page.reload();
   await page.getByText('1 个对话', { exact: true }).waitFor();
   await page.getByText('Browser smoke OK', { exact: true }).waitFor();
+  await page.waitForFunction((position) => Math.abs(document.querySelector('.cwu-transcript')?.scrollTop - position) < 3, savedReadingPosition);
   await page.getByRole('button', { name: /^(?:加载|查看|重试)图片：browser-preview\.png$/ }).waitFor();
   await page.getByRole('button', { name: /^(?:加载|查看|重试)图片：generated-browser-smoke-generated\.png$/ }).click();
   await page.getByRole('dialog', { name: '文件预览：generated-browser-smoke-generated.png' }).waitFor();

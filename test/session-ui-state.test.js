@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createSessionUiStateStore } from '../src/ui/session-ui-state.js';
+import { createSessionUiStateStore, restoreSessionScrollPosition } from '../src/ui/session-ui-state.js';
 
 test('reading and draft state survive remount while unresolved uploads do not become ready', () => {
   const values = new Map();
@@ -18,4 +18,19 @@ test('unavailable storage leaves Session switching recovery usable', () => {
   const store = createSessionUiStateStore({ getItem() { throw new Error('disabled'); }, setItem() { throw new Error('disabled'); } });
   store.set('session-a', { draft: 'safe' });
   assert.equal(store.get('session-a').draft, 'safe');
+});
+
+test('a persisted reading position retries after a short lazy transcript grows', () => {
+  const transcript = { scrollTop: 0, scrollHeight: 300, clientHeight: 300 };
+  const first = restoreSessionScrollPosition(transcript, 480);
+  assert.deepEqual(first, { restored: false, scrollTop: 0 });
+
+  transcript.scrollHeight = 1_200;
+  const second = restoreSessionScrollPosition(transcript, 480);
+  assert.deepEqual(second, { restored: true, scrollTop: 480 });
+});
+
+test('a deliberate top reading position is already restored, rather than treated as a missing position', () => {
+  const transcript = { scrollTop: 240, scrollHeight: 1_200, clientHeight: 300 };
+  assert.deepEqual(restoreSessionScrollPosition(transcript, 0), { restored: true, scrollTop: 0 });
 });

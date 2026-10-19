@@ -1,4 +1,13 @@
 /** Session-local reading and input state, independent of a Host's transport. */
+export function restoreSessionScrollPosition(target, scrollTop) {
+  const requested = Number(scrollTop);
+  if (!target || !Number.isFinite(requested) || requested < 0) return { restored: true, scrollTop: 0 };
+  const maximum = Math.max(0, target.scrollHeight - target.clientHeight);
+  const next = Math.min(requested, maximum);
+  target.scrollTop = next;
+  return { restored: maximum >= requested - 1, scrollTop: target.scrollTop };
+}
+
 export function createSessionUiStateStore(storage = null, key = 'agent-workbench.session-ui-state') {
   let entries = [];
   try { entries = JSON.parse(storage?.getItem(key) || '[]'); } catch { /* Private browsing and corrupt cache are recoverable. */ }

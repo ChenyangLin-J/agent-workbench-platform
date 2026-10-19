@@ -44,7 +44,7 @@ import {
 } from './model.js';
 import { sessionComposerPresentation, sessionMessagePublishesMedia } from '../session.js';
 import { normalizeSessionFeatures } from '../capabilities.js';
-import { createSessionUiStateStore } from './session-ui-state.js';
+import { createSessionUiStateStore, restoreSessionScrollPosition } from './session-ui-state.js';
 import { normalizeAttachmentPolicy, normalizeSessionAttachment } from '../attachments.js';
 import {
   MAX_SESSION_REFERENCES,
@@ -1000,6 +1000,7 @@ export function SessionWorkspace({
   const transcriptPointerActiveRef = useRef(false);
   const transcriptUserScrollUntilRef = useRef(0);
   const transcriptRestoreFrameRef = useRef(null);
+  const transcriptRestorePendingRef = useRef(null);
   const messageActivityRef = useRef({ sessionId: view.sessionId, key: '' });
   const [composerOptionsOpen, setComposerOptionsOpen] = useState(false);
   const [mobileSubmitMode, setMobileSubmitMode] = useState('steer');
@@ -1225,17 +1226,32 @@ export function SessionWorkspace({
     if (key) lastMessageByTurn.set(key, message.id);
   }
 
+  function cancelTranscriptRestore() {
+    transcriptRestorePendingRef.current = null;
+  }
+
+  function restorePendingTranscriptPosition() {
+    const pending = transcriptRestorePendingRef.current;
+    const target = transcriptRef.current;
+    if (!pending || !target || followLatestRef.current) return false;
+    const result = restoreSessionScrollPosition(target, pending.scrollTop);
+    transcriptScrollTopRef.current = result.scrollTop;
+    if (result.restored) cancelTranscriptRestore();
+    return result.restored;
+  }
+
   useEffect(() => {
     const restored = uiStateStore?.get(view.sessionId);
     followLatestRef.current = !restored?.awayFromLatest;
     submitFollowRef.current = false;
     transcriptScrollTopRef.current = restored?.scrollTop || 0;
+    transcriptRestorePendingRef.current = restored?.awayFromLatest
+      ? { scrollTop: Math.max(0, Number(restored.scrollTop) || 0) }
+      : null;
     if (restored?.awayFromLatest) {
       transcriptRestoreFrameRef.current = requestAnimationFrame(() => {
-        const target = transcriptRef.current;
-        if (!target || followLatestRef.current) return;
-        target.scrollTop = restored.scrollTop;
-        transcriptScrollTopRef.current = target.scrollTop;
+        transcriptRestoreFrameRef.current = null;
+        restorePendingTranscriptPosition();
       });
     }
     transcriptTouchYRef.current = null;
@@ -1272,6 +1288,7 @@ export function SessionWorkspace({
         cancelAnimationFrame(transcriptRestoreFrameRef.current);
         transcriptRestoreFrameRef.current = null;
       }
+      cancelTranscriptRestore();
     };
   }, [view.sessionId]);
 
@@ -1405,10 +1422,15 @@ export function SessionWorkspace({
     if (!transcript || !content || typeof ResizeObserver === 'undefined') return undefined;
     let frame = null;
     const followResizedContent = () => {
-      if (!followLatestRef.current || frame != null) return;
+      if ((!followLatestRef.current && !transcriptRestorePendingRef.current) || frame != null) return;
       frame = requestAnimationFrame(() => {
         frame = null;
-        if (!followLatestRef.current || !transcript.isConnected) return;
+        if (!transcript.isConnected) return;
+        if (transcriptRestorePendingRef.current) {
+          restorePendingTranscriptPosition();
+          return;
+        }
+        if (!followLatestRef.current) return;
         transcript.scrollTop = transcript.scrollHeight;
         transcriptScrollTopRef.current = transcript.scrollTop;
         setAwayFromLatest(false);
@@ -1448,6 +1470,7 @@ export function SessionWorkspace({
   }, [draft]);
 
   function followLatest() {
+    cancelTranscriptRestore();
     followLatestRef.current = true;
     setAwayFromLatest(false);
     setHasNewMessagesBelow(false);
@@ -1465,6 +1488,10 @@ export function SessionWorkspace({
     const previousScrollTop = transcriptScrollTopRef.current;
     const scrollingUp = target.scrollTop < previousScrollTop - 1;
     transcriptScrollTopRef.current = target.scrollTop;
+    // A programmatic restore can be clamped while a lazy body is still short.
+    // Its resulting scroll event must not turn that temporary bottom into an
+    // instruction to follow new content.
+    if (transcriptRestorePendingRef.current) return;
     const userScrolled = transcriptPointerActiveRef.current || Date.now() < transcriptUserScrollUntilRef.current;
     if (scrollingUp && userScrolled) {
       pauseLatestFollow();
@@ -1489,18 +1516,21 @@ export function SessionWorkspace({
   }
 
   function pauseLatestFollow() {
+    cancelTranscriptRestore();
     followLatestRef.current = false;
     submitFollowRef.current = false;
     setAwayFromLatest(true);
   }
 
   function handleTranscriptWheel(event) {
+    cancelTranscriptRestore();
     stopSubmitFollow();
     transcriptUserScrollUntilRef.current = Date.now() + 400;
     if (event.deltaY < 0) pauseLatestFollow();
   }
 
   function handleTranscriptPointerDown() {
+    cancelTranscriptRestore();
     stopSubmitFollow();
     transcriptPointerActiveRef.current = true;
   }
@@ -1511,17 +1541,20 @@ export function SessionWorkspace({
 
   function handleTranscriptKeyDown(event) {
     if (!['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) return;
+    cancelTranscriptRestore();
     transcriptUserScrollUntilRef.current = Date.now() + 400;
     if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) pauseLatestFollow();
   }
 
   function handleTranscriptTouchStart(event) {
+    cancelTranscriptRestore();
     stopSubmitFollow();
     transcriptUserScrollUntilRef.current = Date.now() + 400;
     transcriptTouchYRef.current = event.touches?.[0]?.clientY ?? null;
   }
 
   function handleTranscriptTouchMove(event) {
+    cancelTranscriptRestore();
     transcriptUserScrollUntilRef.current = Date.now() + 400;
     const nextY = event.touches?.[0]?.clientY ?? null;
     const previousY = transcriptTouchYRef.current;
@@ -1536,6 +1569,7 @@ export function SessionWorkspace({
   function scrollToLatest() {
     const target = transcriptRef.current;
     if (!target) return;
+    cancelTranscriptRestore();
     followLatestRef.current = true;
     setHasNewMessagesBelow(false);
     target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
