@@ -367,7 +367,18 @@ try {
   if (Math.abs(afterStreamPosition.scrollTop - scrolledPosition) > 12 || afterStreamPosition.bottomDistance < 24) {
     throw new Error(`Streaming content pulled an upward-reading transcript back to the bottom: ${JSON.stringify({ scrolledPosition, afterStreamPosition })}`);
   }
-  await page.getByRole('button', { name: '滚动到最新消息，有新消息' }).click();
+  const persistedFollowState = await page.evaluate(() => {
+    const button = document.querySelector('[aria-label="滚动到最新消息，有新消息"]');
+    if (!button) throw new Error('The latest-message shortcut was unavailable.');
+    button.click();
+    dispatchEvent(new Event('pagehide'));
+    const entries = JSON.parse(sessionStorage.getItem('agent-workbench.session-ui-state') || '[]');
+    if (entries.length !== 1) throw new Error(`Expected one saved Session state, got ${entries.length}.`);
+    return entries[0][1];
+  });
+  if (persistedFollowState.awayFromLatest !== false) {
+    throw new Error(`Latest-message shortcut saved stale reading state: ${JSON.stringify(persistedFollowState)}`);
+  }
   await page.waitForFunction(() => {
     const element = document.querySelector('.cwu-transcript');
     return element && element.scrollHeight - element.scrollTop - element.clientHeight < 4;

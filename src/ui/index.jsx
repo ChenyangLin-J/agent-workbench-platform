@@ -1307,7 +1307,7 @@ export function SessionWorkspace({
       transcriptScrollTopRef.current = scrollTop;
       uiStateStore.set(view.sessionId, {
         ...uiSnapshot.current,
-        awayFromLatest: Boolean(pending || !followLatestRef.current || uiSnapshot.current.awayFromLatest),
+        awayFromLatest: Boolean(pending || !followLatestRef.current),
         scrollTop,
       });
     };
